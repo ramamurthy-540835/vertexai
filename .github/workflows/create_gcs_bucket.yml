@@ -27,15 +27,16 @@ jobs:
           create_credentials_file: true
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
           service_account: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
+          project_id: 'p-601-np-membership-adt'
 
       - name: Setup gcloud SDK
         uses: google-github-actions/setup-gcloud@v1
 
-      - name: Show authenticated identity
-        run: |
-          gcloud config list account
-          gcloud auth list
-          gcloud projects get-iam-policy ${{ env.PROJECT_ID }} --flatten="bindings[].members" --filter="bindings.members:gco-iam-svc-cicd-mbr-bc-np" --format="table(bindings.role)"
+      # - name: Show authenticated identity
+      #   run: |
+      #     gcloud config list account
+      #     gcloud auth list
+      #     gcloud projects get-iam-policy ${{ env.PROJECT_ID }} --flatten="bindings[].members" --filter="bindings.members:gco-iam-svc-cicd-mbr-bc-np" --format="table(bindings.role)"
 
 
       - name: Create GCS Bucket
