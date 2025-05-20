@@ -31,6 +31,13 @@ jobs:
       - name: Setup gcloud SDK
         uses: google-github-actions/setup-gcloud@v1
 
+      - name: Show authenticated identity
+        run: |
+          gcloud config list account
+          gcloud auth list
+          gcloud projects get-iam-policy ${{ env.PROJECT_ID }} --flatten="bindings[].members" --filter="bindings.members:gco-iam-svc-cicd-mbr-bc-np" --format="table(bindings.role)"
+
+
       - name: Create GCS Bucket
         run: |
           gcloud storage buckets create gs://${{ env.BUCKET_NAME }} \
