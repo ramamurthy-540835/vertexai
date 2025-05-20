@@ -1,0 +1,39 @@
+name: "Create GCS Bucket"
+
+on:
+  workflow_dispatch:  # Trigger manually
+
+env:
+  PROJECT_ID: "p-601-np-membership-adt"
+  BUCKET_NAME: "lead_mgmt_solution"  # Must be globally unique
+  REGION: "us-central1"
+
+jobs:
+  create-bucket:
+    name: "Create GCP Bucket"
+    runs-on: ubuntu-latest
+
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          create_credentials_file: true
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
+          service_account: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
+
+      - name: Setup gcloud SDK
+        uses: google-github-actions/setup-gcloud@v1
+
+      - name: Create GCS Bucket
+        run: |
+          gcloud storage buckets create gs://${{ env.BUCKET_NAME }} \
+            --project=${{ env.PROJECT_ID }} \
+            --location=${{ env.REGION }} \
+            --uniform-bucket-level-access
