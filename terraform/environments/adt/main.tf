@@ -53,3 +53,19 @@ resource "google_storage_bucket" "this" {
     }
   }
 }
+
+module "docker_registry" {
+  source        = "./modules/artifact_registry"
+  location      =  var.location
+  repository_id = "gcr.io"
+  description   = "Docker repository"
+  format        = "Docker"
+}
+
+module "kubeflow_registry" {
+  source        = "./modules/artifact_registry"
+  location      =  var.location
+  repository_id = "lead_mgmt_kubeflow"
+  description   = "Kubeflow pipeline repository"
+  format        = "Kubeflow Pipelines"
+}
