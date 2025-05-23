@@ -54,32 +54,32 @@ resource "google_storage_bucket" "this" {
   }
 }
 
-#module "docker_registry" {
-#  source        = "../../modules/artifact_registry"
-#  location      =  var.location
-#  repository_id = "gcr.io"
-#  description   = "Docker repository"
-#  format        = "Docker"
-#}
-#
-#module "kubeflow_registry" {
-#  source        = "../../modules/artifact_registry"
-#  location      =  var.location
-#  repository_id = "lead_mgmt_kubeflow"
-#  description   = "Kubeflow pipeline repository"
-#  format        = "Kubeflow Pipelines"
-#}
-#
-#module "service_now_username" {
-# source        = "../../modules/secret_manager"
-# project       = var.projectId
-# secret_id     = "lead_mgmt_snow_user"
-# secret_value  = "super-secret-value"
-#}
-#
-#module "service_now_password" {
-# source        = "../../modules/secret_manager"
-# project       = var.projectId
-# secret_id     = "lead_mgmt_snow_password"
-# secret_value  = "super-secret-value"
-#}
+module "docker_registry" {
+  source        = "../../modules/artifact_registry"
+  location      =  var.location
+  repository_id = "gcr.io"
+  description   = "Docker repository"
+  format        = "Docker"
+}
+
+module "kubeflow_registry" {
+  source        = "../../modules/artifact_registry"
+  location      =  var.location
+  repository_id = "lead_mgmt_kubeflow"
+  description   = "Kubeflow pipeline repository"
+  format        = "Kubeflow Pipelines"
+}
+
+module "service_now_username" {
+ source        = "../../modules/secret_manager"
+ project       = var.projectId
+ secret_id     = "lead_mgmt_snow_user"
+ secret_value  = "super-secret-value"
+}
+
+module "service_now_password" {
+ source        = "../../modules/secret_manager"
+ project       = var.projectId
+ secret_id     = "lead_mgmt_snow_password"
+ secret_value  = "super-secret-value"
+}
