@@ -1,11 +1,7 @@
 name: "google_auth"
 
 on:
-  # Triggers the workflow on push or pull request events but only for the "main" branch
-  push:
-    branches: [ "main" ]
-  pull_request:
-    branches: [ "main" ]
+  workflow_dispatch:  # Trigger manually
 
 env:
   PROJECT_ID: 'p-601-np-membership-adt' # TODO: update to your Google Cloud project ID
