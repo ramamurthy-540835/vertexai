@@ -30,9 +30,7 @@
 name: 'Deploy to Cloud Run from Source'
 
 on:
-  push:
-    branches:
-      - 'main'
+  workflow_dispatch:  # Trigger manually
 
 env:
   PROJECT_ID: 'p-601-lab-bc-leads-mgmt' # TODO: update to your Google Cloud project ID
