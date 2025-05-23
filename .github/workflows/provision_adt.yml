@@ -36,6 +36,7 @@ jobs:
           create_credentials_file: true
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
           service_account: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
+          project_id: 'p-601-np-membership-adt'
           
       - name: "Setup Terraform"
         uses: hashicorp/setup-terraform@v3
