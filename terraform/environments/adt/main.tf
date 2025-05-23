@@ -69,3 +69,17 @@ module "kubeflow_registry" {
   description   = "Kubeflow pipeline repository"
   format        = "Kubeflow Pipelines"
 }
+
+module "service_now_username" {
+ source        = "./modules/secret_manager"
+ project       = var.projectId
+ secret_id     = "lead_mgmt_snow_user"
+ secret_value  = "super-secret-value"
+}
+
+module "service_now_password" {
+ source        = "./modules/secret_manager"
+ project       = var.projectId
+ secret_id     = "lead_mgmt_snow_password"
+ secret_value  = "super-secret-value"
+}
