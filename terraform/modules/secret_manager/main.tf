@@ -2,6 +2,7 @@
 resource "google_secret_manager_secret" "this" {
   project   = var.project_id
   secret_id = var.secret_id
+  secret_value = var.secret_value
 
   replication {
     automatic = true
@@ -12,5 +13,5 @@ resource "google_secret_manager_secret" "this" {
 resource "google_secret_manager_secret_version" "this" {
   secret = google_secret_manager_secret.this.id
 
-  secret_data = base64decode(google_service_account_key.this.private_key)
+  secret_data = google_service_account_key.this.secret_value
 }
