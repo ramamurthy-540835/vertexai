@@ -84,14 +84,14 @@ module "service_now_password" {
  secret_value  = "super-secret-value"
 }
 
-module "cloud_sql_instance" {
-  source            = "../../modules/database"
-  instance_name     = "lead_mgmt_dev"
-  version           = "POSTGRES_15"
-  region            = "us-central1"
-  tier              = "db-custom-4-16384"
-  edition           = "ENTERPRISE"
-  availability_type = "REGIONAL"
-  activation_policy = "ALWAYS"
-  disk_size         = 100
-}
+#module "cloud_sql_instance" {
+ # source            = "../../modules/database"
+  #instance_name     = "lead_mgmt_dev"
+  #version           = "POSTGRES_15"
+  #region            = "us-central1"
+  #tier              = "db-custom-4-16384"
+  #edition           = "ENTERPRISE"
+  #availability_type = "REGIONAL"
+  #activation_policy = "ALWAYS"
+  #disk_size         = 100
+#}
