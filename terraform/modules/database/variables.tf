@@ -3,7 +3,7 @@ variable "instance_name" {
   type        = string
 }
 
-variable "version" {
+variable "database_version" {
   description = "The database engine type and version"
   type        = string
 }
