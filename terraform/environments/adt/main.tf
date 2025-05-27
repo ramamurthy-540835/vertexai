@@ -87,7 +87,7 @@ module "service_now_password" {
 module "cloud_sql_instance" {
   source            = "../../modules/database"
   instance_name     = "lead_mgmt_dev"
-  version           = "POSTGRES_15"
+  database_version           = "POSTGRES_15"
   region            = "us-central1"
   tier              = "db-custom-4-16384"
   edition           = "ENTERPRISE"
