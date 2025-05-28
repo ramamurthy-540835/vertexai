@@ -23,3 +23,9 @@ variable "labels" {
     env = "adt"
   }
 }
+
+variable "region" {
+  description = "Region for resources"
+  type        = string
+  default     = "us-central1"
+}
