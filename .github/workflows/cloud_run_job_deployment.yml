@@ -45,8 +45,8 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: |
-            ghcr.io/${{ github.repository_owner }}/membership/lead-management/cloud-run-job
-            us-docker.pkg.dev/gcp-prj-images/gcp-gar-repo-mbrshp/cloud-run-job
+            ghcr.io/${{ github.repository_owner }}/membership/lead-management/lead-match-job
+            us-docker.pkg.dev/gcp-prj-images/gcp-gar-repo-mbrshp/lead-match-job
       - name: Build and push
         uses: docker/build-push-action@v6
         env:
@@ -57,3 +57,20 @@ jobs:
           push: true
           labels: ${{ steps.meta.outputs.labels }}
           tags: ${{ steps.meta.outputs.tags }}
+
+      - name: 'Deploy job manually with gcloud'
+        run: |
+          IMAGE="us-docker.pkg.dev/gcp-prj-images/gcp-gar-repo-mbrshp/lead-match-job:latest"
+          gcloud run jobs deploy lead-match-job \
+          --image $IMAGE \
+          --region us-central1 \
+          --project p-601-np-membership-adt \
+          --service-account ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL}} \
+          --format json
+
+      - name: 'Describe deployed job'
+        run: |
+          gcloud run jobs describe lead-match-job \
+            --region us-central1 \
+            --project p-601-np-membership-adt \
+            --format="yaml"
