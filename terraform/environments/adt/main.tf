@@ -111,3 +111,48 @@ resource "google_cloud_scheduler_job" "snow_sync_scheduler" {
     data       = "Triggering SNOW to GCP sync job"
   }
 }
+
+resource "google_monitoring_notification_channel" "lead_mgmt_email" {
+  display_name = "Lead_mgmt - Email Alert"
+  type         = "email"
+
+  labels = {
+    email_address = "membership_mit_team@costco.com"
+  }
+}
+
+resource "google_monitoring_alert_policy" "cloud_run_job_failure" {
+  display_name = "Cloud Run Job Failure Alert"
+  combiner     = "OR"
+  enabled      = true
+
+  conditions {
+    display_name = "Match Job Failure Condition"
+
+    condition_threshold {
+      filter          = "metric.type=\"run.googleapis.com/job/completed_execution_count\" AND resource.label.\"job_name\"=\"match-job\" AND metric.label.\"result\"=\"failed\""
+      comparison      = "COMPARISON_GT"
+      threshold_value = 0
+      duration        = "60s"
+      trigger {
+        count = 1
+      }
+    }
+  }
+
+  conditions {
+    display_name = "SNOW Sync Job Failure Condition"
+
+    condition_threshold {
+      filter          = "metric.type=\"run.googleapis.com/job/completed_execution_count\" AND resource.label.\"job_name\"=\"snow-sync-job\" AND metric.label.\"result\"=\"failed\""
+      comparison      = "COMPARISON_GT"
+      threshold_value = 0
+      duration        = "60s"
+      trigger {
+        count = 1
+      }
+    }
+  }
+
+  notification_channels = [google_monitoring_notification_channel.lead_mgmt_email.id]
+}
