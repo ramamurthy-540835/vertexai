@@ -58,7 +58,7 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           tags: us-docker.pkg.dev/gcp-prj-images/gcp-gar-repo-mbrshp/lead-match-job:latest 
 
-      - name: 'Deploy job manually with gcloud'
+      - name: 'Deploy cloud run job with gcloud'
         run: |
           IMAGE="us-docker.pkg.dev/gcp-prj-images/gcp-gar-repo-mbrshp/lead-match-job:latest"
           gcloud run jobs deploy lead-match-job \
