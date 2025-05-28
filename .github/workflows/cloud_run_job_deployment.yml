@@ -56,7 +56,7 @@ jobs:
           file: ./cloud-run-job/Dockerfile
           push: true
           labels: ${{ steps.meta.outputs.labels }}
-          tags: ${{ steps.meta.outputs.tags }}
+          tags: us-docker.pkg.dev/gcp-prj-images/gcp-gar-repo-mbrshp/lead-match-job:latest 
 
       - name: 'Deploy job manually with gcloud'
         run: |
