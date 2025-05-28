@@ -3,7 +3,7 @@ on:
   # Triggers the workflow on push or pull request events but only for the "main" branch
   push:
     paths:
-      - .github/workflows/cloud_run_docker_image.yml
+      - .github/workflows/cloud_run_job_deployment.yml
       - cloud-run-job/**
 
 jobs:
