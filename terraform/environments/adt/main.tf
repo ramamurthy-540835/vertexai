@@ -1,5 +1,6 @@
 provider "google" {
   project = var.projectId
+  region  = var.region
 }
 
 terraform {
@@ -54,13 +55,13 @@ resource "google_storage_bucket" "this" {
   }
 }
 
-module "docker_registry" {
-  source        = "../../modules/artifact_registry"
-  location      =  var.location
-  repository_id = "gcr.io"
-  description   = "Docker repository"
-  format        = "Docker"
-}
+# module "docker_registry" {
+ # source        = "../../modules/artifact_registry"
+ # location      =  var.location
+ # repository_id = "gcr.io"
+ # description   = "Docker repository"
+ # format        = "Docker"
+# }
 
 module "kubeflow_registry" {
   source        = "../../modules/artifact_registry"
@@ -94,4 +95,19 @@ module "cloud_sql_instance" {
   availability_type = "REGIONAL"
   activation_policy = "ALWAYS"
   disk_size         = 100
+}
+resource "google_pubsub_topic" "snow_sync_trigger" {
+  name = "snow-gcp-sync-trigger"
+}
+
+resource "google_cloud_scheduler_job" "snow_sync_scheduler" {
+  name             = "snow-sync-scheduler-job"
+  schedule         = "0 2 * * *" # 2:00 AM UTC
+  time_zone        = "UTC"
+  attempt_deadline = "320s"
+
+  pubsub_target {
+    topic_name = google_pubsub_topic.snow_sync_trigger.id
+    data       = "Triggering SNOW to GCP sync job"
+  }
 }
