@@ -151,7 +151,7 @@ resource "google_monitoring_alert_policy" "cloud_run_job_failure" {
     display_name = "Match Job Failure Condition"
 
     condition_threshold {
-      filter          = "metric.type=\"run.googleapis.com/job/completed_execution_count\" AND resource.label.\"job_name\"=\"match-job\" AND metric.label.\"result\"=\"failed\""
+      filter          = "metric.type=\"run.googleapis.com/job/completed_execution_count\" AND resource.type=\"cloud_run_job\" AND resource.label.\"job_name\"=\"match-job\" AND metric.label.\"result\"=\"failed\""
       comparison      = "COMPARISON_GT"
       threshold_value = 0
       duration        = "60s"
@@ -165,7 +165,7 @@ resource "google_monitoring_alert_policy" "cloud_run_job_failure" {
     display_name = "SNOW Sync Job Failure Condition"
 
     condition_threshold {
-      filter          = "metric.type=\"run.googleapis.com/job/completed_execution_count\" AND resource.label.\"job_name\"=\"snow-sync-job\" AND metric.label.\"result\"=\"failed\""
+      filter          = "metric.type=\"run.googleapis.com/job/completed_execution_count\" AND resource.type=\"cloud_run_job\" AND resource.label.\"job_name\"=\"snow-sync-job\" AND metric.label.\"result\"=\"failed\""
       comparison      = "COMPARISON_GT"
       threshold_value = 0
       duration        = "60s"
