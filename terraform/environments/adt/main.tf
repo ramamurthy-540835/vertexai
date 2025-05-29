@@ -73,6 +73,18 @@ resource "google_storage_bucket" "this" {
   }
 }
 
+resource "google_project_iam_member" "pubsub_admin" {
+  project = var.project_id
+  role    = "roles/pubsub.admin"
+  member  = "serviceAccount:${var.gcp_workload_identity_sa_email}"
+}
+
+resource "google_project_iam_member" "monitoring_editor" {
+  project = var.project_id
+  role    = "roles/monitoring.editor"
+  member  = "serviceAccount:${var.gcp_workload_identity_sa_email}"
+}
+
 # module "docker_registry" {
  # source        = "../../modules/artifact_registry"
  # location      =  var.location
@@ -105,9 +117,8 @@ module "service_now_password" {
 
 module "cloud_sql_instance" {
   source            = "../../modules/database"
-  project       = var.projectId
   instance_name     = "lead_mgmt_dev"
-  database_version           = "POSTGRES_15"
+  database_version  = "POSTGRES_15"
   region            = "us-central1"
   tier              = "db-custom-4-16384"
   edition           = "ENTERPRISE"
