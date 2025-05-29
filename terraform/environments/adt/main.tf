@@ -95,6 +95,7 @@ module "cloud_sql_instance" {
   availability_type = "REGIONAL"
   activation_policy = "ALWAYS"
   disk_size         = 100
+  service_account =   var.gcp_workload_identity_sa_email
 }
 resource "google_pubsub_topic" "snow_sync_trigger" {
   name = "snow-gcp-sync-trigger"
