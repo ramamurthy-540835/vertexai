@@ -74,13 +74,13 @@ resource "google_storage_bucket" "this" {
 }
 
 resource "google_project_iam_member" "pubsub_admin" {
-  project = var.project_id
+  project = var.projectId
   role    = "roles/pubsub.admin"
   member  = "serviceAccount:${var.gcp_workload_identity_sa_email}"
 }
 
 resource "google_project_iam_member" "monitoring_editor" {
-  project = var.project_id
+  project = var.projectId
   role    = "roles/monitoring.editor"
   member  = "serviceAccount:${var.gcp_workload_identity_sa_email}"
 }
