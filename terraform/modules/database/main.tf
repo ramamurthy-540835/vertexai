@@ -1,7 +1,6 @@
 resource "google_sql_database_instance" "this" {
   name             = var.instance_name
   project          = var.project
-  project_number   = var.project_number
   database_version = var.database_version
   region           = var.region
   settings {
