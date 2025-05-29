@@ -39,13 +39,13 @@ default = "gco-iam-svc-cicd-mbr-bc-np@gcp-prj-cicd-core.iam.gserviceaccount.com"
 variable "prefix" {
   description = "prefix for naming convention"
   type        = string
-  default     = "lead_mgmt"
+  default     = "lead-mgmt"
 }
 
 variable "country" {
   description = "country information for a project"
   type        = string
-  default     = "US"
+  default     = "us"
 }
 
 
