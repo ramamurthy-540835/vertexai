@@ -3,6 +3,11 @@ variable "instance_name" {
   type        = string
 }
 
+variable "project" {
+  description = "Project information"
+  type        = string
+}
+
 variable "database_version" {
   description = "The database engine type and version"
   type        = string
