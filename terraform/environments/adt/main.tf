@@ -128,7 +128,7 @@ resource "google_cloud_scheduler_job" "snow_sync_scheduler" {
 
   pubsub_target {
     topic_name = google_pubsub_topic.snow_sync_trigger.id
-    data       = "Triggering SNOW to GCP sync job"
+    data       = base64encode("Triggering SNOW to GCP sync job")
   }
 }
 
