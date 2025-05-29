@@ -33,4 +33,5 @@ variable "region" {
 variable "gcp_workload_identity_sa_email"{
 description = "iam service account for cloud sql"
 type = string
+default = "gco-iam-svc-cicd-mbr-bc-np@gcp-prj-cicd-core.iam.gserviceaccount.com"
 }
