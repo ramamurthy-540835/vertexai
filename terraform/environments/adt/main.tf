@@ -49,7 +49,7 @@ resource "google_storage_bucket" "this" {
   uniform_bucket_level_access = true
   public_access_prevention    = "enforced"
   project                     = var.projectId
-  labels        = var.labels
+  labels                      = var.labels
   versioning {
     enabled = true
   }
