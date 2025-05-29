@@ -117,71 +117,23 @@ module "cloud_sql_instance" {
   disk_size         = 100
   service_account =   var.gcp_workload_identity_sa_email
 }
-resource "google_pubsub_topic" "snow_sync_trigger" {
-  name = "snow-gcp-sync-trigger"
-}
 
-resource "google_cloud_scheduler_job" "snow_sync_scheduler" {
-  name             = "snow-sync-scheduler-job"
-  schedule         = "0 2 * * *" # 2:00 AM UTC
+module "snow_sync_scheduler" {
+  source           = "./modules/snow_sync_scheduler"
+  topic_name       = "snow-gcp-sync-trigger"
+  scheduler_name   = "snow-sync-scheduler-job"
+  schedule         = "0 2 * * *"                  # 2:00 AM UTC
   time_zone        = "UTC"
   attempt_deadline = "320s"
-
-  pubsub_target {
-    topic_name = google_pubsub_topic.snow_sync_trigger.id
-    data       = base64encode("Triggering SNOW to GCP sync job")
-  }
+  data             = "Triggering SNOW to GCP sync job"
 }
 
-resource "google_monitoring_notification_channel" "lead_mgmt_email" {
-  display_name = "Lead_mgmt - Email Alert"
-  type         = "email"
+module "monitoring_alert" {
+  source = "./modules/monitoring_alert"
 
-  labels = {
-    email_address = "membership_mit_team@costco.com"
-  }
-}
-
-resource "google_monitoring_alert_policy" "cloud_run_job_failure" {
-  display_name = "Cloud Run Job Failure Alert"
-  combiner     = "OR"
-  enabled      = true
-
-  conditions {
-    display_name = "Match Job Failure Condition"
-
-    condition_threshold {
-      filter          = "metric.type=\"run.googleapis.com/job/completed_execution_count\" AND resource.type=\"cloud_run_job\" AND resource.label.\"job_name\"=\"match-job\" AND metric.label.\"result\"=\"failed\""
-      comparison      = "COMPARISON_GT"
-      threshold_value = 0
-      duration        = "60s"
-      aggregations {
-        alignment_period   = "60s"
-        per_series_aligner = "ALIGN_RATE"
-      }
-      trigger {
-        count = 1
-      }
-    }
-  }
-
-  conditions {
-    display_name = "SNOW Sync Job Failure Condition"
-
-    condition_threshold {
-      filter          = "metric.type=\"run.googleapis.com/job/completed_execution_count\" AND resource.type=\"cloud_run_job\" AND resource.label.\"job_name\"=\"snow-sync-job\" AND metric.label.\"result\"=\"failed\""
-      comparison      = "COMPARISON_GT"
-      threshold_value = 0
-      duration        = "60s"
-      aggregations {
-        alignment_period   = "60s"
-        per_series_aligner = "ALIGN_RATE"
-      }
-      trigger {
-        count = 1
-      }
-    }
-  }
-
-  notification_channels = [google_monitoring_notification_channel.lead_mgmt_email.id]
+  display_name                 = "Lead_mgmt - Email Alert"
+  email_address                = "membership_mit_team@costco.com"
+  policy_display_name          = "Cloud Run Job Failure Alert"
+  first_condition_display_name = "Match Job Failure Condition"
+  second_condition_display_name = "SNOW Sync Job Failure Condition"
 }
