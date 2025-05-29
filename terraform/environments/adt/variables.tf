@@ -29,3 +29,8 @@ variable "region" {
   type        = string
   default     = "us-central1"
 }
+
+variable "gcp_workload_identity_sa_email"{
+description = "iam service account for cloud sql"
+type = string
+}
