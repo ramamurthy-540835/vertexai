@@ -119,7 +119,7 @@ module "cloud_sql_instance" {
 }
 
 module "snow_sync_scheduler" {
-  source           = "./modules/snow_sync_scheduler"
+  source           = "../../modules/snow_sync_scheduler"
   topic_name       = "snow-gcp-sync-trigger"
   scheduler_name   = "snow-sync-scheduler-job"
   schedule         = "0 2 * * *"                  # 2:00 AM UTC
@@ -129,7 +129,7 @@ module "snow_sync_scheduler" {
 }
 
 module "monitoring_alert" {
-  source = "./modules/monitoring_alert"
+  source = "../../modules/monitoring_alert"
 
   display_name                 = "Lead_mgmt - Email Alert"
   email_address                = "membership_mit_team@costco.com"
