@@ -53,3 +53,5 @@ jobs:
         working-directory: ./terraform/environments/${{ matrix.env }}
         #if: github.event_name == 'push'
         run: terraform apply -input=false -lock-timeout=10m plan.tfplan
+        env: 
+            TF_VAR_gcp_workload_identity_sa_email: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
