@@ -23,5 +23,16 @@ resource "google_sql_database_instance" "this" {
     insights_config {
     query_insights_enabled = true
     }
+    database_flags {
+      name  = "cloudsql.iam_authentication"
+      value = "on"
+    }
   }
+}
+resource "google_sql_user" "iam_service_account_user" {
+  # Note: for Postgres only, GCP requires omitting the ".gserviceaccount.com" suffix
+  # from the service account email due to length limits on database usernames.
+  name     = trimsuffix(var.service_account, ".gserviceaccount.com")
+  instance = google_sql_database_instance.this.name
+  type     = "CLOUD_IAM_SERVICE_ACCOUNT"
 }
