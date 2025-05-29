@@ -105,7 +105,7 @@ module "service_now_password" {
 
 module "cloud_sql_instance" {
   source            = "../../modules/database"
-  project           = var.projectId
+  project           = "p-601-np-membership-adt"
   instance_name     = "lead_mgmt_adt"
   database_version  = "POSTGRES_15"
   region            = "us-central1"
