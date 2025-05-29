@@ -44,5 +44,4 @@ variable "disk_size" {
 variable "service_account" {
   description = "service account for iam authentication"
   type        = string
-  default     = ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
 }
