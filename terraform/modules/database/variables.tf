@@ -7,10 +7,7 @@ variable "project" {
   description = "Project id information"
   type        = string
 }
-variable "project_number" {
-  description = "Project number information"
-  type        = string
-}
+
 variable "database_version" {
   description = "The database engine type and version"
   type        = string
