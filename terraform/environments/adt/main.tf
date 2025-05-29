@@ -22,6 +22,24 @@ terraform {
   }
 }
 
+resource "google_project_service" "required_apis" {
+  for_each = toset([
+    "pubsub.googleapis.com",
+    "monitoring.googleapis.com",
+    "sqladmin.googleapis.com",
+    "secretmanager.googleapis.com",
+    "artifactregistry.googleapis.com",
+    "cloudresourcemanager.googleapis.com",
+    "cloudfunctions.googleapis.com",
+    "storage.googleapis.com"
+  ])
+
+  project = var.projectId
+  service = each.key
+
+  disable_on_destroy = false
+}
+
 
 resource "google_storage_bucket" "this" {
   name          = "cs-${var.prefix}-${var.country}-${var.environment}"
