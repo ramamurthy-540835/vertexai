@@ -3,7 +3,7 @@ variable "instance_name" {
   type        = string
 }
 
-variable "project" {
+variable "project_id" {
   description = "Project information"
   type        = string
 }
