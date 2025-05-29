@@ -1,6 +1,6 @@
 # Creating secret
 resource "google_secret_manager_secret" "this" {
-  project   = var.project_id
+  project   = var.project
   secret_id = var.secret_id
 
   replication {
