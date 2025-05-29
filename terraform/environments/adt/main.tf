@@ -31,7 +31,8 @@ resource "google_project_service" "required_apis" {
     "artifactregistry.googleapis.com",
     "cloudresourcemanager.googleapis.com",
     "cloudfunctions.googleapis.com",
-    "storage.googleapis.com"
+    "storage.googleapis.com",
+    "cloudscheduler.googleapis.com"
   ])
 
   project = var.projectId
