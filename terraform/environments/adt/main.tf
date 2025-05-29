@@ -155,6 +155,10 @@ resource "google_monitoring_alert_policy" "cloud_run_job_failure" {
       comparison      = "COMPARISON_GT"
       threshold_value = 0
       duration        = "60s"
+      aggregation {
+        alignment_period   = "60s"
+        per_series_aligner = "ALIGN_RATE"
+      }
       trigger {
         count = 1
       }
@@ -169,6 +173,10 @@ resource "google_monitoring_alert_policy" "cloud_run_job_failure" {
       comparison      = "COMPARISON_GT"
       threshold_value = 0
       duration        = "60s"
+      aggregation {
+        alignment_period   = "60s"
+        per_series_aligner = "ALIGN_RATE"
+      }
       trigger {
         count = 1
       }
