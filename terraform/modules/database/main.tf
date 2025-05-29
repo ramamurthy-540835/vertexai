@@ -1,9 +1,8 @@
 resource "google_sql_database_instance" "this" {
+  project          = var.project
   name             = var.instance_name
   database_version = var.database_version
   region           = var.region
-  project          = var.project
-
   settings {
     # Second-generation instance tiers are based on the machine
     # type. See argument reference below.
