@@ -81,13 +81,13 @@ resource "google_storage_bucket" "this" {
  # format        = "Docker"
 # }
 
-module "kubeflow_registry" {
-  source        = "../../modules/artifact_registry"
-  location      =  var.location
-  repository_id = "lead_mgmt_kubeflow"
-  description   = "Kubeflow pipeline repository"
-  format        = "Kubeflow Pipelines"
-}
+#module "kubeflow_registry" {
+ # source        = "../../modules/artifact_registry"
+  #location      =  var.location
+  #repository_id = "lead_mgmt_kubeflow"
+  #description   = "Kubeflow pipeline repository"
+  #format        = "Kubeflow Pipelines"
+#}
 
 module "service_now_username" {
  source        = "../../modules/secret_manager"
