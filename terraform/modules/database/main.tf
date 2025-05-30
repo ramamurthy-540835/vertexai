@@ -1,34 +1,44 @@
 resource "google_sql_database_instance" "this" {
-  name             = var.instance_name
+  name             = var.instance_name # Must use only lowercase, numbers, hyphens
   project          = var.project
-  database_version = var.database_version
+  database_version = var.database_version # Should be a supported MySQL or PostgreSQL version for Enterprise Plus
   region           = var.region
+
   settings {
-    # Second-generation instance tiers are based on the machine
-    # type. See argument reference below.
-    tier = var.tier
-    edition = var.edition
+    tier    = var.tier
+
+    # Must be "ENTERPRISE_PLUS" to use data_cache_config
+    edition = "ENTERPRISE_PLUS"
+
+    # Only include this block for Enterprise Plus and supported engines
     data_cache_config {
-        data_cache_enabled = true
+      data_cache_enabled = true
     }
-     backup_configuration {
+
+    backup_configuration {
       enabled = true
+      # Uncomment only if using MySQL
       # binary_log_enabled = true
     }
+
     availability_type = var.availability_type
     activation_policy = var.activation_policy
     deletion_protection_enabled = true
     disk_autoresize = true
     disk_size = var.disk_size
+
     insights_config {
-    query_insights_enabled = true
+      query_insights_enabled = true
     }
+
+    # Ensure this flag is compatible with your engine/version
     database_flags {
       name  = "cloudsql.iam_authentication"
       value = "on"
     }
   }
 }
+
 resource "google_sql_user" "iam_service_account_user" {
   # Note: for Postgres only, GCP requires omitting the ".gserviceaccount.com" suffix
   # from the service account email due to length limits on database usernames.
