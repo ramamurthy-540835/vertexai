@@ -11,9 +11,9 @@ resource "google_sql_database_instance" "this" {
     edition = "ENTERPRISE_PLUS"
 
     # Only include this block for Enterprise Plus and supported engines
-    data_cache_config {
-      data_cache_enabled = true
-    }
+    #data_cache_config {
+    #  data_cache_enabled = true
+    #}
 
     backup_configuration {
       enabled = true
