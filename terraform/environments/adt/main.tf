@@ -112,7 +112,7 @@ module "cloud_sql_instance" {
   instance_name     = "lead-mgmt-adt"
   database_version  = "POSTGRES_15"
   region            = "us-central1"
-  tier              = "db-n2-standard-4"
+  tier              = "db-custom-4-15360"
   edition           = "ENTERPRISE"
   availability_type = "REGIONAL"
   activation_policy = "ALWAYS"
