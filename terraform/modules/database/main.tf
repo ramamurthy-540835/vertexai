@@ -8,9 +8,9 @@ resource "google_sql_database_instance" "this" {
     # type. See argument reference below.
     tier = var.tier
     edition = var.edition
-    data_cache_config {
-        data_cache_enabled = true
-    }
+    #data_cache_config {
+    #   data_cache_enabled = true
+    #}
      backup_configuration {
       enabled = true
       binary_log_enabled = true
