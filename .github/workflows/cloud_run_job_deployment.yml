@@ -65,7 +65,6 @@ jobs:
           --image $IMAGE \
           --region us-central1 \
           --project p-601-np-membership-adt \
-          --service-account ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL}} \
           --format json
 
       - name: 'Describe deployed job'
