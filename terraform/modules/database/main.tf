@@ -5,14 +5,17 @@ resource "google_sql_database_instance" "this" {
   region           = var.region
 
   settings {
-    # Second-generation instance tiers are based on the machine
-    # type. See argument reference below.
-    tier = var.tier
-    edition = var.edition
+    tier    = var.tier
+
+    # Must be "ENTERPRISE_PLUS" to use data_cache_config
+    edition = "ENTERPRISE_PLUS"
+
+    # Only include this block for Enterprise Plus and supported engines
     data_cache_config {
-        data_cache_enabled = true
+      data_cache_enabled = true
     }
-     backup_configuration {
+
+    backup_configuration {
       enabled = true
       # Uncomment only if using MySQL
       # binary_log_enabled = true
