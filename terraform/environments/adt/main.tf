@@ -96,14 +96,14 @@ module "service_now_username" {
  source        = "../../modules/secret_manager"
  project       = var.projectId
  secret_id     = "lead_mgmt_snow_user"
- secret_value  = "super-secret-value"
+ secret_value  = "lead.api.access"
 }
 
 module "service_now_password" {
  source        = "../../modules/secret_manager"
  project       = var.projectId
  secret_id     = "lead_mgmt_snow_password"
- secret_value  = "super-secret-value"
+ secret_value  = "Costco@web123"
 }
 
 module "cloud_sql_instance" {
