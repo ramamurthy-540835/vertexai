@@ -43,6 +43,14 @@ resource "google_project_service" "required_apis" {
   disable_on_destroy = false
 }
 
+ resource "google_project_iam_binding" "gcloud_binding" {
+      project = var.projectId
+      role    = "roles/iam.serviceAccountUser"
+      members = [
+        "serviceAccount:944661256421-compute@developer.gserviceaccount.com",
+      ]
+    }
+
 
 resource "google_storage_bucket" "this" {
   name          = "cs-${var.prefix}-${var.country}-${var.environment}"
