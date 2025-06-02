@@ -44,7 +44,7 @@ resource "google_project_service" "required_apis" {
 }
 
 resource "google_service_account" "my_service_account" {
-      account_id   = "gco-iam-svc-mbr-bc-adt@p-601-np-membership-adt.iam.gserviceaccount.com"
+      account_id   = "gco-iam-svc-mbr-bc-adt"
       display_name = "gco-iam-svc-mbr-bc-adt"
     }
 
