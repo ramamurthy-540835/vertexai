@@ -75,6 +75,7 @@ jobs:
             project_id: 'p-601-np-membership-adt'
             flags: |
               --service-account='gco-iam-svc-mlty-dbt-adt@p-601-np-membership-adt.iam.gserviceaccount.com'
+              --vpc-egress=all-traffic
   
       - name: 'Describe deployed job'
         run: |
