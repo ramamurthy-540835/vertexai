@@ -67,7 +67,7 @@ jobs:
        #   --project p-601-np-membership-adt \
         #  --service-account gco-iam-svc-cicd-mbr-bc-np@gcp-prj-cicd-core.iam.gserviceaccount.com \
          # --format json
-      - id: 'Deploy cloud run job'
+      - id: 'deploy'
         uses: 'google-github-actions/deploy-cloudrun@v2'
         with:
             job: 'lead-match-job'
