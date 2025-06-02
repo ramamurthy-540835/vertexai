@@ -1,0 +1,10 @@
+kfp
+google-cloud-aiplatform
+google-cloud-storage
+google-cloud-secret-manager
+cloud-sql-python-connector[pg8000]
+sqlalchemy
+pandas
+numpy
+unidecode
+pgvector
