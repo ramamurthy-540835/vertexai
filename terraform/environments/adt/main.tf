@@ -43,11 +43,16 @@ resource "google_project_service" "required_apis" {
   disable_on_destroy = false
 }
 
+resource "google_service_account" "my_service_account" {
+      account_id   = "gco-iam-svc-mbr-bc-adt@p-601-np-membership-adt.iam.gserviceaccount.com"
+      display_name = "gco-iam-svc-mbr-bc-adt"
+    }
+
  resource "google_project_iam_binding" "gcloud_binding" {
       project = var.projectId
       role    = "roles/iam.serviceAccountUser"
       members = [
-        "serviceAccount:944661256421-compute@developer.gserviceaccount.com",
+        "serviceAccount:${google_service_account.my_service_account.email}",
       ]
     }
 
