@@ -28,6 +28,13 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install build wheel setuptools
+      - name: Debug directory structure
+        run: |
+          echo "=== Current working directory ==="
+          pwd
+          echo ""
+          echo "=== Repository root contents ==="
+          ls -la
       - name: Build wheel and replace existing
         run: |
           # Remove existing wheel files
