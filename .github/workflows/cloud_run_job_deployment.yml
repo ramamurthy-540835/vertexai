@@ -74,7 +74,7 @@ jobs:
             image: 'us-docker.pkg.dev/gcp-prj-images/gcp-gar-repo-mbrshp/lead-match-job:latest'
             project_id: 'p-601-np-membership-adt'
             flags: |
-              --service-account='gco-iam-svc-cicd-mbr-bc-np@gcp-prj-cicd-core.iam.gserviceaccount.com'
+              --service-account='gco-iam-svc-mbr-bc-adt@p-601-np-membership-adt.iam.gserviceaccount.com'
   
       - name: 'Describe deployed job'
         run: |
