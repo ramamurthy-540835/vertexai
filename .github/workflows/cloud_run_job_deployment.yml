@@ -73,6 +73,7 @@ jobs:
             job: 'lead-match-job'
             image: 'us-docker.pkg.dev/gcp-prj-images/gcp-gar-repo-mbrshp/lead-match-job:latest'
             project_id: 'p-601-np-membership-adt'
+            service_account: 'gco-iam-svc-cicd-mbr-bc-np@gcp-prj-cicd-core.iam.gserviceaccount.com'
       - name: 'Describe deployed job'
         run: |
           gcloud run jobs describe lead-match-job \
