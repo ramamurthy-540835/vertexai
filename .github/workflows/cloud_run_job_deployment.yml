@@ -58,16 +58,21 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           tags: us-docker.pkg.dev/gcp-prj-images/gcp-gar-repo-mbrshp/lead-match-job:latest 
 
-      - name: 'Deploy cloud run job with gcloud'
-        run: |
-          IMAGE="us-docker.pkg.dev/gcp-prj-images/gcp-gar-repo-mbrshp/lead-match-job:latest"
-          gcloud run jobs deploy lead-match-job \
-          --image $IMAGE \
-          --region us-central1 \
-          --project p-601-np-membership-adt \
-          --service-account gco-iam-svc-cicd-mbr-bc-np@gcp-prj-cicd-core.iam.gserviceaccount.com \
-          --format json
-
+    #  - name: 'Deploy cloud run job with gcloud'
+     #   run: |
+      #    IMAGE="us-docker.pkg.dev/gcp-prj-images/gcp-gar-repo-mbrshp/lead-match-job:latest"
+      #    gcloud run jobs deploy lead-match-job \
+      #    --image $IMAGE \
+       #   --region us-central1 \
+       #   --project p-601-np-membership-adt \
+        #  --service-account gco-iam-svc-cicd-mbr-bc-np@gcp-prj-cicd-core.iam.gserviceaccount.com \
+         # --format json
+      - id: 'Deploy cloud run job'
+        uses: 'google-github-actions/deploy-cloudrun@v2'
+        with:
+            job: 'lead-match-job'
+            image: 'us-docker.pkg.dev/gcp-prj-images/gcp-gar-repo-mbrshp/lead-match-job:latest'
+            project_id: 'p-601-np-membership-adt'
       - name: 'Describe deployed job'
         run: |
           gcloud run jobs describe lead-match-job \
