@@ -43,20 +43,6 @@ resource "google_project_service" "required_apis" {
   disable_on_destroy = false
 }
 
-resource "google_service_account" "my_service_account" {
-      account_id   = "gco-iam-svc-mbr-bc-adt"
-      display_name = "gco-iam-svc-mbr-bc-adt"
-    }
-
- resource "google_project_iam_binding" "gcloud_binding" {
-      project = var.projectId
-      role    = "roles/iam.serviceAccountUser"
-      members = [
-        "serviceAccount:${google_service_account.my_service_account.email}",
-      ]
-    }
-
-
 resource "google_storage_bucket" "this" {
   name          = "cs-${var.prefix}-${var.country}-${var.environment}"
   location      = var.location
