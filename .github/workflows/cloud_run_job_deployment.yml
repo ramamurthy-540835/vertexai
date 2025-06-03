@@ -105,6 +105,7 @@ jobs:
             flags: |
               --service-account='gco-iam-svc-mlty-dbt-adt@p-601-np-membership-adt.iam.gserviceaccount.com'
               --vpc-egress=all-traffic
+              --network=gcp-vpc-np-host 
   
       - name: 'Describe deployed job'
         run: |
