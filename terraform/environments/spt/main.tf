@@ -25,6 +25,7 @@ terraform {
 
 resource "google_project_service" "required_apis" {
   for_each = toset([
+    "serviceusage.googleapis.com"
     "pubsub.googleapis.com",
     "monitoring.googleapis.com",
     "sqladmin.googleapis.com",
@@ -33,8 +34,7 @@ resource "google_project_service" "required_apis" {
     "cloudresourcemanager.googleapis.com",
     "cloudfunctions.googleapis.com",
     "storage.googleapis.com",
-    "cloudscheduler.googleapis.com",
-    "serviceusage.googleapis.com"
+    "cloudscheduler.googleapis.com"
   ])
 
   project = var.projectId
