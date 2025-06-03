@@ -91,6 +91,11 @@ resource "google_storage_bucket" "this" {
   #format        = "Kubeflow Pipelines"
 #}
 
+resource "google_service_account" "my_service_account" {
+      account_id   = "gco-iam-svc-mbr-bc-spt"
+      display_name = "gco-iam-svc-mbr-bc-spt"
+    }
+
 module "service_now_username" {
  source        = "../../modules/secret_manager"
  project       = var.projectId
