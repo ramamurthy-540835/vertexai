@@ -19,7 +19,7 @@ jobs:
     environment: ${{ github.event.pull_request.head.ref }}
     strategy:
       matrix:
-        env: ['spt'] #,['spt', 'qat', 'spt'] # Exclude prd from auto-plan
+        env: ['spt'] #,['adt', 'qat', 'spt'] # Exclude prd from auto-plan
     
     permissions:
       id-token: write
