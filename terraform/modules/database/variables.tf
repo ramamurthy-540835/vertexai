@@ -50,3 +50,12 @@ variable "service_account" {
   description = "service account for iam authentication"
   type        = string
 }
+variable "vpc_name" {
+  description = "Name of the shared VPC"
+  type        = string
+}
+
+variable "host_project_id" {
+  description = "ID of the host project where the shared VPC is located"
+  type        = string
+}
