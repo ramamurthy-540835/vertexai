@@ -56,3 +56,4 @@ resource "google_sql_user" "iam_service_account_user" {
   name     = trimsuffix(var.service_account, ".gserviceaccount.com")
   instance = google_sql_database_instance.this.name
   type     = "CLOUD_IAM_SERVICE_ACCOUNT"
+}
