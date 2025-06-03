@@ -4,12 +4,12 @@ on:
   # Triggers the workflow on push or pull request events but only for the "main" branch
   push:
     branches: [ "provision_spt" ]
-    paths: 
-      - 'terraform/environments/spt/**.tf'
+   # paths: 
+    #  - 'terraform/environments/spt/**.tf'
   pull_request:
     branches: [ "provision_spt" ]
-    paths: 
-     - 'terraform/environments/spt/**.tf'
+    #paths: 
+    # - 'terraform/environments/spt/**.tf'
 
 
 jobs:
