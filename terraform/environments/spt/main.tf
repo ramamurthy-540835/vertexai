@@ -110,19 +110,19 @@ module "service_now_password" {
  secret_value  = "Costco@web123"
 }
 
-module "cloud_sql_instance" {
-  source            = "../../modules/database"
-  project           = "p-601-np-membership-spt"
-  instance_name     = "lead-mgmt-spt"
-  database_version  = "POSTGRES_15"
-  region            = "us-central1"
-  tier              = "db-custom-4-15360"
-  edition           = "ENTERPRISE"
-  availability_type = "REGIONAL"
-  activation_policy = "ALWAYS"
-  disk_size         = 100
-  service_account =   var.gcp_workload_identity_sa_email
-}
+# module "cloud_sql_instance" {
+ # source            = "../../modules/database"
+  #project           = "p-601-np-membership-spt"
+ # instance_name     = "lead-mgmt-spt"
+ # database_version  = "POSTGRES_15"
+ # region            = "us-central1"
+ # tier              = "db-custom-4-15360"
+ # edition           = "ENTERPRISE"
+ # availability_type = "REGIONAL"
+ # activation_policy = "ALWAYS"
+ # disk_size         = 100
+ # service_account =   var.gcp_workload_identity_sa_email
+# }
 
 module "snow_sync_scheduler" {
   source           = "../../modules/snow_sync_scheduler"
