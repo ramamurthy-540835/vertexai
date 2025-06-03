@@ -18,7 +18,6 @@ terraform {
 terraform {
   backend "gcs" {
     bucket = "gcp-gcs-cicd-core-mbr-bc-lead"
-    #bucket = "gcp-gcs-cicd-core-gmp-membership"
     prefix = "spt/bc"
   }
 }
