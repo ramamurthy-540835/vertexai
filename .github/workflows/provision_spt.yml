@@ -37,6 +37,11 @@ jobs:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
           service_account: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
           project_id: 'p-601-np-membership-spt'
+
+      - name: "Enable Service Usage API"
+        run: |
+          gcloud config set project p-601-np-membership-spt
+          gcloud services enable serviceusage.googleapis.com
           
       - name: "Setup Terraform"
         uses: hashicorp/setup-terraform@v3
