@@ -4,8 +4,8 @@ on:
   # Triggers the workflow on push or pull request events but only for the "main" branch
   push:
     branches: [ "provision_qat" ]
-    paths: 
-      - 'terraform/environments/qat/**.tf'
+ #   paths: 
+  #    - 'terraform/environments/qat/**.tf'
   pull_request:
     branches: [ "provision_qat" ]
     paths: 
