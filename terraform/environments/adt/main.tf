@@ -80,6 +80,7 @@ module "kubeflow_registry" {
  repository_id = "lead_mgmt_kubeflow"
  description   = "Kubeflow pipeline repository"
  format        = "kfp"
+ project       = var.projectId
 }
 
 resource "google_service_account" "my_service_account" {

@@ -19,3 +19,8 @@ variable "format" {
   type        = string
   default     = "DOCKER"
 }
+
+variable "project" {
+  description = "Project id information"
+  type        = string
+}
