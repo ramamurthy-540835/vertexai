@@ -1,0 +1,161 @@
+import os
+import concurrent.futures
+import pandas as pd
+from datetime import datetime
+from pgvector.sqlalchemy import Vector
+import sqlalchemy
+from vertexai.preview.language_models import TextEmbeddingModel,TextEmbeddingInput
+from sqlalchemy.dialects.postgresql import TIMESTAMP
+from sqlalchemy import Column, Integer, Text, DateTime
+import numpy as np
+from sqlalchemy.orm import declarative_base, sessionmaker
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from costco.leadmgmt.config.Configuration import JobConfig
+from costco.leadmgmt.util.apputil import load_file_from_gcs
+from costco.leadmgmt.database.DBUtil import load_data_from_cloudsql
+from costco.leadmgmt.util.fiscal_year import get_costco_fiscal_info
+
+# Get the base image from environment variables
+BASE_IMAGE = os.environ.get("KFP_CUSTOM_IMAGE")
+MAX_WORKERS = os.environ.get("MAX_WORKERS")
+
+model = TextEmbeddingModel.from_pretrained("text-embedding-005")
+
+
+def data_extraction(transaction_df, pos_insert_id):
+
+    # type confirmation
+    pos_insert_id['pos_id'] = pos_insert_id['pos_id'].astype(str)
+    transaction_df['pos_id'] = transaction_df['pos_id'].astype(str)
+    transaction_df['account_number'] = transaction_df['account_number'].astype(int)
+
+    # transaction inserts
+    transaction_insert_df = transaction_df[transaction_df['pos_id'].isin(pos_insert_id['pos_id'])]
+    print(len(transaction_insert_df))
+
+    return transaction_insert_df
+
+
+def batch_embedding(text_list):
+    """Generate embeddings for a batch of texts"""
+    try:
+
+        embedding = []
+        text_list = [TextEmbeddingInput(text, 'SEMANTIC_SIMILARITY') for text in text_list]
+        embeddings = model.get_embeddings(text_list)
+        for i in range(0, len(embeddings)):
+            embedding.append(embeddings[i].values)
+        # return [embedding.values for embedding in embeddings]
+        return embedding
+    except Exception as e:
+        print(f"Batch Error occurred: {str(e)}")
+
+
+def process_in_batch(df, embedding_column_name, column_name):
+    if embedding_column_name not in df.columns:
+        df[embedding_column_name] = None
+
+    df[column_name] = df[column_name].fillna('')
+    df_to_embed = df[df[column_name].str.strip() != ''].copy()
+
+    batch_size = 250
+    batches = [
+        df_to_embed[column_name].iloc[i:i + batch_size].tolist()
+        for i in range(0, len(df_to_embed), batch_size)
+    ]
+
+    all_embeddings = []
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        future_to_batch = {executor.submit(batch_embedding, batch): idx for idx, batch in enumerate(batches)}
+        results = [None] * len(batches)
+
+        for future in as_completed(future_to_batch):
+            idx = future_to_batch[future]
+            try:
+                embeddings = future.result()
+                results[idx] = embeddings
+            except Exception as exc:
+                print(f'Batch {idx} generated an exception: {exc}')
+                results[idx] = [[0] * 768] * len(batches[idx])  # default fallback
+
+    # Flatten and assign
+    all_embeddings = [emb for batch in results if batch for emb in batch]
+    df_to_embed[embedding_column_name] = all_embeddings
+
+    df.update(df_to_embed)
+    df[embedding_column_name] = df[embedding_column_name].apply(
+        lambda x: x if isinstance(x, list) and len(x) == 768 else [0] * 768
+    )
+
+    return df[embedding_column_name].to_list()
+
+
+def insert_operation_transaction(engine, table_name, schema_name, data_frame):
+    data_frame.to_sql(table_name, con=engine, if_exists='append', index=False, schema=schema_name, method='multi',
+                      chunksize=1000, dtype={"combined_embedding": Vector(768), "address_embedding": Vector(768),
+                                             "name_embedding": Vector(768), "load_date": TIMESTAMP})
+
+def embedding_generation(file_pos: str,config_file_path:str):
+
+    #Initialization
+    job_config = JobConfig(config_file_path)
+    db_config = job_config.db_config
+    query_config = job_config.match_query
+
+    #fiscal information
+    fiscal_info = get_costco_fiscal_info()
+
+    #query
+
+    query_pos_inserts_ids = f'''{query_config.query_pos_inserts_ids} = {fiscal_info["fiscal_year"]}'''
+
+
+    #database detail
+    schema_name = db_config.schema_name
+    insert_lead_table_name = db_config.insert_lead_table_name
+    insert_pos_table_name = db_config.insert_pos_table_name
+
+    #engine
+    engine = db_config.get_engine()
+
+    
+    pos_insert_id =  load_data_from_cloudsql( #pos records in database
+        query_input=query_pos_inserts_ids,
+        engine=engine)
+
+    
+    transaction_df = load_file_from_gcs(file_pos)
+
+    
+    transaction_df.rename(columns={"COMBINED_FIELD": "combined_field","FULL_ADDRESS": "full_address",}, inplace=True)
+
+    transaction_df = transaction_df[
+        ~(
+                transaction_df['address_line_one'].isna() &
+                transaction_df['business_name'].isna()
+        )
+    ]
+
+    transaction_df.drop(columns=['membership_number', 'first_name', 'last_name', 'city', 'state', 'zip_code', 'phone', 'email',
+                 'CUSTOMER_NAME', 'address_line_one', 'address_line_two', 'updated_date'], inplace=True)
+    
+    transaction_insert_df = data_extraction(transaction_df,pos_insert_id)
+
+
+    if not transaction_insert_df.empty:
+        
+        # Assign embeddings to respective columns in the dataframe
+        transaction_insert_df['combined_embedding'] = process_in_batch(transaction_insert_df,'combined_embedding', 'combined_field')#column name to  be changed
+        transaction_insert_df['address_embedding'] = process_in_batch(transaction_insert_df,'address_embedding', 'full_address') #column name to  be changed
+        transaction_insert_df['name_embedding'] = process_in_batch(transaction_insert_df,'name_embedding', 'business_name') #column name to  be changed
+
+        transaction_insert_df['load_date'] = pd.to_datetime(datetime.now())
+
+        transaction_insert_df = transaction_insert_df.rename(columns={"full_address": "business_address", "fiscal_year_transaction": "fiscal_year",
+                     "fiscal_period_transaction": "fiscal_period"})
+
+        insert_operation_transaction(engine, insert_pos_table_name, schema_name, transaction_insert_df)
+
+
+            
+

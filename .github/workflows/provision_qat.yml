@@ -1,0 +1,61 @@
+name: "provision_qat"
+
+on:
+  # Triggers the workflow on push or pull request events but only for the "main" branch
+  push:
+    branches: [ "provision_qat" ]
+ #   paths: 
+  #    - 'terraform/environments/qat/**.tf'
+  pull_request:
+    branches: [ "provision_qat" ]
+    paths: 
+     - 'terraform/environments/qat/**.tf'
+
+
+jobs:
+  run:
+    name: "Provision infra"
+    runs-on: "ubuntu-latest"
+    environment: ${{ github.event.pull_request.head.ref }}
+    strategy:
+      matrix:
+        env: ['qat'] #,['qat', 'qat', 'spt'] # Exclude prd from auto-plan
+    
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: "Checkout code"
+        uses: actions/checkout@v4
+
+      - name: "Auth in GCP"
+        id: "auth"
+        uses: "google-github-actions/auth@v2"
+        with:
+          create_credentials_file: true
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
+          service_account: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
+          project_id: 'p-601-np-membership-qat'
+          
+      - name: "Enable Service Usage API"
+        run: |
+          gcloud config set project p-601-np-membership-qat
+          gcloud services enable serviceusage.googleapis.com
+          
+      - name: "Setup Terraform"
+        uses: hashicorp/setup-terraform@v3
+
+      - name: "Terraform Init"
+        working-directory: ./terraform/environments/${{ matrix.env }}
+        run: terraform init
+
+      - name: "Terraform Plan"
+        working-directory: ./terraform/environments/${{ matrix.env }}
+        run: terraform plan -out=plan.tfplan -input=false -lock-timeout=10m
+      
+      - name: "Terraform Apply"
+        working-directory: ./terraform/environments/${{ matrix.env }}
+        run: terraform apply -input=false -lock-timeout=10m plan.tfplan
+        env: 
+            TF_VAR_gcp_workload_identity_sa_email: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}

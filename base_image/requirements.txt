@@ -1,7 +1,6 @@
 kfp
 google-cloud-aiplatform
 google-cloud-storage
-configparser
 google-cloud-secret-manager
 cloud-sql-python-connector[pg8000]
 sqlalchemy
@@ -9,4 +8,3 @@ pandas
 numpy
 unidecode
 pgvector
-google-cloud-pipeline-components

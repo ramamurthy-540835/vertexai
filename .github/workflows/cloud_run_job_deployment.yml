@@ -1,0 +1,115 @@
+name: container-test
+on:
+  #Triggers the workflow on push or pull request events but only for the "main" branch
+  push:
+    paths:
+      - .github/workflows/cloud_run_job_deployment.yml
+      - cloud-run-job/**
+
+jobs:
+  build-and-push-container:
+    name: Build and Push Container
+    runs-on:
+      - self-hosted
+      - us-west1
+    permissions:
+      id-token: write
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10.16'
+      - name: Install build dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install build wheel setuptools Cython
+      - name: Debug directory structure
+        run: |
+          echo "=== Current working directory ==="
+          pwd
+          echo ""
+          echo "=== Repository root contents ==="
+          ls -la
+      - name: Build wheel and replace existing
+        run: |
+          # Remove existing wheel files
+          rm -f ./cloud-run-job/*.whl
+          # Build new wheel
+          cd ./lead_match_codebase
+          python -m build --wheel
+          # Copy the built wheel to base_image directory
+          cp dist/*.whl ../cloud-run-job/
+          # Go back to root and verify the copy worked
+          cd ..
+          echo "Wheel files copied to base_image:"
+          ls -la ./cloud-run-job/*.whl
+       # working-directory: ./lead_match_codebase
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: auth
+        name: Auth to GCP for GAR service account
+        uses : google-github-actions/auth@v2
+        with:
+          token_format: access_token
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID}}
+          service_account: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL}}
+      - name: Login to Google Artifact Registry
+        uses: docker/login-action@v3
+        with:
+          registry: us-docker.pkg.dev
+          username: oauth2accesstoken
+          password: ${{ steps.auth.outputs.access_token }}
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: |
+            ghcr.io/${{ github.repository_owner }}/membership/lead-management/lead-match-job
+            us-docker.pkg.dev/gcp-prj-images/gcp-gar-repo-mbrshp/lead-match-job
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        env:
+          SOURCE_DATE_EPOCH: 0
+        with:
+          context: ./cloud-run-job
+          file: ./cloud-run-job/Dockerfile
+          push: true
+          labels: ${{ steps.meta.outputs.labels }}
+          tags: us-docker.pkg.dev/gcp-prj-images/gcp-gar-repo-mbrshp/lead-match-job:latest 
+
+    #  - name: 'Deploy cloud run job with gcloud'
+     #   run: |
+      #    IMAGE="us-docker.pkg.dev/gcp-prj-images/gcp-gar-repo-mbrshp/lead-match-job:latest"
+      #    gcloud run jobs deploy lead-match-job \
+      #    --image $IMAGE \
+       #   --region us-central1 \
+       #   --project p-601-np-membership-adt \
+        #  --service-account gco-iam-svc-cicd-mbr-bc-np@gcp-prj-cicd-core.iam.gserviceaccount.com \
+         # --format json
+      - id: 'deploy'
+        uses: 'google-github-actions/deploy-cloudrun@v2'
+        with:
+            job: 'lead-match-job'
+            image: 'us-docker.pkg.dev/gcp-prj-images/gcp-gar-repo-mbrshp/lead-match-job:latest'
+            project_id: 'p-601-np-membership-adt'
+            flags: |
+              --service-account='gco-iam-svc-mlty-dbt-adt@p-601-np-membership-adt.iam.gserviceaccount.com'
+              --vpc-egress=all-traffic
+              --network=gcp-vpc-np-host 
+  
+      - name: 'Describe deployed job'
+        run: |
+          gcloud run jobs describe lead-match-job \
+            --region us-central1 \
+            --project p-601-np-membership-adt \
+            --format="yaml"

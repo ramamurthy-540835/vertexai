@@ -1,11 +1,7 @@
-name: "google_auth"
+name: "initial_setup"
 
 on:
-  # Triggers the workflow on push or pull request events but only for the "main" branch
-  push:
-    branches: [ "main" ]
-  pull_request:
-    branches: [ "main" ]
+  workflow_dispatch:  # Trigger manually
 
 env:
   PROJECT_ID: 'p-601-np-membership-adt' # TODO: update to your Google Cloud project ID
@@ -35,19 +31,18 @@ jobs:
           create_credentials_file: true
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
           service_account: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
+
+      - name: "Enable Service Usage API for ADT"
+        run: |
+          gcloud config set project p-601-np-membership-adt
+          gcloud services enable serviceusage.googleapis.com
+
+      - name: "Enable Service Usage API for SPT"
+        run: |
+          gcloud config set project p-601-np-membership-spt
+          gcloud services enable serviceusage.googleapis.com
           
-      # - name: "Setup Terraform"
-      #   uses: hashicorp/setup-terraform@v3
-
-      # - name: "Terraform Init"
-      #   working-directory: ./terraform/environments/${{ matrix.env }}
-      #   run: terraform init
-
-      # - name: "Terraform Plan"
-      #   working-directory: ./terraform/environments/${{ matrix.env }}
-      #   run: terraform plan -out=plan.tfplan -input=false -lock-timeout=10m
-      
-      # - name: "Terraform Apply"
-      #   working-directory: ./terraform/environments/${{ matrix.env }}
-      #   #if: github.event_name == 'push'
-      #   run: terraform apply -input=false -lock-timeout=10m plan.tfplan
+      - name: "Enable Service Usage API for QAT"
+        run: |
+          gcloud config set project p-601-np-membership-qat
+          gcloud services enable serviceusage.googleapis.com
