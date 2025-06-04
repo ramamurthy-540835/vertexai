@@ -102,7 +102,7 @@ jobs:
         with:
           token_format: access_token
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
-          service_account: ${{ env.SERVICE_ACCOUNT }}
+          service_account: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL}}
 
       - name: Login to Google Artifact Registry
         if: env.DEPLOY == 'true'
