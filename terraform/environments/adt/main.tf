@@ -18,7 +18,6 @@ terraform {
 terraform {
   backend "gcs" {
     bucket = "gcp-gcs-cicd-core-mbr-bc-lead"
-    #bucket = "gcp-gcs-cicd-core-gmp-membership"
     prefix = "adt/bc"
   }
 }
@@ -75,14 +74,6 @@ resource "google_storage_bucket" "this" {
   }
 }
 
-# module "docker_registry" {
- # source        = "../../modules/artifact_registry"
- # location      =  var.location
- # repository_id = "gcr.io"
- # description   = "Docker repository"
- # format        = "Docker"
-# }
-
 #module "kubeflow_registry" {
  # source        = "../../modules/artifact_registry"
   #location      =  var.location
@@ -90,6 +81,11 @@ resource "google_storage_bucket" "this" {
   #description   = "Kubeflow pipeline repository"
   #format        = "Kubeflow Pipelines"
 #}
+
+resource "google_service_account" "my_service_account" {
+      account_id   = "gco-iam-svc-mbr-bc-adt"
+      display_name = "gco-iam-svc-mbr-bc-adt"
+    }
 
 module "service_now_username" {
  source        = "../../modules/secret_manager"
@@ -117,7 +113,9 @@ module "cloud_sql_instance" {
   activation_policy = "ALWAYS"
   disk_size         = 100
   service_account =   var.gcp_workload_identity_sa_email
-}
+  host_project_id = "gcp-prj-transit-hub"
+  vpc_name = "gcp-vpc-np-host"
+ }
 
 module "snow_sync_scheduler" {
   source           = "../../modules/snow_sync_scheduler"
