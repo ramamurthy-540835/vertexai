@@ -74,13 +74,13 @@ resource "google_storage_bucket" "this" {
   }
 }
 
-#module "kubeflow_registry" {
- # source        = "../../modules/artifact_registry"
-  #location      =  var.location
-  #repository_id = "lead_mgmt_kubeflow"
-  #description   = "Kubeflow pipeline repository"
-  #format        = "Kubeflow Pipelines"
-#}
+module "kubeflow_registry" {
+ source        = "../../modules/artifact_registry"
+ location      =  var.location
+ repository_id = "lead_mgmt_kubeflow"
+ description   = "Kubeflow pipeline repository"
+ format        = "kfp"
+}
 
 resource "google_service_account" "my_service_account" {
       account_id   = "gco-iam-svc-mbr-bc-adt"
@@ -101,21 +101,21 @@ module "service_now_password" {
  secret_value  = "Costco@web123"
 }
 
-# module "cloud_sql_instance" {
- # source            = "../../modules/database"
- # project           = "p-601-np-membership-adt"
- # instance_name     = "lead-mgmt-adt"
- # database_version  = "POSTGRES_15"
- # region            = "us-central1"
- # tier              = "db-custom-4-15360"
- # edition           = "ENTERPRISE"
- # availability_type = "REGIONAL"
- # activation_policy = "ALWAYS"
- # disk_size         = 100
- # service_account =   var.gcp_workload_identity_sa_email
- # host_project_id = "gcp-prj-transit-hub"
- # vpc_name = "gcp-vpc-np-host"
- # }
+module "cloud_sql_instance" {
+  source            = "../../modules/database"
+  project           = "p-601-np-membership-adt"
+  instance_name     = "lead-mgmt-adt"
+  database_version  = "POSTGRES_15"
+  region            = "us-central1"
+  tier              = "db-custom-4-15360"
+  edition           = "ENTERPRISE"
+  availability_type = "REGIONAL"
+  activation_policy = "ALWAYS"
+  disk_size         = 100
+  service_account =   var.gcp_workload_identity_sa_email
+  host_project_id = "gcp-prj-transit-hub"
+  vpc_name = "gcp-vpc-np-host"
+  }
 
 module "snow_sync_scheduler" {
   source           = "../../modules/snow_sync_scheduler"
