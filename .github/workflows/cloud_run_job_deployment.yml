@@ -43,15 +43,15 @@ jobs:
             echo "ENV=qat" >> $GITHUB_ENV
             echo "DEPLOY=true" >> $GITHUB_ENV
             echo "BUILD_IMAGE=false" >> $GITHUB_ENV
-            echo "PROJECT_ID=p-601-qat-membership-qat" >> $GITHUB_ENV
-            echo "SERVICE_ACCOUNT=gco-iam-svc-mlty-dbt-qat@p-601-qat-membership-qat.iam.gserviceaccount.com" >> $GITHUB_ENV
+            echo "PROJECT_ID=p-601-np-membership-qat" >> $GITHUB_ENV
+            echo "SERVICE_ACCOUNT=gco-iam-svc-mlty-dbt-qat@p-601-np-membership-qat.iam.gserviceaccount.com" >> $GITHUB_ENV
 
           elif [[ "$REF" == refs/tags/tag_spt ]]; then
             echo "ENV=spt" >> $GITHUB_ENV
             echo "DEPLOY=true" >> $GITHUB_ENV
             echo "BUILD_IMAGE=false" >> $GITHUB_ENV
-            echo "PROJECT_ID=p-601-spt-membership-spt" >> $GITHUB_ENV
-            echo "SERVICE_ACCOUNT=gco-iam-svc-mlty-dbt-spt@p-601-spt-membership-spt.iam.gserviceaccount.com" >> $GITHUB_ENV
+            echo "PROJECT_ID=p-601-np-membership-spt" >> $GITHUB_ENV
+            echo "SERVICE_ACCOUNT=gco-iam-svc-mlty-dbt-spt@p-601-np-membership-spt.iam.gserviceaccount.com" >> $GITHUB_ENV
 
           else
             echo "DEPLOY=false" >> $GITHUB_ENV
