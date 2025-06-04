@@ -74,14 +74,6 @@ resource "google_storage_bucket" "this" {
   }
 }
 
-# module "docker_registry" {
- # source        = "../../modules/artifact_registry"
- # location      =  var.location
- # repository_id = "gcr.io"
- # description   = "Docker repository"
- # format        = "Docker"
-# }
-
 #module "kubeflow_registry" {
  # source        = "../../modules/artifact_registry"
   #location      =  var.location
@@ -121,6 +113,8 @@ module "cloud_sql_instance" {
   activation_policy = "ALWAYS"
   disk_size         = 100
   service_account =   var.gcp_workload_identity_sa_email
+  host_project_id = "gcp-prj-transit-hub"
+  vpc_name = "gcp-vpc-np-host"
 }
 
 module "snow_sync_scheduler" {
