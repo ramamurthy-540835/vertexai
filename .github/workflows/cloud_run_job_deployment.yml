@@ -32,7 +32,7 @@ jobs:
           REF_NAME="${GITHUB_REF_NAME}"
           REF="${GITHUB_REF}"
 
-          if [[ "$REF" == refs/heads/feature/* ]]; then
+          if [[ "$REF" == refs/heads/feature** ]]; then
             echo "ENV=adt" >> $GITHUB_ENV
             echo "DEPLOY=true" >> $GITHUB_ENV
             echo "BUILD_IMAGE=true" >> $GITHUB_ENV
