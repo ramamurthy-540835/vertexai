@@ -75,6 +75,7 @@ jobs:
       - name: Install build dependencies
         if: env.BUILD_IMAGE == 'true'
         run: |
+          sudo apt-get update && sudo apt-get install -y build-essential libpq-dev python3-dev
           python -m pip install --upgrade pip
           pip install build wheel setuptools Cython
 
