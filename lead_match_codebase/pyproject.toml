@@ -20,7 +20,7 @@ Issues = "https://github.com/pypa/example/issues"
 
 
 [build-system]
-requires = ["setuptools >= 77.0.3", "google-cloud-storage" ,"cloud-sql-python-connector[pg8000]"
+requires = ["setuptools >= 77.0.3", "cython", "google-cloud-storage" ,"cloud-sql-python-connector[pg8000]"
     ,"pandas" ,"google-cloud-secret-manager" ,"requests" ,"sqlalchemy" ,"fsspec" ,"gcsfs" ,"pydantic","configparse",
     "kfp","google-cloud-aiplatform","google-cloud-pipeline-components","unidecode","numpy","pgvector"
 ]
