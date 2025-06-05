@@ -33,7 +33,8 @@ resource "google_project_service" "required_apis" {
     "cloudfunctions.googleapis.com",
     "storage.googleapis.com",
     "cloudscheduler.googleapis.com",
-    "serviceusage.googleapis.com"
+    "serviceusage.googleapis.com",
+    "servicenetworking.googleapis.com"
   ])
 
   project = var.projectId
