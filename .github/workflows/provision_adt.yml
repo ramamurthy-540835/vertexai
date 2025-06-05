@@ -6,11 +6,17 @@ on:
     branches: [ "feature**" ]
     paths: 
       - 'terraform/environments/adt/**.tf'
+  push:
+    branches: [ "feature**" ]
+    paths: 
       - 'terraform/modules/**/**.tf'
   pull_request:
     branches: [ "feature**" ]
     paths: 
      - 'terraform/environments/adt/**.tf'
+  pull_request:
+    branches: [ "feature**" ]
+    paths: 
      - 'terraform/modules/**/**.tf'
 
 
