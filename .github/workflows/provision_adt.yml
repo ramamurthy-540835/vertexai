@@ -8,7 +8,7 @@ on:
     paths:
       - 'terraform/environments/adt/**.tf'
       - 'terraform/modules/**/**.tf'
-      - './provision_adt.yml'
+      - '.github/workflows/provision_adt.yml'
 
   pull_request:
     branches:
@@ -16,7 +16,7 @@ on:
     paths:
       - 'terraform/environments/adt/**.tf'
       - 'terraform/modules/**/**.tf'
-      - './provision_adt.yml'
+      - '.github/workflows/provision_adt.yml'
 
 
 jobs:
