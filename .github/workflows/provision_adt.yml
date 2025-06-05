@@ -6,10 +6,12 @@ on:
     branches: [ "feature**" ]
     paths: 
       - 'terraform/environments/adt/**.tf'
+      - 'terraform/modules/**/**.tf'
   pull_request:
     branches: [ "feature**" ]
     paths: 
      - 'terraform/environments/adt/**.tf'
+     - 'terraform/modules/**/**.tf'
 
 
 jobs:
