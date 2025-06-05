@@ -59,3 +59,8 @@ variable "host_project_id" {
   description = "ID of the host project where the shared VPC is located"
   type        = string
 }
+
+variable "private_network" {
+  description = "private network for the database"
+  type        = string
+}
