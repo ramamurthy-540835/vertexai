@@ -1,4 +1,4 @@
-#data "google_compute_network" "shared_vpc" {
+# data "google_compute_network" "shared_vpc" {
 #  name    = var.vpc_name
 #  project = var.host_project_id  # <-- specify the project where the VPC actually lives
 # }
