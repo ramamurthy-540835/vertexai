@@ -3,21 +3,20 @@ name: "provision_adt"
 on:
   # Triggers the workflow on push or pull request events but only for the "main" branch
   push:
-    branches: [ "feature**" ]
-    paths: 
+    branches:
+      - "feature**"
+    paths:
       - 'terraform/environments/adt/**.tf'
-  push:
-    branches: [ "feature**" ]
-    paths: 
       - 'terraform/modules/**/**.tf'
+      - './provision_adt.yml'
+
   pull_request:
-    branches: [ "feature**" ]
-    paths: 
-     - 'terraform/environments/adt/**.tf'
-  pull_request:
-    branches: [ "feature**" ]
-    paths: 
-     - 'terraform/modules/**/**.tf'
+    branches:
+      - "feature**"
+    paths:
+      - 'terraform/environments/adt/**.tf'
+      - 'terraform/modules/**/**.tf'
+      - './provision_adt.yml'
 
 
 jobs:
