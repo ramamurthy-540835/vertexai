@@ -34,7 +34,7 @@ resource "google_sql_database_instance" "this" {
 
      ip_configuration {
       ipv4_enabled    = false
-      private_network = data.google_compute_subnetwork.my-subnetwork.self_link
+      private_network = data.google_compute_subnetwork.my-subnetwork.network
       ssl_mode = "ENCRYPTED_ONLY"
     }
 
