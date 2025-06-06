@@ -64,3 +64,8 @@ variable "private_network" {
   description = "private network for the database"
   type        = string
 }
+
+variable "subnetwork" {
+  description = "subnetwork for the database"
+  type        = string
+}

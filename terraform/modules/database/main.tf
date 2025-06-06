@@ -1,7 +1,13 @@
- data "google_compute_network" "shared_vpc" {
- name    = var.vpc_name
- project = var.host_project_id  # <-- specify the project where the VPC actually lives
- }
+# data "google_compute_network" "shared_vpc" {
+# name    = var.vpc_name
+# project = var.host_project_id  # <-- specify the project where the VPC actually lives
+# }
+
+ data "google_compute_subnetwork" "my-subnetwork" {
+  name    = var.subnetwork
+  region  = var.region
+  project = var.host_project_id
+}
 
 resource "google_sql_database_instance" "this" {
   name             = var.instance_name # Must use only lowercase, numbers, hyphens
@@ -28,7 +34,7 @@ resource "google_sql_database_instance" "this" {
 
      ip_configuration {
       ipv4_enabled    = false
-      private_network = data.google_compute_network.shared_vpc.self_link
+      private_network = data.google_compute_subnetwork.my-subnetwork.self_link
       ssl_mode = "ENCRYPTED_ONLY"
     }
 
