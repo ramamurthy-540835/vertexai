@@ -77,7 +77,7 @@ resource "google_storage_bucket" "this" {
 module "kubeflow_registry" {
  source        = "../../modules/artifact_registry"
  location      =  var.location
- repository_id = "lead_mgmt_kubeflow"
+ repository_id = "gcp-lead-mgmt-kubeflow"
  description   = "Kubeflow pipeline repository"
  format        = "kfp"
  project       = var.projectId
