@@ -1,3 +1,3 @@
-location	= "US" 
+location	= "us" 
 environment	= "adt"
 projectId	= "p-601-np-membership-adt"

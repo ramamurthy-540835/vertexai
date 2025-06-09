@@ -13,7 +13,7 @@ variable "environment" {
 variable "location" {
   description = "The geographic location for the dataset"
   type        = string
-  default     = "US"
+  default     = "us"
 }
 
 variable "labels" {
