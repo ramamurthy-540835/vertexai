@@ -116,7 +116,7 @@ module "cloud_sql_instance" {
   service_account   = var.gcp_workload_identity_sa_email
   host_project_id = "gcp-prj-transit-hub"
   vpc_name = "gcp-vpc-np-host"
-  private_network = "projects/p-601-np-membership-adt/global/networks/gcp-vpc-np-host"
+  private_network = "projects/gcp-prj-transit-hub/global/networks/gcp-vpc-np-host"
   subnetwork = "gcp-snt-np-usc1-601-membership-gsqldb-np"
   }
 
