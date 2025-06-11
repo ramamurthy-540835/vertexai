@@ -37,7 +37,7 @@ resource "google_project_service" "required_apis" {
   ])
 
   project = var.projectId
-  service = each.key
+  service = each.value
 
   disable_on_destroy = false
 }
@@ -104,6 +104,7 @@ module "service_now_password" {
 
 module "cloud_sql_instance" {
   source            = "../../modules/database"
+  depends_on        = [google_project_service.required_apis]
   project           = "p-601-np-membership-adt"
   instance_name     = "lead-mgmt-adt"
   database_version  = "POSTGRES_15"
@@ -116,7 +117,7 @@ module "cloud_sql_instance" {
   service_account   = var.gcp_workload_identity_sa_email
   host_project_id = "gcp-prj-transit-hub"
   vpc_name = "gcp-vpc-np-host"
-  private_network = "projects/525181271691/global/networks/gcp-vpc-np-host"
+  private_network = "projects/gcp-prj-transit-hub/global/networks/gcp-vpc-np-host"
   subnetwork = "gcp-snt-np-usc1-601-membership-gsqldb-np"
   }
 
