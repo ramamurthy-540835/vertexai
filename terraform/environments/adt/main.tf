@@ -22,7 +22,7 @@ terraform {
   }
 }
 
-resource "google_project_service" "required_apis" {
+resource "google_project_service" "required_apis_recreate" {
   for_each = toset([
     "pubsub.googleapis.com",
     "monitoring.googleapis.com",
@@ -104,7 +104,7 @@ module "service_now_password" {
 
 module "cloud_sql_instance" {
   source            = "../../modules/database"
-  depends_on        = [google_project_service.required_apis]
+  depends_on        = [google_project_service.required_apis_recreate]
   project           = "p-601-np-membership-adt"
   instance_name     = "lead-mgmt-adt"
   database_version  = "POSTGRES_15"
