@@ -9,7 +9,7 @@
   project = var.host_project_id
 }
 
-data "google_compute_global_address" "np_psa_reserved_ip" {  
+data "google_compute_global_address" "psa_reserved_ip" {  
   project       = "gcp-prj-transit-hub"
   name          = "np-psa-private-ip-address"
 }
@@ -18,7 +18,7 @@ resource "google_service_networking_connection" "psa_connection" {
   network  = data.google_compute_network.shared_vpc.id # This is the host project's VPC
   service  = "servicenetworking.googleapis.com"
   reserved_peering_ranges = [
-    google_compute_global_address.psa_reserved_ip.name, # This must exist in the host project
+    data.google_compute_global_address.psa_reserved_ip.name, # This must exist in the host project
   ]
 }
 
