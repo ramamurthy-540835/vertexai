@@ -62,7 +62,7 @@ jobs:
           # Verify connection
           echo "Cloud SQL Proxy started successfully"
           
-      - name: "Setup Terraform"
+      - name: "Setup Terraform" 
         uses: hashicorp/setup-terraform@v3
 
       - name: "Terraform Init"
