@@ -73,8 +73,8 @@ jobs:
           python-version: '3.10.16'
 
       - name: Install build dependencies
-       if: env.BUILD_IMAGE == 'true'
-       run: |
+        if: env.BUILD_IMAGE == 'true'
+        run: |
          pip install build wheel setuptools Cython
 
       - name: Build wheel
