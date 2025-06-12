@@ -11,6 +11,10 @@ terraform {
       # Ensure version is at least 4.22.0 - released May 2022
       version = ">= 4.22.0"
     }
+    postgresql = {
+      source  = "cyrilgdn/postgresql"
+      version = "~> 1.21"
+    }
     archive = {}
   }
 }
@@ -122,6 +126,16 @@ module "cloud_sql_instance" {
   database_name = "lead-mgmt-db"
   }
 
+# PostgreSQL provider setup (using IAM service account)
+  provider "postgresql" {
+  host     = module.cloud_sql_instance.postgresql_connection.host
+  port     = module.cloud_sql_instance.postgresql_connection.port
+  database = module.cloud_sql_instance.postgresql_connection.database
+  username = module.cloud_sql_instance.postgresql_connection.username
+  sslmode  = module.cloud_sql_instance.postgresql_connection.sslmode
+}
+
+
 module "snow_sync_scheduler" {
   source           = "../../modules/snow_sync_scheduler"
   topic_name       = "snow-gcp-sync-trigger"
@@ -141,3 +155,4 @@ module "monitoring_alert" {
   first_condition_display_name = "Match Job Failure Condition"
   second_condition_display_name = "SNOW Sync Job Failure Condition"
 }
+
