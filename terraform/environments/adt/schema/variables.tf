@@ -12,7 +12,7 @@ variable "region" {
 variable "host" {
   description = "PostgreSQL host (e.g., Cloud SQL IP address or hostname)"
   type        = string
-  default     = "127.0.0.1"
+  default     = "10.240.1.2"
 }
 
 variable "port" {
