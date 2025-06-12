@@ -54,6 +54,7 @@ jobs:
           # Start Cloud SQL Proxy in background
           ./cloud-sql-proxy p-601-np-membership-adt:us-central1:lead-mgmt-adt \
             --port 5432 \
+            --private-ip \
             --auto-iam-authn &
           
           # Wait for proxy to be ready
