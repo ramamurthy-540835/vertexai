@@ -64,3 +64,9 @@ resource "google_sql_user" "iam_service_account_user" {
   instance = google_sql_database_instance.this.name
   type     = "CLOUD_IAM_SERVICE_ACCOUNT"
 }
+
+resource "google_sql_database" "app_database" {
+  name     = var.database_name
+  instance = google_sql_database_instance.this.name
+  project  = var.project
+}

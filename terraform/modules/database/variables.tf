@@ -69,3 +69,8 @@ variable "subnetwork" {
   description = "subnetwork for the database"
   type        = string
 }
+
+variable "database_name" {
+  description = "Primary database name"
+  type        = string
+}

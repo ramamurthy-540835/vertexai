@@ -119,6 +119,7 @@ module "cloud_sql_instance" {
   vpc_name = "gcp-vpc-np-host"
   private_network = "projects/gcp-prj-transit-hub/global/networks/gcp-vpc-np-host"
   subnetwork = "gcp-snt-np-usc1-601-membership-gsqldb-np"
+  database_name = "lead-mgmt-db"
   }
 
 module "snow_sync_scheduler" {
