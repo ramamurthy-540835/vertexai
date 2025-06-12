@@ -11,10 +11,6 @@ terraform {
       # Ensure version is at least 4.22.0 - released May 2022
       version = ">= 4.22.0"
     }
-    postgresql = {
-      source  = "cyrilgdn/postgresql"
-      version = "~> 1.21"
-    }
     archive = {}
   }
 }
@@ -125,31 +121,6 @@ module "cloud_sql_instance" {
   subnetwork = "gcp-snt-np-usc1-601-membership-gsqldb-np"
   database_name = "lead-mgmt-db"
   }
-
-# PostgreSQL provider setup (using IAM service account)
-  provider "postgresql" {
-  host     = module.cloud_sql_instance.postgresql_connection.host
-  port     = module.cloud_sql_instance.postgresql_connection.port
-  database = module.cloud_sql_instance.postgresql_connection.database
-  username = module.cloud_sql_instance.postgresql_connection.username
-  sslmode  = module.cloud_sql_instance.postgresql_connection.sslmode
-}
-
-# Execute SQL scripts directly
-resource "postgresql_database" "execute_sql_scripts" {
-  for_each = var.sql_scripts
-  
-  name = each.key
-  template = "template0"
-  
-  connection_limit = -1
-  allow_connections = true
-  
-  # This is a workaround - we'll use the lifecycle to run SQL
-  lifecycle {
-    ignore_changes = all
-  }
-}
 
 module "snow_sync_scheduler" {
   source           = "../../modules/snow_sync_scheduler"

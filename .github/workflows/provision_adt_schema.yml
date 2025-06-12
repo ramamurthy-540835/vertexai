@@ -6,17 +6,17 @@ on:
     branches:
       - "feature**"
     paths:
-      - 'terraform/environments/adt/infra/**.tf'
-      - 'terraform/modules/**/**.tf'
-      - '.github/workflows/provision_adt.yml'
+      - 'terraform/environments/adt/schema/**.tf'
+      - 'terraform/modules/postgres_schema/**.tf'
+      - '.github/workflows/provision_adt_schema.yml'
 
   pull_request:
     branches:
       - "feature**"
     paths:
-      - 'terraform/environments/adt/infra/**.tf'
-      - 'terraform/modules/**/**.tf'
-      - '.github/workflows/provision_adt.yml'
+     - 'terraform/environments/adt/schema/**.tf'
+     - 'terraform/modules/postgres_schema/**.tf'
+     - '.github/workflows/provision_adt_schema.yml'
 
 
 jobs:
@@ -44,20 +44,38 @@ jobs:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
           service_account: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
           project_id: 'p-601-np-membership-adt'
+
+      - name: "Download and setup Cloud SQL Proxy"
+        run: |
+          # Download Cloud SQL Proxy
+          wget https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/v2.8.0/cloud-sql-proxy.linux.amd64 -O cloud-sql-proxy
+          chmod +x cloud-sql-proxy
+          
+          # Start Cloud SQL Proxy in background
+          ./cloud-sql-proxy p-601-np-membership-adt:us-central1:lead-mgmt-adt \
+            --port 5432 \
+            --private-ip \
+            --auto-iam-authn &
+          
+          # Wait for proxy to be ready
+          sleep 10
+          
+          # Verify connection
+          echo "Cloud SQL Proxy started successfully"
           
       - name: "Setup Terraform"
         uses: hashicorp/setup-terraform@v3
 
       - name: "Terraform Init"
-        working-directory: ./terraform/environments/${{ matrix.env }}/infra
+        working-directory: ./terraform/environments/${{ matrix.env }}/schema
         run: terraform init
 
       - name: "Terraform Plan"
-        working-directory: ./terraform/environments/${{ matrix.env }}/infra
+        working-directory: ./terraform/environments/${{ matrix.env }}/schema
         run: terraform plan -out=plan.tfplan -input=false -lock-timeout=10m
       
       - name: "Terraform Apply"
-        working-directory: ./terraform/environments/${{ matrix.env }}/infra
+        working-directory: ./terraform/environments/${{ matrix.env }}/schema
         run: terraform apply -input=false -lock-timeout=10m plan.tfplan
         env: 
             TF_VAR_gcp_workload_identity_sa_email: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
