@@ -126,6 +126,35 @@ module "cloud_sql_instance" {
   database_name = "lead-mgmt-db"
   }
 
+resource "google_service_account_key" "terraform_cloudsql_account_key" {
+ service_account_id = var.gcp_workload_identity_sa_email
+}
+
+# Save the key locally for proxy use
+resource "local_file" "terraform_cloudsql_key" {
+ content  = base64decode(google_service_account_key.terraform_cloudsql_account_key.private_key)
+ filename = "${path.module}/terraform-cloudsql-key.json"
+}
+
+# Use null_resource to start Cloud SQL Proxy
+resource "null_resource" "start_cloudsql_proxy" {
+ provisioner "local-exec" {
+   command = <<-EOT
+     # Download Cloud SQL Proxy if not exists
+     if [ ! -f "./cloud_sql_proxy" ]; then
+       curl -o cloud_sql_proxy https://dl.google.com/cloudsql/cloud_sql_proxy.linux.amd64
+       chmod +x cloud_sql_proxy
+     fi
+     # Start Cloud SQL Proxy in background
+     ./cloud_sql_proxy -instances=${var.projectId}:${var.region}:lead-mgmt-adt=tcp:5432 \
+       -credential_file=${local_file.terraform_cloudsql_key.filename} &
+     # Wait for proxy to be ready
+     sleep 10
+   EOT
+ }
+ depends_on = [local_file.terraform_cloudsql_key]
+}
+
 # PostgreSQL provider setup (using IAM service account)
   provider "postgresql" {
   host     = module.cloud_sql_instance.postgresql_connection.host
@@ -133,6 +162,8 @@ module "cloud_sql_instance" {
   database = module.cloud_sql_instance.postgresql_connection.database
   username = module.cloud_sql_instance.postgresql_connection.username
   sslmode  = module.cloud_sql_instance.postgresql_connection.sslmode
+
+  depends_on = [null_resource.start_cloudsql_proxy]
 }
 
 # Execute SQL scripts directly
