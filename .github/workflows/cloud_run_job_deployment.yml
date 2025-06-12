@@ -74,7 +74,7 @@ jobs:
 
       - name: Install build dependencies
        if: env.BUILD_IMAGE == 'true'
-       run
+       run: |
          pip install build wheel setuptools Cython
 
       - name: Build wheel
