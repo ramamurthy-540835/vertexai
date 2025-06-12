@@ -25,7 +25,7 @@ terraform {
   port     = var.port
   database = var.database_name
   username = var.gcp_workload_identity_sa_email
-  sslmode  = "require"
+  sslmode  = "disable"
 }
 
 # Execute SQL scripts directly
