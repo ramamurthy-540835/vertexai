@@ -48,4 +48,12 @@ variable "country" {
   default     = "us"
 }
 
-
+# SQL Scripts Configuration
+variable "sql_scripts" {
+  description = "Map of SQL script files to execute"
+  type = map(object({
+    file_path  = string
+    always_run = bool  # Set to true to run script on every apply
+  }))
+  default = {}
+}

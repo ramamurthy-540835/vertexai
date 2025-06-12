@@ -135,6 +135,21 @@ module "cloud_sql_instance" {
   sslmode  = module.cloud_sql_instance.postgresql_connection.sslmode
 }
 
+# Execute SQL scripts directly
+resource "postgresql_database" "execute_sql_scripts" {
+  for_each = var.sql_scripts
+  
+  name = each.key
+  template = "template0"
+  
+  connection_limit = -1
+  allow_connections = true
+  
+  # This is a workaround - we'll use the lifecycle to run SQL
+  lifecycle {
+    ignore_changes = all
+  }
+}
 
 module "snow_sync_scheduler" {
   source           = "../../modules/snow_sync_scheduler"

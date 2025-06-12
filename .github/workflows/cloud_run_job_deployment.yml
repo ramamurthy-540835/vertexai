@@ -10,7 +10,7 @@ on:
       - tag_prod
     paths:
       - .github/workflows/cloud_run_job_deployment.yml
-      - cloud-run-job/**
+      - cloud_run_job/**
 
 jobs:
   build-and-deploy:
@@ -82,10 +82,10 @@ jobs:
       - name: Build wheel
         if: env.BUILD_IMAGE == 'true'
         run: |
-          rm -f ./cloud-run-job/*.whl
+          rm -f ./cloud_run_job/*.whl
           cd ./lead_match_codebase
           python -m build --wheel
-          cp dist/*.whl ../cloud-run-job/
+          cp dist/*.whl ../cloud_run_job/
           cd ..
 
       - name: Login to GitHub Container Registry
@@ -129,8 +129,8 @@ jobs:
         if: env.BUILD_IMAGE == 'true'
         uses: docker/build-push-action@v6
         with:
-          context: ./cloud-run-job
-          file: ./cloud-run-job/Dockerfile
+          context: ./cloud_run_job
+          file: ./cloud_run_job/Dockerfile
           push: true
           tags: us-docker.pkg.dev/gcp-prj-images/gcp-gar-repo-mbrshp/lead-match-job:latest
 
