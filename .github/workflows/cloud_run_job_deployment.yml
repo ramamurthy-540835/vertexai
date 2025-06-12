@@ -11,6 +11,7 @@ on:
     paths:
       - .github/workflows/cloud_run_job_deployment.yml
       - cloud_run_job/**
+      - lead_match_codebase/**
 
 jobs:
   build-and-deploy:
