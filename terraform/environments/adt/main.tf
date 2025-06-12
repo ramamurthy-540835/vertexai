@@ -162,8 +162,6 @@ resource "null_resource" "start_cloudsql_proxy" {
   database = module.cloud_sql_instance.postgresql_connection.database
   username = module.cloud_sql_instance.postgresql_connection.username
   sslmode  = module.cloud_sql_instance.postgresql_connection.sslmode
-
-  depends_on = [null_resource.start_cloudsql_proxy]
 }
 
 # Execute SQL scripts directly
