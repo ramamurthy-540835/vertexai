@@ -75,7 +75,7 @@ resource "google_storage_bucket" "this" {
 }
 
 module "kubeflow_registry" {
- source        = "../../modules/artifact_registry"
+ source        = "../../../modules/artifact_registry"
  location      =  var.location
  repository_id = "gcp-lead-mgmt-kubeflow"
  description   = "Kubeflow pipeline repository"
@@ -89,21 +89,21 @@ resource "google_service_account" "my_service_account" {
     }
 
 module "service_now_username" {
- source        = "../../modules/secret_manager"
+ source        = "../../../modules/secret_manager"
  project       = var.projectId
  secret_id     = "lead_mgmt_snow_user"
  secret_value  = "lead.api.access"
 }
 
 module "service_now_password" {
- source        = "../../modules/secret_manager"
+ source        = "../../../modules/secret_manager"
  project       = var.projectId
  secret_id     = "lead_mgmt_snow_password"
  secret_value  = "Costco@web123"
 }
 
 module "cloud_sql_instance" {
-  source            = "../../modules/database"
+  source            = "../../../modules/database"
   depends_on        = [google_project_service.required_apis_recreate]
   project           = "p-601-np-membership-adt"
   instance_name     = "lead-mgmt-adt"
@@ -123,7 +123,7 @@ module "cloud_sql_instance" {
   }
 
 module "snow_sync_scheduler" {
-  source           = "../../modules/snow_sync_scheduler"
+  source           = "../../../modules/snow_sync_scheduler"
   topic_name       = "snow-gcp-sync-trigger"
   scheduler_name   = "snow-sync-scheduler-job"
   schedule         = "0 2 * * *"                  # 2:00 AM UTC
@@ -133,7 +133,7 @@ module "snow_sync_scheduler" {
 }
 
 module "monitoring_alert" {
-  source = "../../modules/monitoring_alert"
+  source = "../../../modules/monitoring_alert"
 
   display_name                 = "Lead_mgmt - Email Alert"
   email_address                = "membership_mit_team@costco.com"
