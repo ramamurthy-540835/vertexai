@@ -1,3 +1,13 @@
+# PostgreSQL provider configuration
+terraform {
+  required_providers {
+    postgresql = {
+      source  = "cyrilgdn/postgresql"
+      version = "~> 1.21"
+    }
+  }
+}
+
  data "google_compute_network" "shared_vpc" {
    name    = var.vpc_name
    project = var.host_project_id  # <-- specify the project where the VPC actually lives
@@ -69,4 +79,20 @@ resource "google_sql_database" "app_database" {
   name     = var.database_name
   instance = google_sql_database_instance.this.name
   project  = var.project
+}
+
+# PostgreSQL provider setup (using IAM service account)
+provider "postgresql" {
+  host     = google_sql_database_instance.this.private_ip_address
+  port     = 5432
+  database = var.database_name
+  username = trimsuffix(var.service_account, ".gserviceaccount.com")
+  # No password needed for IAM authentication
+  sslmode  = "require"
+  
+  depends_on = [
+    google_sql_database_instance.this,
+    google_sql_database.app_database,
+    google_sql_user.iam_service_account_user
+  ]
 }
