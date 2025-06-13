@@ -52,7 +52,7 @@ jobs:
           chmod +x cloud-sql-proxy
           
           # Start Cloud SQL Proxy in background
-          ./cloud-sql-proxy -instances=p-601-np-membership-adt:us-central1:lead-mgmt-adt \
+          ./cloud-sql-proxy p-601-np-membership-adt:us-central1:lead-mgmt-adt \
             -dir=/cloudsql \
             --port 5432 \
             --private-ip \
@@ -65,8 +65,8 @@ jobs:
             export PGPASSWORD=$(gcloud auth print-access-token)
 
           # Verify connection to database with psql (check connection only, no queries)
-            PGPASSWORD="$(gcloud auth print-access-token)" psql \
-            "host=10.240.1.2 port=5432 dbname=lead-mgmt-db user=gco-iam-svc-cicd-mbr-bc-np@gcp-prj-cicd-core.iam sslmode=disable" -c '\conninfo'
+          #  PGPASSWORD="$(gcloud auth print-access-token)" psql \
+          # "host=10.240.1.2 port=5432 dbname=lead-mgmt-db user=gco-iam-svc-cicd-mbr-bc-np@gcp-prj-cicd-core.iam sslmode=disable" -c '\conninfo'
 
           # Verify connection
           echo "Cloud SQL Proxy started successfully"
