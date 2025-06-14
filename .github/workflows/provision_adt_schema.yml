@@ -7,7 +7,7 @@ on:
       - "feature**"
     paths:
       - 'terraform/environments/adt/schema/**.tf'
-      - 'terraform/modules/postgres_schema/**.tf'
+      - 'postgres_resources/**.sql'
       - '.github/workflows/provision_adt_schema.yml'
 
   pull_request:
@@ -15,7 +15,7 @@ on:
       - "feature**"
     paths:
      - 'terraform/environments/adt/schema/**.tf'
-     - 'terraform/modules/postgres_schema/**.tf'
+     - 'postgres_resources/**.sql'
      - '.github/workflows/provision_adt_schema.yml'
 
 

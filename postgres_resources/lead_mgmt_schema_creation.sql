@@ -1,3 +1,7 @@
+-- Grant permissions on the database
+
+GRANT ALL PRIVILEGES ON DATABASE lead-mgmt-db TO CURRENT_USER;
+
 -- Create application schema
 
 CREATE SCHEMA IF NOT EXISTS lead_mgmt_adt;
