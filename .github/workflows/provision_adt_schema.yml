@@ -66,6 +66,10 @@ jobs:
           # Set access token for IAM DB auth
             export PGPASSWORD=$(gcloud auth print-access-token)
 
+          #Install postgres client
+            sudo apt-get update
+            sudo apt-get install -y postgresql-client
+
           # Verify connection to database with psql (check connection only, no queries)
             PGPASSWORD="$(gcloud auth print-access-token)" psql \
             "hostaddr=127.0.0.1 port=5432 dbname=lead-mgmt-db user=gco-iam-svc-cicd-mbr-bc-np@gcp-prj-cicd-core.iam sslmode=disable" --no-password -c '\conninfo'
