@@ -22,7 +22,9 @@ on:
 jobs:
   run:
     name: "Provision infra"
-    runs-on: "ubuntu-latest"
+    runs-on:
+      - self-hosted
+      - us-west1
     environment: ${{ github.event.pull_request.head.ref }}
     strategy:
       matrix:
@@ -31,6 +33,7 @@ jobs:
     permissions:
       id-token: write
       contents: read
+      packages: write
 
     steps:
       - name: "Checkout code"
