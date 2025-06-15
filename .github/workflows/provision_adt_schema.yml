@@ -72,7 +72,7 @@ jobs:
 
             psql \
             "hostaddr=127.0.0.1 port=5432 dbname=lead-mgmt-db user=gco-iam-svc-cicd-mbr-bc-np@gcp-prj-cicd-core.iam sslmode=disable" \
-             --no-password -c '\dn'
+             --no-password -c 'GRANT ALL PRIVILEGES ON DATABASE "lead-mgmt-db" TO "gco-iam-svc-cicd-mbr-bc-np@gcp-prj-cicd-core.iam";'
 
           # Verify connection
           echo "Cloud SQL Proxy started successfully"
