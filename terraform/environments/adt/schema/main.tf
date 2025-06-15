@@ -38,11 +38,11 @@ terraform {
      # Get access token for IAM authentication
      export PGPASSWORD=$(gcloud auth print-access-token)
      # Connect using private IP with IAM authentication
-     psql "host=${var.host}\
+     psql "host=127.0.0.1\
            port=5432 \
            dbname=${var.database_name} \
            user=gco-iam-svc-cicd-mbr-bc-np@gcp-prj-cicd-core.iam \
-           sslmode=require" \
+           sslmode=disable" \
            -f "../../../../postgres_resources/lead_mgmt_schema_creation.sql"
    EOT
    environment = {
