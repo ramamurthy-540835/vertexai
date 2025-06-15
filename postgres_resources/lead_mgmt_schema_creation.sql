@@ -1,6 +1,6 @@
 -- Grant permissions on the database
 
-GRANT ALL PRIVILEGES ON DATABASE lead-mgmt-db TO CURRENT_USER;
+GRANT ALL PRIVILEGES ON DATABASE "lead-mgmt-db" TO CURRENT_USER;
 
 -- Create application schema
 
