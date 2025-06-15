@@ -1,5 +1,3 @@
-location	= "us" 
-environment	= "adt"
 projectId	= "p-601-np-membership-adt"
 # SQL Scripts to execute
 sql_scripts = {

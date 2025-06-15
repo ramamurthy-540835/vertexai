@@ -34,8 +34,6 @@ terraform {
  }
  provisioner "local-exec" {
    command = <<-EOT
-     # Get access token for IAM authentication
-     #export PGPASSWORD=$(gcloud auth print-access-token)
      # Connect using private IP with IAM authentication
      psql "host=127.0.0.1\
            port=5432 \
