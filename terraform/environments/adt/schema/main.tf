@@ -25,7 +25,7 @@ terraform {
   port     = var.port
   database = var.database_name
   username = "gco-iam-svc-cicd-mbr-bc-np@gcp-prj-cicd-core.iam"
-  sslmode  = "require"
+  sslmode  = "disable"
 }
 
 
