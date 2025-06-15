@@ -28,8 +28,32 @@ terraform {
   sslmode  = "disable"
 }
 
+ resource "null_resource" "initial_database_setup" {
+ triggers = {
+   sql_script_hash = filesha256("../../../../postgres_resources/lead_mgmt_schema_creation.sql")
+ }
+ provisioner "local-exec" {
+   command = <<-EOT
+     # Get access token for IAM authentication
+     #export PGPASSWORD=$(gcloud auth print-access-token)
+     # Connect using private IP with IAM authentication
+     psql "host=127.0.0.1\
+           port=5432 \
+           dbname=${var.database_name} \
+           user=postgres \
+           password=qJoVywHigYGlA1d \
+           sslmode=disable" \
+           -f "../../../../postgres_resources/lead_mgmt_schema_creation.sql"
+   EOT
+   environment = {
+     CLOUDSQL_INSTANCE = "${var.projectId}:${var.region}:lead_mgmt_adt"
+   }
+ }
 
- resource "null_resource" "execute_sql_scripts" {
+}
+
+/*
+ resource "null_resource" "initial_database_setup" {
  triggers = {
    sql_script_hash = filesha256("../../../../postgres_resources/lead_mgmt_schema_creation.sql")
  }
@@ -50,4 +74,4 @@ terraform {
    }
  }
 
-}
+}*/
