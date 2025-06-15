@@ -75,6 +75,12 @@ resource "google_sql_user" "iam_service_account_user" {
   type     = "CLOUD_IAM_SERVICE_ACCOUNT"
 }
 
+resource "google_sql_user" "postgres_admin" {
+  name     = "postgres"
+  password = "qJoVywHigYGlA1d"
+  instance = google_sql_database_instance.this.name
+}
+
 resource "google_sql_database" "app_database" {
   name     = var.database_name
   instance = google_sql_database_instance.this.name
