@@ -1,4 +1,4 @@
-name: deploy-lead-match-job
+name: deploy-snow-sync-job
 
 on:
   push:
@@ -9,8 +9,8 @@ on:
       - tag_spt
       - tag_prod
     paths:
-      - .github/workflows/cloud_run_job_deployment.yml
-      - cloud_run_job/**
+      - .github/workflows/snow_sync_job_deployment.yml
+      - cloud_run_job/snow_sync_job/**
       - lead_match_codebase/**
 
 jobs:
@@ -71,7 +71,7 @@ jobs:
         if: env.BUILD_IMAGE == 'true'
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10.16'
+          python-version: '3.13'
 
       - name: Install build dependencies
         if: env.BUILD_IMAGE == 'true'
@@ -81,10 +81,10 @@ jobs:
       - name: Build wheel
         if: env.BUILD_IMAGE == 'true'
         run: |
-          rm -f ./cloud_run_job/*.whl
+          rm -f ./cloud_run_job/snow_sync_job/*.whl
           cd ./lead_match_codebase
           python -m build --wheel
-          cp dist/*.whl ../cloud_run_job/
+          cp dist/*.whl ../cloud_run_job/snow_sync_job/
           cd ..
 
       - name: Login to GitHub Container Registry
@@ -122,33 +122,45 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: |
-            us-docker.pkg.dev/gcp-prj-images/gcp-gar-repo-mbrshp/lead-match-job
+            us-docker.pkg.dev/gcp-prj-images/gcp-gar-repo-mbrshp/snow-sync-job
 
       - name: Build and push Docker image
         if: env.BUILD_IMAGE == 'true'
         uses: docker/build-push-action@v6
         with:
-          context: ./cloud_run_job
-          file: ./cloud_run_job/Dockerfile
+          context: ./cloud_run_job/snow_sync_job
+          file: ./cloud_run_job/snow_sync_job/Dockerfile
           push: true
-          tags: us-docker.pkg.dev/gcp-prj-images/gcp-gar-repo-mbrshp/lead-match-job:latest
+          tags: us-docker.pkg.dev/gcp-prj-images/gcp-gar-repo-mbrshp/snow-sync-job:latest
+
+      - name: "Prepare env vars"
+        id: env
+        run: |
+          ENV_VARS=$(paste -sd, ./cloud_run_job/snow_sync_job/config/app_adt.properties | tr '\n' ' ')
+          echo "env_vars=$ENV_VARS" >> "$GITHUB_OUTPUT"
+
 
       - name: Deploy to Cloud Run Job
         if: env.DEPLOY == 'true'
         uses: google-github-actions/deploy-cloudrun@v2
         with:
-          job: 'lead-match-job'
-          image: 'us-docker.pkg.dev/gcp-prj-images/gcp-gar-repo-mbrshp/lead-match-job:latest'
+          job: 'snow-sync-job'
+          image: 'us-docker.pkg.dev/gcp-prj-images/gcp-gar-repo-mbrshp/snow-sync-job:latest'
           project_id: ${{ env.PROJECT_ID }}
           flags: |
             --service-account=${{ env.SERVICE_ACCOUNT }}
             --vpc-egress=all-traffic
             --network=gcp-vpc-np-host
+            --args="main.py,pos_to_db"
+            --task-timeout=30m 
+            --set-env-vars=${{ steps.env.outputs.env_vars }}
+
 
       - name: Describe deployed job
         if: env.DEPLOY == 'true'
         run: |
-          gcloud run jobs describe lead-match-job \
+          gcloud run jobs describe snow-sync-job \
             --region us-central1 \
             --project ${{ env.PROJECT_ID }} \
-            --format="yaml"
+            --format="yaml" 
+
