@@ -48,12 +48,39 @@ jobs:
           service_account: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
           project_id: 'p-601-np-membership-adt'
 
+      - name: "Install additional utilities"
+        run: |
+          if ! command -v unzip >/dev/null 2>&1; then
+            echo "Installing unzip..."
+            sudo apt-get update && sudo apt-get install -y unzip
+          else
+            echo "unzip is already installed"
+          fi 
+
+          if ! command -v psql >/dev/null 2>&1; then
+            echo "Installing PostgreSQL client..."
+            sudo apt-get update && sudo apt-get install -y postgresql-client
+          else
+            echo "psql is already installed"
+          fi
+
+          if ! command -v node >/dev/null 2>&1; then
+            echo "Installing Node.js..."
+            curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+            sudo apt-get install -y nodejs
+          else
+            echo "Node.js is already installed"
+          fi
       - name: "Download and setup Cloud SQL Proxy"
         run: |
-          # Download Cloud SQL Proxy
-          wget https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/v2.8.0/cloud-sql-proxy.linux.amd64 -O cloud-sql-proxy
-          chmod +x cloud-sql-proxy
-          
+          if ! command -v cloud-sql-proxy >/dev/null 2>&1; then
+            echo "Installing Cloud SQL Auth Proxy..."
+            # Download Cloud SQL Proxy
+            wget https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/v2.8.0/cloud-sql-proxy.linux.amd64 -O cloud-sql-proxy
+            chmod +x cloud-sql-proxy
+          else
+            echo "Cloud SQL Proxy is already installed"
+          fi
           # Start Cloud SQL Proxy in background
           ./cloud-sql-proxy p-601-np-membership-adt:us-central1:lead-mgmt-adt \
             --port 5432 \
