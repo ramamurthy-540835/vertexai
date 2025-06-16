@@ -31,19 +31,21 @@ jobs:
           create_credentials_file: true
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
           service_account: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
-          project_id: 'p-601-np-membership-adt'
 
       - name: "Enable Service Usage API for ADT"
         run: |
-          #gcloud config set project p-601-np-membership-adt
+          unset CLOUDSDK_CORE_PROJECT
+          gcloud config set project p-601-np-membership-adt
           gcloud services enable serviceusage.googleapis.com
 
       - name: "Enable Service Usage API for SPT"
         run: |
+          unset CLOUDSDK_CORE_PROJECT
           gcloud config set project p-601-np-membership-spt
           gcloud services enable serviceusage.googleapis.com
           
       - name: "Enable Service Usage API for QAT"
         run: |
+          unset CLOUDSDK_CORE_PROJECT
           gcloud config set project p-601-np-membership-qat
           gcloud services enable serviceusage.googleapis.com
