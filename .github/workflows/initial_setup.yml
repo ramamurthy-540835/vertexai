@@ -34,7 +34,7 @@ jobs:
 
       - name: "Enable Service Usage API for ADT"
         run: |
-          gcloud config set project p-601-np-membership-adt
+          #gcloud config set project p-601-np-membership-adt
           gcloud services enable serviceusage.googleapis.com
 
       - name: "Enable Service Usage API for SPT"
