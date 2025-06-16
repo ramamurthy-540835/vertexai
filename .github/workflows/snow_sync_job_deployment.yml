@@ -136,7 +136,8 @@ jobs:
       - name: "Prepare env vars"
         id: env
         run: |
-          ENV_VARS=$(paste -sd, ./cloud_run_job/snow_sync_job/config/app_adt.properties | tr '\n' ' ')
+          # Filter out comments and blank lines, then join into comma-separated string
+          ENV_VARS=$(grep -v '^\s*#' ./cloud_run_job/snow_sync_job/config/app_adt.properties | grep -v '^\s*$' | paste -sd, -)
           echo "env_vars=$ENV_VARS" >> "$GITHUB_OUTPUT"
 
 
