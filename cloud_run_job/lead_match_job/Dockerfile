@@ -17,6 +17,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 RUN pip install costco_lead_managment-0.0.7-py3-none-any.whl  --force-reinstall
 
 # Start the Flask app
-CMD ["python", "run.py"]
+CMD ["python", "run.py"] 
 
 
