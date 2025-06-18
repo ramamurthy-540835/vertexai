@@ -42,7 +42,7 @@ jobs:
         run: | 
           unset CLOUDSDK_CORE_PROJECT
           gcloud config set project p-601-np-membership-adt
-          gcloud run jobs execute snow-sync-job
+          gcloud run jobs execute snow-sync-job --region us-central1
 
       - name: "Enable Service Usage API for SPT"
         run: |
