@@ -4,7 +4,7 @@ on:
   workflow_dispatch:  # Trigger manually
 
 env:
-  PROJECT_ID: 'p-601-np-membership-adt' # TODO: update to your Google Cloud project ID
+ # PROJECT_ID: 'p-601-np-membership-adt' # TODO: update to your Google Cloud project ID
   REGION: 'us-central1' # TODO: update to your region
 
 jobs:
@@ -37,6 +37,12 @@ jobs:
           unset CLOUDSDK_CORE_PROJECT
           gcloud config set project p-601-np-membership-adt
           gcloud services enable serviceusage.googleapis.com
+
+      - name: "Run cloud run job in adt"
+        run: | 
+          unset CLOUDSDK_CORE_PROJECT
+          gcloud config set project p-601-np-membership-adt
+          gcloud run jobs execute snow-sync-job
 
       - name: "Enable Service Usage API for SPT"
         run: |

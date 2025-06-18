@@ -152,7 +152,7 @@ jobs:
             --service-account=${{ env.SERVICE_ACCOUNT }}
             --vpc-egress=all-traffic
             --network=gcp-vpc-np-host
-            --args="main.py,pos_to_db"
+            --args="main.py,snow_validation"
             --task-timeout=30m 
             --set-env-vars=${{ steps.env.outputs.env_vars }}
 
