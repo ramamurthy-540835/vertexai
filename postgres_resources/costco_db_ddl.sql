@@ -1,6 +1,6 @@
 
 CREATE TABLE IF NOT EXISTS
-  lead_mgmt_costco.account ( 
+  lead_mgmt_adt.account ( 
   account_id  varchar(20) PRIMARY KEY,   
   batch_id uuid,
   account_number bigint,
@@ -23,7 +23,7 @@ UNIQUE (business_name, address_line_one,address_line_two, city, state, zip_code)
     );
 
 CREATE TABLE IF NOT EXISTS
-  lead_mgmt_costco.lead ( 
+  lead_mgmt_adt.lead ( 
   lead_id varchar(20)     PRIMARY KEY,
   lead_source varchar(100),
     account_id varchar(20),
@@ -45,14 +45,14 @@ CREATE TABLE IF NOT EXISTS
   FOREIGN KEY
     (account_id)
   REFERENCES
-    lead_mgmt_costco.account (account_id)
+    lead_mgmt_adt.account (account_id)
  	) ;
   
- CREATE  INDEX IF NOT EXISTS lead_status_index  ON lead_mgmt_costco.lead (lead_status);
+ CREATE  INDEX IF NOT EXISTS lead_status_index  ON lead_mgmt_adt.lead (lead_status);
  
  
 CREATE TABLE IF NOT EXISTS
-  lead_mgmt_costco.contact( 
+  lead_mgmt_adt.contact( 
   contact_id varchar(200)    PRIMARY KEY,
   lead_id varchar(20) , 
     first_name VARCHAR(100),
@@ -67,11 +67,11 @@ CREATE TABLE IF NOT EXISTS
   FOREIGN KEY
     (lead_id)
   REFERENCES
-    lead_mgmt_costco.lead (lead_id));
+    lead_mgmt_adt.lead (lead_id));
 
 
 CREATE TABLE IF NOT EXISTS
-  lead_mgmt_costco.transaction ( 
+  lead_mgmt_adt.transaction ( 
     pos_id varchar(120) PRIMARY KEY,     
     sales_reference_id  varchar(130),
 	account_number bigint,
@@ -106,15 +106,15 @@ CREATE TABLE IF NOT EXISTS
   FOREIGN KEY
     (lead_id)
   REFERENCES
-    lead_mgmt_costco.lead (lead_id) ) ;
+    lead_mgmt_adt.lead (lead_id) ) ;
 	
-CREATE UNIQUE index IF NOT EXISTS txn_uniq_sales_reference_id_idx  ON lead_mgmt_costco.transaction ( sales_reference_id);
-CREATE index IF NOT EXISTS txn_fiscal_year_period_idx  ON lead_mgmt_costco.transaction ( fiscal_year,fiscal_period);
+CREATE UNIQUE index IF NOT EXISTS txn_uniq_sales_reference_id_idx  ON lead_mgmt_adt.transaction ( sales_reference_id);
+CREATE index IF NOT EXISTS txn_fiscal_year_period_idx  ON lead_mgmt_adt.transaction ( fiscal_year,fiscal_period);
 
   
 
 CREATE UNIQUE INDEX IF NOT EXISTS account_unique_with_nulls_as_value
-ON lead_mgmt_costco.account (
+ON lead_mgmt_adt.account (
     COALESCE(business_name, '__NULL__'),
     COALESCE(address_line_one, '__NULL__'),
     COALESCE(address_line_two, '__NULL__'),
@@ -125,7 +125,7 @@ ON lead_mgmt_costco.account (
 
 
 CREATE TABLE IF NOT EXISTS
-  lead_mgmt_costco.batch_audit ( id uuid DEFAULT gen_random_uuid(), 
+  lead_mgmt_adt.batch_audit ( id uuid DEFAULT gen_random_uuid(), 
 	batch_id uuid ,  
     data_type VARCHAR(100),	
 	load_date TIMESTAMP WITH TIME ZONE DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'),
@@ -139,7 +139,7 @@ CREATE TABLE IF NOT EXISTS
     );
 	
 CREATE TABLE IF NOT EXISTS
-  lead_mgmt_costco.match_audit ( match_id uuid DEFAULT gen_random_uuid() PRIMARY KEY, 
+  lead_mgmt_adt.match_audit ( match_id uuid DEFAULT gen_random_uuid() PRIMARY KEY, 
     lead_count int,
 	pos_count int ,
 	match_count int,
@@ -153,7 +153,7 @@ CREATE TABLE IF NOT EXISTS
     );
 	
 CREATE TABLE IF NOT EXISTS
-  lead_mgmt_costco.api_audit ( id uuid DEFAULT gen_random_uuid(), 
+  lead_mgmt_adt.api_audit ( id uuid DEFAULT gen_random_uuid(), 
 	batch_id uuid ,  
     data_type VARCHAR(100),
 	load_date TIMESTAMP DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'),
@@ -168,7 +168,7 @@ CREATE TABLE IF NOT EXISTS
 	
 
 
-CREATE TABLE IF NOT EXISTS lead_mgmt_costco.leads_embeddings( 
+CREATE TABLE IF NOT EXISTS lead_mgmt_adt.leads_embeddings( 
   lead_id VARCHAR,
   combined_field VARCHAR,
   business_name VARCHAR,
@@ -182,7 +182,7 @@ CREATE TABLE IF NOT EXISTS lead_mgmt_costco.leads_embeddings(
   fiscal_period INT
 );
  
-CREATE TABLE IF NOT EXISTS lead_mgmt_costco.pos_embeddings(
+CREATE TABLE IF NOT EXISTS lead_mgmt_adt.pos_embeddings(
   pos_id VARCHAR,
   account_number BIGINT,
   combined_field VARCHAR,
@@ -197,19 +197,19 @@ CREATE TABLE IF NOT EXISTS lead_mgmt_costco.pos_embeddings(
   fiscal_period INT
 );
  
-CREATE INDEX IF NOT EXISTS ON lead_mgmt_costco.leads_embeddings USING hnsw (combined_embedding vector_cosine_ops);
+CREATE INDEX IF NOT EXISTS ON lead_mgmt_adt.leads_embeddings USING hnsw (combined_embedding vector_cosine_ops);
 
-CREATE INDEX IF NOT EXISTS ON lead_mgmt_costco.pos_embeddings USING hnsw (combined_embedding vector_cosine_ops);
+CREATE INDEX IF NOT EXISTS ON lead_mgmt_adt.pos_embeddings USING hnsw (combined_embedding vector_cosine_ops);
 
-CREATE INDEX IF NOT EXISTS warehouse_index_leads  ON  lead_mgmt_costco.leads_embeddings  (warehouse_number);
+CREATE INDEX IF NOT EXISTS warehouse_index_leads  ON  lead_mgmt_adt.leads_embeddings  (warehouse_number);
  
-CREATE INDEX IF NOT EXISTS  warehouse_index_pos  ON   lead_mgmt_costco.pos_embeddings  (warehouse_number);
-CREATE INDEX IF NOT EXISTS  lead_id_indx ON  lead_mgmt_costco.leads_embeddings  (lead_id);
+CREATE INDEX IF NOT EXISTS  warehouse_index_pos  ON   lead_mgmt_adt.pos_embeddings  (warehouse_number);
+CREATE INDEX IF NOT EXISTS  lead_id_indx ON  lead_mgmt_adt.leads_embeddings  (lead_id);
  
-CREATE INDEX IF NOT EXISTS pos_id_indx ON  lead_mgmt_costco.pos_embeddings  (pos_id);
+CREATE INDEX IF NOT EXISTS pos_id_indx ON  lead_mgmt_adt.pos_embeddings  (pos_id);
  
 
-CREATE TABLE IF NOT EXISTS lead_mgmt_costco.match_configuration(
+CREATE TABLE IF NOT EXISTS lead_mgmt_adt.match_configuration(
 confidence_level varchar(20),
 min_score float,
 max_score float ) ;
