@@ -84,8 +84,8 @@ jobs:
         env:
           SOURCE_DATE_EPOCH: 0
         with:
-          context: ./lead_mgmt_image
-          file: ./lead_mgmt_image/Dockerfile
+          context: ./lead_management_job
+          file: ./lead_management_job/Dockerfile
           push: true
           labels: ${{ steps.meta.outputs.labels }}
           tags: us-docker.pkg.dev/gcp-prj-images/gcp-gar-repo-mbrshp/lead-mgmt:latest
