@@ -32,6 +32,14 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - id: auth
+        name: Auth to GCP for GAR service account
+        uses : google-github-actions/auth@v2
+        with:
+          token_format: access_token
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID}}
+          service_account: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL}}
+
       - name: Determine environment and conditions
         id: config
         run: |
