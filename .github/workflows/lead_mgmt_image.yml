@@ -98,7 +98,6 @@ jobs:
     secrets:
       GCP_WORKLOAD_IDENTITY_PROVIDER_ID: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
       GCP_WORKLOAD_IDENTITY_SA_EMAIL: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
-  
   deploy-snow-sync-job:
     name: Trigger Workflow to Deploy Snow Sync Job
     needs: build-and-push-container

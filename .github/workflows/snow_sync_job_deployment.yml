@@ -6,7 +6,11 @@ on:
       environment:
         required: true
         type: string
-      secrets: inherit
+    secrets:
+      GCP_WORKLOAD_IDENTITY_PROVIDER_ID:
+        required: true
+      GCP_WORKLOAD_IDENTITY_SA_EMAIL:
+        required: true
   push:
     branches:
       - main
