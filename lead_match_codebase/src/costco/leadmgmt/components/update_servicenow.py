@@ -7,8 +7,6 @@ from google.cloud import storage
 import time
 
 
-def get_failure_logs_df(uri: str) -> str:
-    pass
 
 def generate_post_json(df):
 
@@ -18,6 +16,12 @@ def generate_post_json(df):
     df['confidence_level'] = df['confidence_level'].astype(str)
     df['account_number'] = df['account_number'].astype(int)
     df['similarity_score'] = pd.to_numeric(df['similarity_score'], errors='coerce')
+
+    unique_count_lead = df['lead_id'].nunique()
+    print("Number of unique lead IDs:", unique_count_lead)
+
+    unique_count_pos = df['pos_id'].nunique()
+    print("Number of unique pos IDs:", unique_count_pos)
 
     # Step 1: Sort by similarity_score in descending order
     df_sorted = df.sort_values(by=['lead_id', 'similarity_score'], ascending=[True, False])
@@ -42,20 +46,25 @@ def generate_post_json(df):
     # Step 6: Convert to JSON list
     return merged.to_dict(orient='records')
 
-def process_batches(data,batch_size,url,max_retries,retry_delay,username=None, password=None):
+
+def process_batches(data, batch_size, url, max_retries, retry_delay, username=None, password=None):
     headers = {
         'Content-Type': 'application/json',
         'Accept': 'application/json'
     }
+    batch_size =  int(batch_size)
+    max_retries =  int(max_retries)
+    retry_delay =  int(retry_delay)
 
     auth = (username, password) if username and password else None
 
     for i in range(0, len(data), batch_size):
-        batch = data[i:i+batch_size]
+        batch = data[i:i + batch_size]
         payload = json.dumps(batch)
         batch_number = i // batch_size + 1
 
         success = False
+        last_error = None  # To store the last error message
 
         for attempt in range(1, max_retries + 1):
             try:
@@ -65,35 +74,45 @@ def process_batches(data,batch_size,url,max_retries,retry_delay,username=None, p
                     try:
                         result = response.json().get("result", {})
                     except ValueError:
-                        print(f"[Batch {batch_number}] Attempt {attempt}: Failed to parse JSON response.")
+                        last_error = "Failed to parse JSON response."
+                        print(f"[Batch {batch_number}] Attempt {attempt}: {last_error}")
+                        print(response)
+                        print("The response from the ServiceNow: ",response.text)
+
                         break
 
                     status = result.get("status", "").lower()
                     message = result.get("message", "")
-                    count = result.get("successcount", "")
+                    success_count = result.get("successcount", "")
 
                     if status == "success":
-                        print(f"[Batch {batch_number}] Success: {message}, Count: {count}")
+                        print(f"[Batch {batch_number}] Success: {message}, Success Count: {success_count}")
+
                     else:
-                        print(f"[Batch {batch_number}] Failed: {message}")
+                        last_error = f"Failed: {message}"
+                        print(f"[Batch {batch_number}] {last_error}")
                     success = True
                     break
 
                 elif response.status_code == 404:
-                    print(f"[Batch {batch_number}] Attempt {attempt}: Resource not found (404). Not retrying.")
+                    last_error = "Resource not found (404). Not retrying."
+                    print(f"[Batch {batch_number}] Attempt {attempt}: {last_error}")
                     break
 
                 else:
-                    print(f"[Batch {batch_number}] Attempt {attempt}: HTTP {response.status_code} - {response.text}")
+                    last_error = f"HTTP {response.status_code} - {response.text}"
+                    print(f"[Batch {batch_number}] Attempt {attempt}: {last_error}")
 
             except requests.RequestException as e:
-                print(f"[Batch {batch_number}] Attempt {attempt}: Request failed - {e}")
+                last_error = f"Request failed - {e}"
+                print(f"[Batch {batch_number}] Attempt {attempt}: {last_error}")
 
             if attempt < max_retries:
                 time.sleep(retry_delay)
 
         if not success:
-            print(f"[Batch {batch_number}] Failed after {max_retries} attempts.")
+            print(f"[Batch {batch_number}] Failed after {max_retries} attempts. Last error: {last_error}")
+
 
 
 
@@ -112,11 +131,8 @@ def update_servicenow(config_file_path: str,file_path: str = ""):
     password = servicenow_config.snow_password
 
 
-    if file_path == "":
-        final_df = get_failure_logs_df()
-    else:
-        # Load the files from GCS into pandas DataFrames
-        final_df = load_file_from_gcs(file_path)
+
+    final_df = load_file_from_gcs(file_path)
 
     final_df = final_df[final_df['confidence_level'].isin(['High', 'Medium', 'Low'])]
     final_df = final_df[['lead_id', 'pos_id', 'confidence_level', 'account_number', 'similarity_score']]

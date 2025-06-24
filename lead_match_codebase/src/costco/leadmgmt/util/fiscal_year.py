@@ -17,15 +17,13 @@ def get_costco_fiscal_info(input_date=None):
     fiscal_start = datetime(year, 9, 1)
     while fiscal_start.weekday() != 0:  # Monday is 0
         fiscal_start += timedelta(days=1)
-        #print(fiscal_start)
 
     # Determine weeks since fiscal start
     days_since_start = (input_date - fiscal_start).days
     
-        
-    #print(days_since_start)
+
     weeks_since_start = days_since_start // 7
-    #print(weeks_since_start)
+
     # Fiscal periods are 4 weeks long (except the last one)
     fiscal_period = min(12, (weeks_since_start // 4) + 1)
 
