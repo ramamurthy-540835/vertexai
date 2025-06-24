@@ -38,7 +38,7 @@ jobs:
           REF_NAME="${GITHUB_REF_NAME}"
           REF="${GITHUB_REF}"
           ENV_INPUT="${{ inputs.environment }}"
-          MODIFIED_FILES="${{ toJson(github.event.head_commit.modified) }}""
+          MODIFIED_FILES="${{ toJson(github.event.head_commit.modified) }}"
 
           if [[ "$ENV_INPUT" == "adt" || ("$REF" == refs/heads/feature** && "$MODIFIED_FILES" == *".github/workflows/snow_sync_job_deployment.yml"* )]]; then
             echo "ENV=adt" >> $GITHUB_ENV
