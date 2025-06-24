@@ -11,4 +11,4 @@ RUN pip install --upgrade pip setuptools wheel \
  
 RUN pip install --no-cache-dir -r requirements.txt
  
-RUN pip install costco_lead_managment-0.0.14-py3-none-any.whl  --force-reinstall
+RUN pip install costco_lead_managment*.whl  --force-reinstall

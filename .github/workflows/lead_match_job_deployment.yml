@@ -1,6 +1,11 @@
 name: deploy-lead-match-job
 
 on:
+  workflow_call:
+    inputs:
+      environment:
+        required: true
+        type: string
   push:
     branches:
       - main
@@ -10,7 +15,7 @@ on:
       - tag_prod
     paths:
       - .github/workflows/lead_match_job_deployment.yml
-      - cloud_run_job/lead_match_job/**
+      - lead_management_job/**
       - lead_match_codebase/**
 
 jobs:
@@ -33,26 +38,26 @@ jobs:
           REF_NAME="${GITHUB_REF_NAME}"
           REF="${GITHUB_REF}"
 
-          if [[ "$REF" == refs/heads/feature** ]]; then
+          if [[ ${{ inputs.environment }} == "adt" || ("$REF" == refs/heads/feature** && github.event.head_commit.modified != null && contains(join(github.event.head_commit.modified), '.github/workflows/lead_match_job_deployment.yml'))]]; then
             echo "ENV=adt" >> $GITHUB_ENV
             echo "DEPLOY=true" >> $GITHUB_ENV
-            echo "BUILD_IMAGE=true" >> $GITHUB_ENV
             echo "PROJECT_ID=p-601-np-membership-adt" >> $GITHUB_ENV
             echo "SERVICE_ACCOUNT=gco-iam-svc-mbr-bc-adt@p-601-np-membership-adt.iam.gserviceaccount.com" >> $GITHUB_ENV
+            echo "ENVIRONMENT_VARIABLES_PATH=./lead_management_job/lead_matching_config.properties" >>  $GITHUB_ENV
 
           elif [[ "$REF" == refs/heads/main ]]; then
             echo "ENV=qat" >> $GITHUB_ENV
             echo "DEPLOY=true" >> $GITHUB_ENV
-            echo "BUILD_IMAGE=false" >> $GITHUB_ENV
             echo "PROJECT_ID=p-601-np-membership-qat" >> $GITHUB_ENV
             echo "SERVICE_ACCOUNT=gco-iam-svc-mbr-bc-qat@p-601-np-membership-qat.iam.gserviceaccount.com" >> $GITHUB_ENV
+             echo "ENVIRONMENT_VARIABLES_PATH=./lead_management_job/lead_matching_config.properties" >>  $GITHUB_ENV
 
           elif [[ "$REF" == refs/tags/tag_spt ]]; then
             echo "ENV=spt" >> $GITHUB_ENV
             echo "DEPLOY=true" >> $GITHUB_ENV
-            echo "BUILD_IMAGE=false" >> $GITHUB_ENV
             echo "PROJECT_ID=p-601-np-membership-spt" >> $GITHUB_ENV
             echo "SERVICE_ACCOUNT=gco-iam-svc-mbr-bc-spt@p-601-np-membership-spt.iam.gserviceaccount.com" >> $GITHUB_ENV
+             echo "ENVIRONMENT_VARIABLES_PATH=./lead_management_job/lead_matching_config.properties" >>  $GITHUB_ENV
 
           else
             echo "DEPLOY=false" >> $GITHUB_ENV
@@ -66,85 +71,26 @@ jobs:
           #  echo "PROJECT_ID=p-601-prd-membership-prd" >> $GITHUB_ENV
           #  echo "SERVICE_ACCOUNT=gco-iam-svc-mlty-dbt-prd@p-601-prd-membership-prd.iam.gserviceaccount.com" >> $GITHUB_ENV
 
-       
-      - name: Set up Python
-        if: env.BUILD_IMAGE == 'true'
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.10.16'
-
-      - name: Install build dependencies
-        if: env.BUILD_IMAGE == 'true'
+      - name: "Prepare env vars for lead matching job"
+        id: env
         run: |
-         pip install build wheel setuptools Cython
-
-      - name: Build wheel
-        if: env.BUILD_IMAGE == 'true'
-        run: |
-          rm -f ./cloud_run_job/lead_match_job/*.whl
-          cd ./lead_match_codebase
-          python -m build --wheel
-          cp dist/*.whl ../cloud_run_job/lead_match_job/
-          cd ..
-
-      - name: Login to GitHub Container Registry
-        if: env.BUILD_IMAGE == 'true'
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.repository_owner }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Auth to GCP
-        if: env.DEPLOY == 'true'
-        id: auth
-        uses: google-github-actions/auth@v2
-        with:
-          token_format: access_token
-          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
-          service_account: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL}}
-
-      - name: Login to Google Artifact Registry
-        if: env.DEPLOY == 'true'
-        uses: docker/login-action@v3
-        with:
-          registry: us-docker.pkg.dev
-          username: oauth2accesstoken
-          password: ${{ steps.auth.outputs.access_token }}
-
-      - name: Set up Docker Buildx
-        if: env.BUILD_IMAGE == 'true'
-        uses: docker/setup-buildx-action@v3
-
-      - name: Docker meta
-        if: env.BUILD_IMAGE == 'true'
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: |
-            us-docker.pkg.dev/gcp-prj-images/gcp-gar-repo-mbrshp/lead-match-job
-
-      - name: Build and push Docker image
-        if: env.BUILD_IMAGE == 'true'
-        uses: docker/build-push-action@v6
-        with:
-          context: ./cloud_run_job/lead_match_job
-          file: ./cloud_run_job/lead_match_job/Dockerfile
-          push: true
-          tags: us-docker.pkg.dev/gcp-prj-images/gcp-gar-repo-mbrshp/lead-match-job:latest
-
-      - name: Deploy to Cloud Run Job
+          # Filter out comments and blank lines, then join into comma-separated string
+          ENV_VARS=$(grep -v '^\s*#' ${{ env.ENVIRONMENT_VARIABLES_PATH }} | grep -v '^\s*$' | paste -sd, -)
+          echo "env_vars=$ENV_VARS" >> "$GITHUB_OUTPUT"
+      - name: Deploy lead matching job to Cloud Run
         if: env.DEPLOY == 'true'
         uses: google-github-actions/deploy-cloudrun@v2
         with:
           job: 'lead-match-job'
-          image: 'us-docker.pkg.dev/gcp-prj-images/gcp-gar-repo-mbrshp/lead-match-job:latest'
+          image: 'us-docker.pkg.dev/gcp-prj-images/gcp-gar-repo-mbrshp/lead-mgmt:latest'
           project_id: ${{ env.PROJECT_ID }}
           flags: |
             --service-account=${{ env.SERVICE_ACCOUNT }}
             --vpc-egress=all-traffic
-            --network=gcp-vpc-np-host
-
+            --network=projects/gcp-prj-transit-hub/global/networks/gcp-vpc-np-host
+            --args="run.py,run"
+            --task-timeout=2h 
+            --set-env-vars=${{ steps.env.outputs.env_vars }}
       - name: Describe deployed job
         if: env.DEPLOY == 'true'
         run: |
