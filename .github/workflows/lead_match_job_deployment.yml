@@ -50,7 +50,7 @@ jobs:
         run: |
           REF_NAME="${GITHUB_REF_NAME}"
           REF="${GITHUB_REF}"
-          ENV_INPUT="${{ inputs.environment }}"
+          ENV_INPUT="$ENV_INPUT"
           MODIFIED_FILES="$(git diff --name-only ${{ github.event.before }} ${{ github.sha }})"
           echo "$MODIFIED_FILES"
 
@@ -79,6 +79,8 @@ jobs:
             echo "DEPLOY=false" >> $GITHUB_ENV
             echo "BUILD_IMAGE=false" >> $GITHUB_ENV
           fi
+        env:
+          ENV_INPUT: ${{ inputs.environment }}
 
          # elif [[ "$REF" == refs/tags/tag_prod ]]; then
           #  echo "ENV=prod" >> $GITHUB_ENV
