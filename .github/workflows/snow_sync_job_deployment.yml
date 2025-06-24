@@ -37,8 +37,10 @@ jobs:
         run: |
           REF_NAME="${GITHUB_REF_NAME}"
           REF="${GITHUB_REF}"
+          ENV_INPUT= "${{ inputs.environment }}"
+          MODIFIED_FILES= "${{ toJson(github.event.head_commit.modified) }}""
 
-          if [[ ${{ inputs.environment }} == "adt" || ("$REF" == refs/heads/feature** && github.event.head_commit.modified != null && contains(join(github.event.head_commit.modified), '.github/workflows/snow_sync_job_deployment.yml'))]]; then
+          if [[ "$ENV_INPUT" == "adt" || ("$REF" == refs/heads/feature** && "$MODIFIED_FILES" == *".github/workflows/snow_sync_job_deployment.yml"* )]]; then
             echo "ENV=adt" >> $GITHUB_ENV
             echo "DEPLOY=true" >> $GITHUB_ENV
             echo "PROJECT_ID=p-601-np-membership-adt" >> $GITHUB_ENV
