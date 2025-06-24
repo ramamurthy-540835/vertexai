@@ -89,15 +89,15 @@ jobs:
           push: true
           labels: ${{ steps.meta.outputs.labels }}
           tags: us-docker.pkg.dev/gcp-prj-images/gcp-gar-repo-mbrshp/lead-mgmt:latest
-    deploy-cloud-run:
-      - name: Trigger Workflow to deploy lead matching job
-        needs: build-and-push-container
-        uses: ./.github/workflows/lead_match_job_deployment.yml
-        with: 
-          environment: "adt"
-      - name: Trigger Workflow to deploy snow sync job
-        needs: build-and-push-container
-        uses: ./.github/workflows/snow_sync_job_deployment.yml
-        with: 
-          environment: "adt"
+  deploy-cloud-run:
+    - name: Trigger Workflow to deploy lead matching job
+      needs: build-and-push-container
+      uses: ./.github/workflows/lead_match_job_deployment.yml
+      with: 
+        environment: "adt"
+    - name: Trigger Workflow to deploy snow sync job
+      needs: build-and-push-container
+      uses: ./.github/workflows/snow_sync_job_deployment.yml
+      with: 
+        environment: "adt"
       
