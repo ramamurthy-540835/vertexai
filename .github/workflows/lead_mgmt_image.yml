@@ -88,7 +88,7 @@ jobs:
           file: ./lead_management_job/Dockerfile
           push: true
           labels: ${{ steps.meta.outputs.labels }}
-          tags: us-docker.pkg.dev/gcp-prj-images/gcp-gar-repo-mbrshp/lead-mgmt:latest
+          tags: us-docker.pkg.dev/gcp-prj-images/gcp-gar-repo-mbrshp/lead-mgmt:latest 
   deploy-lead-match-job:
     name: Trigger Workflow to Deploy Lead Matching Job
     needs: build-and-push-container

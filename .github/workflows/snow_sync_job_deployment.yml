@@ -98,7 +98,7 @@ jobs:
         uses: google-github-actions/deploy-cloudrun@v2
         with:
           job: 'snow-sync-job'
-          image: 'us-docker.pkg.dev/gcp-prj-images/gcp-gar-repo-mbrshp/lead_mgmt:latest'
+          image: 'us-docker.pkg.dev/gcp-prj-images/gcp-gar-repo-mbrshp/lead-mgmt:latest'
           project_id: ${{ env.PROJECT_ID }}
           flags: |
             --service-account=${{ env.SERVICE_ACCOUNT }}
