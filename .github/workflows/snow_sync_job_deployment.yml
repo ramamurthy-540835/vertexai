@@ -6,6 +6,7 @@ on:
       environment:
         required: true
         type: string
+      secrets: inherit
   push:
     branches:
       - main
