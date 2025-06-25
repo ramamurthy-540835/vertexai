@@ -50,7 +50,19 @@ jobs:
         run: |
           REF_NAME="${GITHUB_REF_NAME}"
           REF="${GITHUB_REF}"
-          ENV_INPUT="$ENV_INPUT"
+          ENV_INPUT="${ENV_INPUT:-}"
+
+          if [[ -z "$ENV_INPUT" ]]; then
+            if [[ "$REF" == "refs/heads/main" ]]; then
+              ENV_INPUT="qat"
+            elif [[ "$REF" == "refs/tags/tag_spt" ]]; then
+              ENV_INPUT="spt"
+            elif [[ "$REF" == refs/heads/feature* ]]; then
+              ENV_INPUT="adt"
+            fi
+          fi
+
+          echo "Using ENV_INPUT: $ENV_INPUT"
           MODIFIED_FILES="$(git diff --name-only ${{ github.event.before }} ${{ github.sha }})"
           echo "$MODIFIED_FILES"
 
