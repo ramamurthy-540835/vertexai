@@ -4,7 +4,7 @@ import pandas as pd
 from datetime import datetime
 from pgvector.sqlalchemy import Vector
 import sqlalchemy
-from vertexai.preview.language_models import TextEmbeddingModel,TextEmbeddingInput
+from vertexai.preview.language_models import TextEmbeddingModel, TextEmbeddingInput
 from sqlalchemy.dialects.postgresql import TIMESTAMP
 from sqlalchemy import Column, Integer, Text, DateTime
 import numpy as np
@@ -23,7 +23,6 @@ model = TextEmbeddingModel.from_pretrained("text-embedding-005")
 
 
 def data_extraction(transaction_df, pos_insert_id):
-
     # type confirmation
     pos_insert_id['pos_id'] = pos_insert_id['pos_id'].astype(str)
     transaction_df['pos_id'] = transaction_df['pos_id'].astype(str)
@@ -95,39 +94,35 @@ def insert_operation_transaction(engine, table_name, schema_name, data_frame):
                       chunksize=1000, dtype={"combined_embedding": Vector(768), "address_embedding": Vector(768),
                                              "name_embedding": Vector(768), "load_date": TIMESTAMP})
 
-def embedding_generation(file_pos: str,config_file_path:str):
 
-    #Initialization
+def embedding_generation(file_pos: str, config_file_path: str):
+    # Initialization
     job_config = JobConfig(config_file_path)
     db_config = job_config.db_config
     query_config = job_config.match_query
 
-    #fiscal information
+    # fiscal information
     fiscal_info = get_costco_fiscal_info()
 
-    #query
+    # query
 
     query_pos_inserts_ids = f'''{query_config.query_pos_inserts_ids} = {fiscal_info["fiscal_year"]}'''
 
-
-    #database detail
+    # database detail
     schema_name = db_config.schema_name
     insert_lead_table_name = db_config.insert_lead_table_name
     insert_pos_table_name = db_config.insert_pos_table_name
 
-    #engine
+    # engine
     engine = db_config.get_engine()
 
-    
-    pos_insert_id =  load_data_from_cloudsql( #pos records in database
+    pos_insert_id = load_data_from_cloudsql(  # pos records in database
         query_input=query_pos_inserts_ids,
         engine=engine)
 
-    
     transaction_df = load_file_from_gcs(file_pos)
 
-    
-    transaction_df.rename(columns={"COMBINED_FIELD": "combined_field","FULL_ADDRESS": "full_address",}, inplace=True)
+    transaction_df.rename(columns={"COMBINED_FIELD": "combined_field", "FULL_ADDRESS": "full_address", }, inplace=True)
 
     transaction_df = transaction_df[
         ~(
@@ -136,26 +131,29 @@ def embedding_generation(file_pos: str,config_file_path:str):
         )
     ]
 
-    transaction_df.drop(columns=['membership_number', 'first_name', 'last_name', 'city', 'state', 'zip_code', 'phone', 'email',
+    transaction_df.drop(
+        columns=['membership_number', 'first_name', 'last_name', 'city', 'state', 'zip_code', 'phone', 'email',
                  'CUSTOMER_NAME', 'address_line_one', 'address_line_two', 'updated_date'], inplace=True)
-    
-    transaction_insert_df = data_extraction(transaction_df,pos_insert_id)
 
+    transaction_insert_df = data_extraction(transaction_df, pos_insert_id)
 
     if not transaction_insert_df.empty:
-        
         # Assign embeddings to respective columns in the dataframe
-        transaction_insert_df['combined_embedding'] = process_in_batch(transaction_insert_df,'combined_embedding', 'combined_field')#column name to  be changed
-        transaction_insert_df['address_embedding'] = process_in_batch(transaction_insert_df,'address_embedding', 'full_address') #column name to  be changed
-        transaction_insert_df['name_embedding'] = process_in_batch(transaction_insert_df,'name_embedding', 'business_name') #column name to  be changed
+        transaction_insert_df['combined_embedding'] = process_in_batch(transaction_insert_df, 'combined_embedding',
+                                                                       'combined_field')  # column name to  be changed
+        transaction_insert_df['address_embedding'] = process_in_batch(transaction_insert_df, 'address_embedding',
+                                                                      'full_address')  # column name to  be changed
+        transaction_insert_df['name_embedding'] = process_in_batch(transaction_insert_df, 'name_embedding',
+                                                                   'business_name')  # column name to  be changed
 
         transaction_insert_df['load_date'] = pd.to_datetime(datetime.now())
 
-        transaction_insert_df = transaction_insert_df.rename(columns={"full_address": "business_address", "fiscal_year_transaction": "fiscal_year",
+        transaction_insert_df = transaction_insert_df.rename(
+            columns={"full_address": "business_address", "fiscal_year_transaction": "fiscal_year",
                      "fiscal_period_transaction": "fiscal_period"})
 
         insert_operation_transaction(engine, insert_pos_table_name, schema_name, transaction_insert_df)
 
 
-            
+
 

@@ -3,7 +3,7 @@ from google.cloud import secretmanager
 from google.cloud import storage
 from io import StringIO
 import pandas as pd
-
+from costco.leadmgmt.util.logger import app_logger
 
 def access_secret_version(project_id, secret_id, version_id="latest"):
     """
@@ -25,7 +25,7 @@ def access_secret_version(project_id, secret_id, version_id="latest"):
         payload = response.payload.data.decode("UTF-8")
         return payload
     except Exception as e:
-        print(f"Error accessing secret: {e}")
+        app_logger.error(f"Error accessing secret: {e}")
         return None
 
 
@@ -47,14 +47,11 @@ def get_costco_fiscal_info(input_date=None):
     fiscal_start = datetime(year, 9, 1)
     while fiscal_start.weekday() != 0:  # Monday is 0
         fiscal_start += timedelta(days=1)
-        # print(fiscal_start)
 
     # Determine weeks since fiscal start
     days_since_start = (input_date - fiscal_start).days
 
-    # print(days_since_start)
     weeks_since_start = days_since_start // 7
-    # print(weeks_since_start)
     # Fiscal periods are 4 weeks long (except the last one)
     fiscal_period = min(12, (weeks_since_start // 4) + 1)
 
@@ -76,8 +73,8 @@ def load_file_from_gcs(file_path):
     return pd.read_csv(csv_data)
 
 
-
-def process_and_archive_files(source_bucket_name,source_folder,destination_bucket_name,destination_folder,new_file,base_name,service_account_path=None):
+def process_and_archive_files(source_bucket_name, source_folder, destination_bucket_name, destination_folder, new_file,
+                              base_name, service_account_path=None):
     storage_client = storage.Client()
     # Initialize Google Cloud Storage client
     if service_account_path:
@@ -113,16 +110,14 @@ def process_and_archive_files(source_bucket_name,source_folder,destination_bucke
             # Delete the file from the source bucket after successful copy
             source_blob.delete()
 
-            print(f"Moved {source_path} to {destination_path} and deleted from the source folder.")
+            app_logger.debug(f"Moved {source_path} to {destination_path} and deleted from the source folder.")
 
     # Step 3: Upload new files to the input folder for the matching process
-        #destination_path = f"{source_folder}"
+    # destination_path = f"{source_folder}"
     file_name = f"{source_folder}/{base_name}.csv"
     bucket = storage_client.get_bucket(source_bucket_name)
     new_blob = bucket.blob(file_name)
     new_blob.upload_from_string(new_file.to_csv(index=False), 'text/csv')  # Upload the file from local system
-    print(f"Uploaded new file {base_name}.csv to {source_folder}.")
+    app_logger.debug(f"Uploaded new file {base_name}.csv to {source_folder}.")
 
     return f"gs://{source_bucket_name}/{file_name}"
-
-
