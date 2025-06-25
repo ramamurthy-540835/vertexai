@@ -54,6 +54,7 @@ jobs:
           if [[ -z "$WORKFLOW_TRIGGER" ]]; then
            WORKFLOW_TRIGGER="False"
           fi
+          echo "WORKFLOW_TRIGGER=$WORKFLOW_TRIGGER"
 
           MODIFIED_FILES="$(git diff --name-only ${{ github.event.before }} ${{ github.sha }})"
           echo "$MODIFIED_FILES"
