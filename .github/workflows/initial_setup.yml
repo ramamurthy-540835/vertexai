@@ -4,7 +4,7 @@ on:
   workflow_dispatch:  # Trigger manually
 
 env:
-  PROJECT_ID: 'p-601-np-membership-adt' # TODO: update to your Google Cloud project ID
+  PROJECT_ID: 'p-601-np-bcleadsmgmt-adt' # TODO: update to your Google Cloud project ID
   REGION: 'us-central1' # TODO: update to your region
 
 jobs:
@@ -35,31 +35,31 @@ jobs:
       - name: "Enable Service Usage API for ADT"
         run: |
           unset CLOUDSDK_CORE_PROJECT
-          gcloud config set project p-601-np-membership-adt
+          gcloud config set project p-601-np-bcleadsmgmt-adt
           gcloud services enable serviceusage.googleapis.com
       
-      - name: "Cancel an execution"
-        run: |
-          unset CLOUDSDK_CORE_PROJECT
-          gcloud config set project p-601-np-membership-adt
-          gcloud run jobs executions delete snow-sync-job-mqdtz --region us-central1 --project p-601-np-membership-adt --quiet
+      # - name: "Cancel an execution"
+      #   run: |
+      #     unset CLOUDSDK_CORE_PROJECT
+      #     gcloud config set project p-601-np-membership-adt
+      #     gcloud run jobs executions delete snow-sync-job-mqdtz --region us-central1 --project p-601-np-membership-adt --quiet
 
-      - name: "Run cloud run job in adt"
-        run: | 
-          unset CLOUDSDK_CORE_PROJECT
-          gcloud config set project p-601-np-membership-adt
-          gcloud run jobs execute snow-sync-job --region=us-central1 \
-          --project=p-601-np-membership-adt
+      # - name: "Run cloud run job in adt"
+      #   run: | 
+      #     unset CLOUDSDK_CORE_PROJECT
+      #     gcloud config set project p-601-np-membership-adt
+      #     gcloud run jobs execute snow-sync-job --region=us-central1 \
+      #     --project=p-601-np-membership-adt
       
  
       - name: "Enable Service Usage API for SPT"
         run: |
           unset CLOUDSDK_CORE_PROJECT
-          gcloud config set project p-601-np-membership-spt
+          gcloud config set project p-601-np-bcleadsmgmt-spt
           gcloud services enable serviceusage.googleapis.com
           
       - name: "Enable Service Usage API for QAT"
         run: |
           unset CLOUDSDK_CORE_PROJECT
-          gcloud config set project p-601-np-membership-qat
+          gcloud config set project p-601-np-bcleadsmgmt-qat
           gcloud services enable serviceusage.googleapis.com
