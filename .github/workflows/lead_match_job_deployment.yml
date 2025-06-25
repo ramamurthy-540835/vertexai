@@ -56,8 +56,10 @@ jobs:
           fi
           echo "WORKFLOW_TRIGGER=$WORKFLOW_TRIGGER"
 
-          MODIFIED_FILES="$(git diff --name-only ${{ github.event.before }} ${{ github.sha }})"
-          echo "$MODIFIED_FILES"
+          if [[ "$REF" == refs/heads/feature* ]]; then
+            MODIFIED_FILES="$(git diff --name-only ${{ github.event.before }} ${{ github.sha }})"
+            echo "$MODIFIED_FILES"
+          fi
 
           if [[ "$WORKFLOW_TRIGGER" == "True" || ("$REF" == refs/heads/feature** && "$MODIFIED_FILES" == *".github/workflows/lead_match_job_deployment.yml"* )]]; then
             echo "ENV=adt" >> $GITHUB_ENV
