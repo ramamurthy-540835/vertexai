@@ -34,7 +34,7 @@ resource "google_project_service" "required_apis_recreate" {
     "storage.googleapis.com",
     "cloudscheduler.googleapis.com",
     "servicenetworking.googleapis.com"
-  ])
+  ]) 
 
   project = var.projectId
   service = each.value
