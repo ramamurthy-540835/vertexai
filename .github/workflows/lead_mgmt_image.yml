@@ -94,7 +94,7 @@ jobs:
     needs: build-and-push-container
     uses: ./.github/workflows/lead_match_job_deployment.yml
     with:
-      environment: "adt"
+      workflow_trigger_event: "True"
     secrets:
       GCP_WORKLOAD_IDENTITY_PROVIDER_ID: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
       GCP_WORKLOAD_IDENTITY_SA_EMAIL: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
@@ -103,7 +103,7 @@ jobs:
     needs: build-and-push-container
     uses: ./.github/workflows/snow_sync_job_deployment.yml
     with:
-      environment: "adt" 
+      workflow_trigger_event: "True"
     secrets:
       GCP_WORKLOAD_IDENTITY_PROVIDER_ID: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
       GCP_WORKLOAD_IDENTITY_SA_EMAIL: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}

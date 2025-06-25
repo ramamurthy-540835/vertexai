@@ -3,7 +3,7 @@ name: deploy-lead-match-job
 on:
   workflow_call:
     inputs:
-      environment:
+      workflow_trigger_event:
         required: true
         type: string
     secrets:
@@ -51,15 +51,14 @@ jobs:
           REF_NAME="${GITHUB_REF_NAME}"
           REF="${GITHUB_REF}"
 
-          if [[ -z "$ENV_INPUT" ]]; then
-           ENV_INPUT="Not assigned"
+          if [[ -z "$WORKFLOW_TRIGGER" ]]; then
+           WORKFLOW_TRIGGER="False"
           fi
 
-          echo "Using ENV_INPUT: $ENV_INPUT"
           MODIFIED_FILES="$(git diff --name-only ${{ github.event.before }} ${{ github.sha }})"
           echo "$MODIFIED_FILES"
 
-          if [[ "$ENV_INPUT" == "adt" || ("$REF" == refs/heads/feature** && "$MODIFIED_FILES" == *".github/workflows/lead_match_job_deployment.yml"* )]]; then
+          if [[ "$WORKFLOW_TRIGGER" == "True" || ("$REF" == refs/heads/feature** && "$MODIFIED_FILES" == *".github/workflows/lead_match_job_deployment.yml"* )]]; then
             echo "ENV=adt" >> $GITHUB_ENV
             echo "DEPLOY=true" >> $GITHUB_ENV
             echo "PROJECT_ID=p-601-np-bcleadsmgmt-adt" >> $GITHUB_ENV
@@ -85,7 +84,7 @@ jobs:
             echo "BUILD_IMAGE=false" >> $GITHUB_ENV
           fi
         env:
-          ENV_INPUT: ${{ inputs.environment }}
+          WORKFLOW_TRIGGER: ${{ inputs.workflow_trigger_event }}
 
          # elif [[ "$REF" == refs/tags/tag_prod ]]; then
           #  echo "ENV=prod" >> $GITHUB_ENV
