@@ -1,7 +1,7 @@
 variable "projectId" { 
   description = "The ID of the GCP Project"
   type = string 
-  default     = "p-601-np-membership-adt"  # Default for ADT project
+  default     = "p-601-np-bcleadsmgmt-adt"  # Default for ADT project
 }
 
 variable "environment" { 
