@@ -74,3 +74,8 @@ variable "database_name" {
   description = "Primary database name"
   type        = string
 }
+
+variable "password" {
+  description = "Database password"
+  type        = string
+}
