@@ -3,13 +3,20 @@ name: "provision_adt"
 on:
   # Triggers the workflow on push or pull request events but only for the "main" branch
   push:
-    branches: [ "feature**" ]
-    paths: 
-      - 'terraform/environments/adt/**.tf'
+    branches:
+      - "feature**"
+    paths:
+      - 'terraform/environments/adt/infra/**.tf'
+      - 'terraform/modules/**/**.tf'
+      - '.github/workflows/provision_adt.yml'
+
   pull_request:
-    branches: [ "feature**" ]
-    paths: 
-     - 'terraform/environments/adt/**.tf'
+    branches:
+      - "feature**"
+    paths:
+      - 'terraform/environments/adt/infra/**'
+      - 'terraform/modules/**/**.tf'
+      - '.github/workflows/provision_adt.yml'
 
 
 jobs:
@@ -36,21 +43,21 @@ jobs:
           create_credentials_file: true
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
           service_account: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
-          project_id: 'p-601-np-membership-adt'
+          project_id: 'p-601-np-bcleadsmgmt-adt'
           
       - name: "Setup Terraform"
         uses: hashicorp/setup-terraform@v3
 
       - name: "Terraform Init"
-        working-directory: ./terraform/environments/${{ matrix.env }}
+        working-directory: ./terraform/environments/${{ matrix.env }}/infra
         run: terraform init
 
       - name: "Terraform Plan"
-        working-directory: ./terraform/environments/${{ matrix.env }}
+        working-directory: ./terraform/environments/${{ matrix.env }}/infra
         run: terraform plan -out=plan.tfplan -input=false -lock-timeout=10m
       
       - name: "Terraform Apply"
-        working-directory: ./terraform/environments/${{ matrix.env }}
+        working-directory: ./terraform/environments/${{ matrix.env }}/infra
         run: terraform apply -input=false -lock-timeout=10m plan.tfplan
         env: 
             TF_VAR_gcp_workload_identity_sa_email: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}

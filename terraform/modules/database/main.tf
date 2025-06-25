@@ -1,6 +1,22 @@
-data "google_compute_network" "shared_vpc" {
-  name    = var.vpc_name
-  project = var.host_project_id  # <-- specify the project where the VPC actually lives
+# PostgreSQL provider configuration
+#terraform {
+#  required_providers {
+#    postgresql = {
+#      source  = "cyrilgdn/postgresql"
+#      version = "~> 1.21"
+#    }
+#  }
+# }
+
+ data "google_compute_network" "shared_vpc" {
+   name    = var.vpc_name
+   project = var.host_project_id  # <-- specify the project where the VPC actually lives
+ }
+
+ data "google_compute_subnetwork" "my-subnetwork" {
+  name    = var.subnetwork
+  region  = var.region
+  project = var.host_project_id
 }
 
 resource "google_sql_database_instance" "this" {
@@ -57,4 +73,24 @@ resource "google_sql_user" "iam_service_account_user" {
   name     = trimsuffix(var.service_account, ".gserviceaccount.com")
   instance = google_sql_database_instance.this.name
   type     = "CLOUD_IAM_SERVICE_ACCOUNT"
+}
+
+resource "google_sql_user" "postgres_admin" {
+  name     = "postgres"
+  password = var.password
+  instance = google_sql_database_instance.this.name
+}
+
+resource "google_sql_database" "app_database" {
+  name     = var.database_name
+  instance = google_sql_database_instance.this.name
+  project  = var.project
+}
+
+resource "null_resource" "postgresql_ready" {
+  depends_on = [
+    google_sql_database_instance.this,
+    google_sql_database.app_database,
+    google_sql_user.iam_service_account_user
+  ]
 }

@@ -3,13 +3,20 @@ name: "provision_qat"
 on:
   # Triggers the workflow on push or pull request events but only for the "main" branch
   push:
-    branches: [ "provision_qat" ]
- #   paths: 
-  #    - 'terraform/environments/qat/**.tf'
+      branches:
+        - main
+      paths:
+        - 'terraform/environments/qat/infra/**.tf'
+        - 'terraform/modules/**/**.tf'
+        - '.github/workflows/provision_qat.yml'
+
   pull_request:
-    branches: [ "provision_qat" ]
-    paths: 
-     - 'terraform/environments/qat/**.tf'
+      branches:
+        - main
+      paths:
+        - 'terraform/environments/qat/infra/**'
+        - 'terraform/modules/**/**.tf'
+        - '.github/workflows/provision_qat.yml'
 
 
 jobs:
@@ -36,26 +43,21 @@ jobs:
           create_credentials_file: true
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
           service_account: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
-          project_id: 'p-601-np-membership-qat'
-          
-      - name: "Enable Service Usage API"
-        run: |
-          gcloud config set project p-601-np-membership-qat
-          gcloud services enable serviceusage.googleapis.com
+          project_id: 'p-601-np-bcleadsmgmt-qat'
           
       - name: "Setup Terraform"
         uses: hashicorp/setup-terraform@v3
 
       - name: "Terraform Init"
-        working-directory: ./terraform/environments/${{ matrix.env }}
+        working-directory: ./terraform/environments/${{ matrix.env }}/infra
         run: terraform init
 
       - name: "Terraform Plan"
-        working-directory: ./terraform/environments/${{ matrix.env }}
+        working-directory: ./terraform/environments/${{ matrix.env }}/infra
         run: terraform plan -out=plan.tfplan -input=false -lock-timeout=10m
       
       - name: "Terraform Apply"
-        working-directory: ./terraform/environments/${{ matrix.env }}
+        working-directory: ./terraform/environments/${{ matrix.env }}/infra
         run: terraform apply -input=false -lock-timeout=10m plan.tfplan
         env: 
             TF_VAR_gcp_workload_identity_sa_email: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}

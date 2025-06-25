@@ -15,13 +15,13 @@ license = "MIT"
 license-files = ["LICEN[CS]E*"]
 
 [project.urls]
-Homepage = "https://github.com/pypa/example"
-Issues = "https://github.com/pypa/example/issues"
+Homepage = "https://github.com/upandey_costco/membership-bc-lead-management"
+Issues = "https://github.com/upandey_costco/membership-bc-lead-management"
 
 
 [build-system]
-requires = ["setuptools >= 77.0.3", "google-cloud-storage" ,"cloud-sql-python-connector[pg8000]"
-    ,"pandas" ,"google-cloud-secret-manager" ,"requests" ,"sqlalchemy" ,"fsspec" ,"gcsfs" ,"pydantic","configparse",
-    "kfp","google-cloud-aiplatform","google-cloud-pipeline-components","unidecode","numpy","pgvector"
+requires = ["setuptools >= 77.0.3", "cython", "google-cloud-storage" ,"cloud-sql-python-connector[pg8000]"
+    ,"pandas" ,"google-cloud-secret-manager" ,"requests" ,"sqlalchemy" ,"fsspec" ,"gcsfs" ,"pydantic","configparser",
+    "kfp==2.4.0","google-cloud-aiplatform","google-cloud-pipeline-components","unidecode","numpy","pgvector"
 ]
 build-backend = "setuptools.build_meta"

@@ -1,0 +1,135 @@
+name: deploy-snow-sync-job
+
+on:
+  workflow_call:
+    inputs:
+      workflow_trigger_event:
+        required: true
+        type: string
+    secrets:
+      GCP_WORKLOAD_IDENTITY_PROVIDER_ID:
+        required: true
+      GCP_WORKLOAD_IDENTITY_SA_EMAIL:
+        required: true
+  push:
+    branches:
+      - main
+      - 'feature**'
+    tags:
+      - tag_spt
+      - tag_prod
+    paths:
+      - .github/workflows/snow_sync_job_deployment.yml
+      - lead_management_job/**
+      - lead_match_codebase/**
+
+jobs:
+  build-and-deploy:
+    runs-on:
+      - self-hosted
+      - us-west1
+    permissions:
+      id-token: write
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - id: auth
+        name: Auth to GCP for GAR service account
+        uses : google-github-actions/auth@v2
+        with:
+          token_format: access_token
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID}}
+          service_account: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL}}
+
+      - name: Determine environment and conditions
+        id: config
+        run: |
+          REF_NAME="${GITHUB_REF_NAME}"
+          REF="${GITHUB_REF}"
+
+          if [[ -z "$WORKFLOW_TRIGGER" ]]; then
+           WORKFLOW_TRIGGER="False"
+          fi
+
+          echo "Using ENV_INPUT: $ENV_INPUT"
+          MODIFIED_FILES="$(git diff --name-only ${{ github.event.before }} ${{ github.sha }})"
+          echo "$MODIFIED_FILES"
+
+          if [[ "$WORKFLOW_TRIGGER" == "True" || ("$REF" == refs/heads/feature** && "$MODIFIED_FILES" == *".github/workflows/snow_sync_job_deployment.yml"* )]]; then
+            echo "ENV=adt" >> $GITHUB_ENV
+            echo "DEPLOY=true" >> $GITHUB_ENV
+            echo "PROJECT_ID=p-601-np-bcleadsmgmt-adt" >> $GITHUB_ENV
+            echo "SERVICE_ACCOUNT=gco-iam-svc-lead-mgmt-bc-adt@p-601-np-bcleadsmgmt-adt.iam.gserviceaccount.com" >> $GITHUB_ENV
+            echo "ENVIRONMENT_VARIABLES_PATH=./lead_management_job/app_lab.properties" >>  $GITHUB_ENV
+
+          elif [[ "$REF" == refs/heads/main ]]; then
+            echo "ENV=qat" >> $GITHUB_ENV
+            echo "DEPLOY=true" >> $GITHUB_ENV
+            echo "PROJECT_ID=p-601-np-bcleadsmgmt-qat" >> $GITHUB_ENV
+            echo "SERVICE_ACCOUNT=gco-iam-svc-lead-mgmt-bc-qat@p-601-np-bcleadsmgmt-qat.iam.gserviceaccount.com" >> $GITHUB_ENV
+             echo "ENVIRONMENT_VARIABLES_PATH=./lead_management_job/app_lab.properties" >>  $GITHUB_ENV
+
+          elif [[ "$REF" == refs/tags/tag_spt ]]; then
+            echo "ENV=spt" >> $GITHUB_ENV
+            echo "DEPLOY=true" >> $GITHUB_ENV
+            echo "PROJECT_ID=p-601-np-bcleadsmgmt-spt" >> $GITHUB_ENV
+            echo "SERVICE_ACCOUNT=gco-iam-svc-lead-mgmt-bc-spt@p-601-np-bcleadsmgmt-spt.iam.gserviceaccount.com" >> $GITHUB_ENV
+             echo "ENVIRONMENT_VARIABLES_PATH=./lead_management_job/app_lab.properties" >>  $GITHUB_ENV
+
+          else
+            echo "DEPLOY=false" >> $GITHUB_ENV
+            echo "BUILD_IMAGE=false" >> $GITHUB_ENV
+          fi
+        env:
+          WORKFLOW_TRIGGER: ${{ inputs.workflow_trigger_event }}
+
+         # elif [[ "$REF" == refs/tags/tag_prod ]]; then
+          #  echo "ENV=prod" >> $GITHUB_ENV
+          #  echo "DEPLOY=true" >> $GITHUB_ENV
+          #  echo "BUILD_IMAGE=false" >> $GITHUB_ENV
+          #  echo "PROJECT_ID=p-601-prd-membership-prd" >> $GITHUB_ENV
+          #  echo "SERVICE_ACCOUNT=gco-iam-svc-mlty-dbt-prd@p-601-prd-membership-prd.iam.gserviceaccount.com" >> $GITHUB_ENV
+
+      - name: "Prepare env vars for lead matching job"
+        id: env
+        run: |
+          # Filter out comments and blank lines, then join into comma-separated string
+          ENV_VARS=$(grep -v '^\s*#' ${{ env.ENVIRONMENT_VARIABLES_PATH }} | grep -v '^\s*$' | paste -sd, -)
+          echo "env_vars=$ENV_VARS" >> "$GITHUB_OUTPUT"
+      - name: Deploy snow sync job to Cloud Run
+        if: env.DEPLOY == 'true'
+        uses: google-github-actions/deploy-cloudrun@v2
+        with:
+          job: 'snow-sync-job'
+          image: 'us-docker.pkg.dev/gcp-prj-images/gcp-gar-repo-mbrshp/lead-mgmt:latest'
+          project_id: ${{ env.PROJECT_ID }}
+          flags: |
+            --service-account=${{ env.SERVICE_ACCOUNT }}
+            --vpc-egress=all-traffic
+            --network=projects/gcp-prj-transit-hub/global/networks/gcp-vpc-np-host
+            --args="main.py,snow_validation"
+            --task-timeout=30m 
+            --set-env-vars=${{ steps.env.outputs.env_vars }}
+
+      - name: Add schedule to Cloud Run Job
+        if: env.DEPLOY == 'true'
+        run: |
+          gcloud scheduler jobs create http snow-sync-job-scheduler \
+          --project ${{ env.PROJECT_ID }} \
+          --location us-central1 \
+          --schedule="0 0 * * *" \
+          --uri="https://us-central1-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/${{ env.PROJECT_ID }}/jobs/snow-sync-job:run"\
+          --http-method=POST \
+          --oauth-service-account-email=${{ env.SERVICE_ACCOUNT }}
+
+      - name: Describe deployed job
+        if: env.DEPLOY == 'true'
+        run: |
+          gcloud run jobs describe snow-sync-job \
+            --region us-central1 \
+            --project ${{ env.PROJECT_ID }} \
+            --format="yaml"
