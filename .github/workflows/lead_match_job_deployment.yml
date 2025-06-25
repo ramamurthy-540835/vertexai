@@ -50,10 +50,9 @@ jobs:
         run: |
           REF_NAME="${GITHUB_REF_NAME}"
           REF="${GITHUB_REF}"
-          #ENV_INPUT="${ENV_INPUT:-}"
 
           if [[ -z "$ENV_INPUT" ]]; then
-           ENV_INPUT = "Not assigned"
+           ENV_INPUT="Not assigned"
           fi
 
           echo "Using ENV_INPUT: $ENV_INPUT"
