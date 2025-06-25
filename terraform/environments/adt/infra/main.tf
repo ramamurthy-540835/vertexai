@@ -17,8 +17,8 @@ terraform {
 
 terraform {
   backend "gcs" {
-    bucket = "gcp-gcs-cicd-core-leadsmgmt-bc-lead"
-    prefix = "adt/bc"
+    bucket = "gcp-gcs-cicd-core-mbr-bc-lead"
+    prefix = "np/p-601-np-bcleadsmgmt-adt"
   }
 }
 
