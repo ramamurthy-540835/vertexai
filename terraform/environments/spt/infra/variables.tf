@@ -1,19 +1,19 @@
 variable "projectId" { 
   description = "The ID of the GCP Project"
   type = string 
-  default     = "p-601-np-membership-spt"  # Default for spt project
+  default     = "p-601-np-bcleadsmgmt-spt"  # Default for ADT project
 }
 
 variable "environment" { 
   description = "GCP environment"
   type = string 
-  default     = "spt"  # Default for spt project
+  default     = "spt"  # Default for ADT project
 }
 
 variable "location" {
   description = "The geographic location for the dataset"
   type        = string
-  default     = "US"
+  default     = "us"
 }
 
 variable "labels" {
@@ -48,4 +48,12 @@ variable "country" {
   default     = "us"
 }
 
-
+# SQL Scripts Configuration
+variable "sql_scripts" {
+  description = "Map of SQL script files to execute"
+  type = map(object({
+    file_path  = string
+    always_run = bool  # Set to true to run script on every apply
+  }))
+  default = {}
+}

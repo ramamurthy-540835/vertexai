@@ -3,13 +3,24 @@ name: "provision_spt"
 on:
   # Triggers the workflow on push or pull request events but only for the "main" branch
   push:
-    branches: [ "provision_spt" ]
-    paths: 
-      - 'terraform/environments/spt/**.tf'
+    branches:
+      - main
+    tags:
+      - tag_spt
+    paths:
+      - 'terraform/environments/adt/infra/**.tf'
+      - 'terraform/modules/**/**.tf'
+      - '.github/workflows/provision_adt.yml'
+
   pull_request:
-    branches: [ "provision_spt" ]
-    paths: 
-     - 'terraform/environments/spt/**.tf'
+    branches:
+      - main
+    tags:
+      - tag_spt
+    paths:
+      - 'terraform/environments/adt/infra/**'
+      - 'terraform/modules/**/**.tf'
+      - '.github/workflows/provision_adt.yml'
 
 
 jobs:
@@ -36,12 +47,7 @@ jobs:
           create_credentials_file: true
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
           service_account: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
-          project_id: 'p-601-np-membership-spt'
-
-      - name: "Enable Service Usage API"
-        run: |
-          gcloud config set project p-601-np-membership-spt
-          gcloud services enable serviceusage.googleapis.com
+          project_id: 'p-601-np-bcleadsmgmt-spt'
           
       - name: "Setup Terraform"
         uses: hashicorp/setup-terraform@v3
