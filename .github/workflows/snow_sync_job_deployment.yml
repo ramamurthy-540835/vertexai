@@ -52,10 +52,9 @@ jobs:
           REF="${GITHUB_REF}"
 
           if [[ -z "$WORKFLOW_TRIGGER" ]]; then
-           WORKFLOW_TRIGGER="False"
+           WORKFLOW_TRIGGER="False" 
           fi
-
-          echo "Using ENV_INPUT: $ENV_INPUT"
+          
           MODIFIED_FILES="$(git diff --name-only ${{ github.event.before }} ${{ github.sha }})"
           echo "$MODIFIED_FILES"
 

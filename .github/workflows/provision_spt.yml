@@ -3,8 +3,8 @@ name: "provision_spt"
 on:
   # Triggers the workflow on push or pull request events but only for the "main" branch
   push:
-    branches:
-      - main
+    # branches:
+    #   - main
     tags:
       - tag_spt
     paths:
@@ -13,8 +13,8 @@ on:
       - '.github/workflows/provision_adt.yml'
 
   pull_request:
-    branches:
-      - main
+    # branches:
+    #   - main
     tags:
       - tag_spt
     paths:
