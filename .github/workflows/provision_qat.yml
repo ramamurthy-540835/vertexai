@@ -2,21 +2,21 @@ name: "provision_qat"
 
 on:
   # Triggers the workflow on push or pull request events but only for the "main" branch
- push:
-    branches:
-      - main
-    paths:
-      - 'terraform/environments/qat/infra/**.tf'
-      - 'terraform/modules/**/**.tf'
-      - '.github/workflows/provision_qat.yml'
+  push:
+      branches:
+        - main
+      paths:
+        - 'terraform/environments/qat/infra/**.tf'
+        - 'terraform/modules/**/**.tf'
+        - '.github/workflows/provision_qat.yml'
 
   pull_request:
-    branches:
-      - main
-    paths:
-      - 'terraform/environments/qat/infra/**'
-      - 'terraform/modules/**/**.tf'
-      - '.github/workflows/provision_qat.yml'
+      branches:
+        - main
+      paths:
+        - 'terraform/environments/qat/infra/**'
+        - 'terraform/modules/**/**.tf'
+        - '.github/workflows/provision_qat.yml'
 
 
 jobs:
