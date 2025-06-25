@@ -3,7 +3,7 @@ name: deploy-snow-sync-job
 on:
   workflow_call:
     inputs:
-      environment:
+      workflow_trigger_event:
         required: true
         type: string
     secrets:
