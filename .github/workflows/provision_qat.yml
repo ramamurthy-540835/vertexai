@@ -49,15 +49,15 @@ jobs:
         uses: hashicorp/setup-terraform@v3
 
       - name: "Terraform Init"
-        working-directory: ./terraform/environments/${{ matrix.env }}
+        working-directory: ./terraform/environments/${{ matrix.env }}/infra
         run: terraform init
 
       - name: "Terraform Plan"
-        working-directory: ./terraform/environments/${{ matrix.env }}
+        working-directory: ./terraform/environments/${{ matrix.env }}/infra
         run: terraform plan -out=plan.tfplan -input=false -lock-timeout=10m
       
       - name: "Terraform Apply"
-        working-directory: ./terraform/environments/${{ matrix.env }}
+        working-directory: ./terraform/environments/${{ matrix.env }}/infra
         run: terraform apply -input=false -lock-timeout=10m plan.tfplan
         env: 
             TF_VAR_gcp_workload_identity_sa_email: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
