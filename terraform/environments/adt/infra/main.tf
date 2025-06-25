@@ -33,7 +33,8 @@ resource "google_project_service" "required_apis_recreate" {
     "cloudfunctions.googleapis.com",
     "storage.googleapis.com",
     "cloudscheduler.googleapis.com",
-    "servicenetworking.googleapis.com"
+    "servicenetworking.googleapis.com",
+    "run.googleapis.com"
   ]) 
 
   project = var.projectId
