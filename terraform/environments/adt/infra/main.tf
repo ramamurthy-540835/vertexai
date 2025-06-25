@@ -18,7 +18,7 @@ terraform {
 terraform {
   backend "gcs" {
     bucket = "gcp-gcs-cicd-core-mbr-bc-lead"
-    prefix = "np/p-601-np-bcleadsmgmt-adt"
+    prefix = "adt/bc"
   }
 }
 
@@ -43,7 +43,7 @@ resource "google_project_service" "required_apis_recreate" {
 }
 
 resource "google_storage_bucket" "this" {
-  name          = "gcp-gcs-${var.prefix}-${var.country}-${var.environment}"
+  name          = "cs-${var.prefix}-${var.country}-${var.environment}"
   location      = var.location
   force_destroy = true
 
@@ -84,8 +84,8 @@ module "kubeflow_registry" {
 }
 
 resource "google_service_account" "my_service_account" {
-      account_id   = "gco-iam-svc-leadmgmt-bc-adt"
-      display_name = "gco-iam-svc-leadmgmt-bc-adt"
+      account_id   = "gco-iam-svc-mbr-bc-adt"
+      display_name = "gco-iam-svc-mbr-bc-adt"
     }
 
 module "service_now_username" {
@@ -102,10 +102,10 @@ module "service_now_password" {
  secret_value  = "Costco@web123"
 }
 
-/*module "cloud_sql_instance" {
+module "cloud_sql_instance" {
   source            = "../../../modules/database"
   depends_on        = [google_project_service.required_apis_recreate]
-  project           = "p-601-np-bcleadsmgmt-adt"
+  project           = "p-601-np-membership-adt"
   instance_name     = "lead-mgmt-adt"
   database_version  = "POSTGRES_15"
   region            = "us-central1"
@@ -120,7 +120,6 @@ module "service_now_password" {
   private_network = "projects/gcp-prj-transit-hub/global/networks/gcp-vpc-np-host"
   subnetwork = "gcp-snt-np-usc1-601-membership-gsqldb-np"
   database_name = "lead-mgmt-db"
-  password = "qJoVywHigYGlA1d"
   }
 
 module "snow_sync_scheduler" {
@@ -131,7 +130,7 @@ module "snow_sync_scheduler" {
   time_zone        = "UTC"
   attempt_deadline = "320s"
   data             = "Triggering SNOW to GCP sync job"
-}*/
+}
 
 module "monitoring_alert" {
   source = "../../../modules/monitoring_alert"
