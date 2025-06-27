@@ -57,6 +57,7 @@ terraform {
 }
 
  resource "null_resource" "table_creation" {
+ depends_on = [null_resource.initial_database_setup]
  triggers = {
    sql_script_hash = filesha256("../../../../postgres_resources/costco_db_ddl.sql")
  }
@@ -87,6 +88,7 @@ terraform {
 }
 
 resource "null_resource" "data_load" {
+ depends_on = [null_resource.table_creation]
  triggers = {
    sql_script_hash = filesha256("../../../../postgres_resources/costco_db_dml.sql")
  }
