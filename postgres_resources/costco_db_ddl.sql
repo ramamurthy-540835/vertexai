@@ -1,5 +1,5 @@
 -- Create vector extension
-CREATE EXTENSION IF NOT EXISTS vector;
+CREATE EXTENSION IF NOT EXISTS vector; 
 
 CREATE TABLE IF NOT EXISTS
   "$SCHEMA_NAME".account ( 
