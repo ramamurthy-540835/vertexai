@@ -37,16 +37,17 @@ jobs:
       #     gcloud config set project p-601-np-membership-adt
       #     gcloud run jobs executions delete snow-sync-job-mqdtz --region us-central1 --project p-601-np-membership-adt --quiet
 
-      - name: "Run cloud run job in adt"
-        run: | 
-          unset CLOUDSDK_CORE_PROJECT
-          gcloud config set project p-601-np-bcleadsmgmt-adt
-          gcloud run jobs execute snow-sync-job --region=us-central1 \
-          --project=p-601-np-bcleadsmgmt-adt
+      # - name: "Run cloud run job in adt"
+      #   run: | 
+      #     unset CLOUDSDK_CORE_PROJECT
+      #     gcloud config set project p-601-np-bcleadsmgmt-adt
+      #     gcloud run jobs execute snow-sync-job --region=us-central1 \
+      #     --project=p-601-np-bcleadsmgmt-adt
 
       - name: "Check address space"
         run: | 
-          gcloud compute addresses list \
+          gcloud compute networks subnets describe gcp-snt-np-usc1-601-cloudruncloudsql-np \
           --project=gcp-prj-transit-hub \
-          --regions=us-central1 \
-          --filter="subnetwork:gcp-snt-np-usc1-601-cloudruncloudsql-np"
+          --region=us-central1 \
+          --format="get(ipCidrRange)"
+
