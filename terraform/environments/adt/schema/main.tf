@@ -46,6 +46,25 @@ terraform {
            password=RV/0V6@39%jU \
            sslmode=disable" \
            -f /tmp/lead_mgmt_schema_creation.sql
+
+     #  Verify the schema was created
+     echo "Verifying schema creation..."
+     psql "host=127.0.0.1 \
+          port=5432 \
+          dbname=${var.database_name} \
+          user=postgres \
+          sslmode=disable" \
+          -c "SELECT schema_name FROM information_schema.schemata WHERE schema_name = '$SCHEMA_NAME';"
+
+     # Verify privileges (example: list grants for schema)
+     echo "Verifying privileges..."
+     psql "host=127.0.0.1 \
+          port=5432 \
+          dbname=${var.database_name} \
+          user=postgres \
+          sslmode=disable" \
+          -c "SELECT grantee, privilege_type FROM information_schema.role_table_grants WHERE table_schema = '$SCHEMA_NAME';"
+  EOT
    EOT
    environment = {
      CLOUDSQL_INSTANCE = "${var.projectId}:${var.region}:${var.instance}"
