@@ -37,7 +37,7 @@ terraform {
    command = <<-EOT
      export SCHEMA_NAME=${var.schema_name}
 
-     envsubst < "../../../../postgres_resources/lead_mgmt_schema_creation.sql.tpl" > /tmp/lead_mgmt_schema_creation.sql
+     envsubst < "../../../../postgres_resources/lead_mgmt_schema_creation.sql" > /tmp/lead_mgmt_schema_creation.sql
      # Connect using private IP with IAM authentication
      psql "host=127.0.0.1\
            port=5432 \
