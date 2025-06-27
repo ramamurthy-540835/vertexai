@@ -1,5 +1,6 @@
 -- Create vector extension
-CREATE EXTENSION IF NOT EXISTS vector; 
+DROP EXTENSION IF EXISTS vector;
+CREATE EXTENSION vector; -- installs into public
 
 CREATE TABLE IF NOT EXISTS
   "$SCHEMA_NAME".account ( 
