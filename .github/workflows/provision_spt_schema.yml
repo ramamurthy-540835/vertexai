@@ -1,22 +1,22 @@
-name: "provision_adt_schema"
+name: "provision_spt_schema"
 
 on:
-  # Triggers the workflow on push or pull request events but only for the "feature" branch
+  # Triggers the workflow on push or pull request events but only for the "main" branch
   push:
-    branches:
-      - "feature**"
+    tags:
+      - release-spt*
     paths:
-      - 'terraform/environments/adt/schema/**.tf'
+      - 'terraform/environments/spt/schema/**.tf'
       - 'postgres_resources/**.sql'
-      - '.github/workflows/provision_adt_schema.yml'
+      - '.github/workflows/provision_spt_schema.yml'
 
   pull_request:
     branches:
-      - "feature**"
+      - "main"
     paths:
-     - 'terraform/environments/adt/schema/**.tf'
+     - 'terraform/environments/spt/schema/**.tf'
      - 'postgres_resources/**.sql'
-     - '.github/workflows/provision_adt_schema.yml'
+     - '.github/workflows/provision_spt_schema.yml'
 
 
 jobs:
@@ -28,7 +28,7 @@ jobs:
     environment: ${{ github.event.pull_request.head.ref }}
     strategy:
       matrix:
-        env: ['adt'] #,['adt', 'qat', 'spt'] # Exclude prd from auto-plan
+        env: ['spt'] #,['adt', 'qat', 'spt'] # Exclude prd from auto-plan
     
     permissions:
       id-token: write
@@ -46,7 +46,7 @@ jobs:
           create_credentials_file: true
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
           service_account: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
-          project_id: 'p-601-np-bcleadsmgmt-adt'
+          project_id: 'p-601-np-bcleadsmgmt-spt'
 
       - name: "Install additional utilities"
         run: |
@@ -82,7 +82,7 @@ jobs:
             echo "Cloud SQL Proxy is already installed"
           fi
           # Start Cloud SQL Proxy in background
-          ./cloud-sql-proxy p-601-np-bcleadsmgmt-adt:us-central1:lead-mgmt-adt \
+          ./cloud-sql-proxy p-601-np-bcleadsmgmt-spt:us-central1:lead-mgmt-spt \
             --port 5432 \
             --private-ip \
             --auto-iam-authn &
