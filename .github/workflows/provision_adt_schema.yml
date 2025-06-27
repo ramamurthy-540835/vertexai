@@ -82,7 +82,7 @@ jobs:
             echo "Cloud SQL Proxy is already installed"
           fi
           # Start Cloud SQL Proxy in background
-          ./cloud-sql-proxy p-601-np-membership-adt:us-central1:lead-mgmt-adt \
+          ./cloud-sql-proxy p-601-np-bcleadsmgmt-adt:us-central1:lead-mgmt-adt \
             --port 5432 \
             --private-ip \
             --auto-iam-authn &

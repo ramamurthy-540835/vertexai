@@ -1,6 +1,7 @@
 variable "projectId" {
   description = "GCP project ID"
   type        = string
+  default     = "p-601-np-bcleadsmgmt-adt"
 }
 
 variable "region" {
@@ -9,10 +10,16 @@ variable "region" {
   default     = "us-central1"
 }
 
+variable "instance" {
+  description = "Cloud SQL instance name"
+  type        = string
+  default     = "lead-mgmt-adt"
+}
+
 variable "host" {
   description = "PostgreSQL host (e.g., Cloud SQL IP address or hostname)"
   type        = string
-  default     = "10.240.1.2"
+  default     = "10.240.1.5"
 }
 
 variable "port" {
@@ -41,4 +48,10 @@ variable "sql_scripts" {
     always_run = bool  # Set to true to run script on every apply
   }))
   default = {}
+}
+
+variable "schema_name" {
+  type = string
+  description = "schema name"
+  default = "lead_mgmt_adt"
 }

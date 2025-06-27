@@ -33,18 +33,22 @@ terraform {
    sql_script_hash = filesha256("../../../../postgres_resources/lead_mgmt_schema_creation.sql")
  }
  provisioner "local-exec" {
+   
    command = <<-EOT
+     export SCHEMA_NAME=${var.schema_name}
+
+     envsubst < "../../../../postgres_resources/lead_mgmt_schema_creation.sql.tpl" > /tmp/lead_mgmt_schema_creation.sql
      # Connect using private IP with IAM authentication
      psql "host=127.0.0.1\
            port=5432 \
            dbname=${var.database_name} \
            user=postgres \
-           password=qJoVywHigYGlA1d \
+           password=RV/0V6@39%jU \
            sslmode=disable" \
-           -f "../../../../postgres_resources/lead_mgmt_schema_creation.sql"
+           -f /tmp/lead_mgmt_schema_creation.sql
    EOT
    environment = {
-     CLOUDSQL_INSTANCE = "${var.projectId}:${var.region}:lead_mgmt_adt"
+     CLOUDSQL_INSTANCE = "${var.projectId}:${var.region}:${var.instance}"
    }
  }
 
