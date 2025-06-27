@@ -1,7 +1,3 @@
--- Create vector extension
-DROP EXTENSION IF EXISTS vector;
-CREATE EXTENSION vector; -- installs into public
-
 CREATE TABLE IF NOT EXISTS
   "$SCHEMA_NAME".account ( 
   account_id  varchar(20) PRIMARY KEY,   
