@@ -196,9 +196,9 @@ CREATE TABLE IF NOT EXISTS "$SCHEMA_NAME".pos_embeddings(
   fiscal_period INT
 );
  
-CREATE INDEX IF NOT EXISTS ON "$SCHEMA_NAME".leads_embeddings USING hnsw (combined_embedding vector_cosine_ops);
+CREATE INDEX IF NOT EXISTS leads_combined_embedding_idx ON "$SCHEMA_NAME".leads_embeddings USING hnsw (combined_embedding vector_cosine_ops);
 
-CREATE INDEX IF NOT EXISTS ON "$SCHEMA_NAME".pos_embeddings USING hnsw (combined_embedding vector_cosine_ops);
+CREATE INDEX IF NOT EXISTS pos_combined_embedding_idx ON "$SCHEMA_NAME".pos_embeddings USING hnsw (combined_embedding vector_cosine_ops);
 
 CREATE INDEX IF NOT EXISTS warehouse_index_leads  ON  "$SCHEMA_NAME".leads_embeddings  (warehouse_number);
  
