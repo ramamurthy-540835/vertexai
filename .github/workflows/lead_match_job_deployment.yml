@@ -16,8 +16,8 @@ on:
       - main
       - 'feature**'
     tags:
-      - tag_spt
-      - tag_prod
+      - release-spt*
+      - release-prod*
     paths:
       - .github/workflows/lead_match_job_deployment.yml
       - lead_management_job/**
@@ -83,7 +83,7 @@ jobs:
             echo "SERVICE_ACCOUNT=gco-iam-svc-lead-mgmt-bc-qat@p-601-np-bcleadsmgmt-qat.iam.gserviceaccount.com" >> $GITHUB_ENV
              echo "ENVIRONMENT_VARIABLES_PATH=./lead_management_job/lead_matching_config.properties" >>  $GITHUB_ENV
 
-          elif [[ "$REF" == refs/tags/tag_spt ]]; then
+          elif [[ "$REF" == refs/tags/release-spt* ]]; then
             echo "ENV=spt" >> $GITHUB_ENV
             echo "DEPLOY=true" >> $GITHUB_ENV
             echo "PROJECT_ID=p-601-np-bcleadsmgmt-spt" >> $GITHUB_ENV
@@ -97,7 +97,7 @@ jobs:
         env:
           WORKFLOW_TRIGGER: ${{ inputs.workflow_trigger_event }}
 
-         # elif [[ "$REF" == refs/tags/tag_prod ]]; then
+         # elif [[ "$REF" == refs/tags/release-prod* ]]; then
           #  echo "ENV=prod" >> $GITHUB_ENV
           #  echo "DEPLOY=true" >> $GITHUB_ENV
           #  echo "BUILD_IMAGE=false" >> $GITHUB_ENV
@@ -121,6 +121,7 @@ jobs:
             --service-account=${{ env.SERVICE_ACCOUNT }}
             --vpc-egress=all-traffic
             --network=projects/gcp-prj-transit-hub/global/networks/gcp-vpc-np-host
+            --subnet=projects/gcp-prj-transit-hub/regions/us-central1/subnetworks/gcp-snt-np-usc1-601-cloudruncloudsql-np
             --args="run.py,run"
             --task-timeout=2h 
             --set-env-vars=${{ steps.env.outputs.env_vars }}

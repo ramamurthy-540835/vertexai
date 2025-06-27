@@ -103,7 +103,7 @@ module "service_now_password" {
  secret_value  = "Costco@web123"
 }
 
-/*
+
 module "cloud_sql_instance" {
   source            = "../../../modules/database"
   depends_on        = [google_project_service.required_apis_recreate]
@@ -120,11 +120,11 @@ module "cloud_sql_instance" {
   host_project_id = "gcp-prj-transit-hub"
   vpc_name = "gcp-vpc-np-host"
   private_network = "projects/gcp-prj-transit-hub/global/networks/gcp-vpc-np-host"
-  subnetwork = "gcp-snt-np-usc1-601-membership-gsqldb-np"
+  subnetwork = "gcp-snt-np-usc1-601-cloudruncloudsql-np"
   database_name = "lead-mgmt-db"
   password = "hu@OX655@-9_"
   }
-
+/*
 module "snow_sync_scheduler" {
   source           = "../../../modules/snow_sync_scheduler"
   topic_name       = "snow-gcp-sync-trigger"
