@@ -36,6 +36,8 @@ terraform {
    
    command = <<-EOT
      export SCHEMA_NAME=${var.schema_name}
+     export DATABASE_NAME=${var.database_name}
+     export IAM_USER=${var.iam_user}
 
      envsubst < "../../../../postgres_resources/lead_mgmt_schema_creation.sql" > /tmp/lead_mgmt_schema_creation.sql
      # Connect using private IP with IAM authentication
@@ -63,6 +65,9 @@ terraform {
      # Get access token for IAM authentication
      export PGPASSWORD=$(gcloud auth print-access-token)
      export SCHEMA_NAME=${var.schema_name}
+     export DATABASE_NAME=${var.database_name}
+     export IAM_USER=${var.iam_user}
+
 
      envsubst < "../../../../postgres_resources/costco_db_ddl.sql" > /tmp/costco_db_ddl.sql
 
@@ -70,7 +75,7 @@ terraform {
      psql "host=127.0.0.1\
            port=5432 \
            dbname=${var.database_name} \
-           user=gco-iam-svc-cicd-mbr-bc-np@gcp-prj-cicd-core.iam \
+           user=${var.iam_user} \
            sslmode=disable" \
            -f /tmp/costco_db_ddl.sql
    EOT
@@ -97,7 +102,7 @@ resource "null_resource" "data_load" {
      psql "host=127.0.0.1\
            port=5432 \
            dbname=${var.database_name} \
-           user=gco-iam-svc-cicd-mbr-bc-np@gcp-prj-cicd-core.iam \
+           user=${var.iam_user} \
            sslmode=disable" \
            -f /tmp/costco_db_dml.sql
    EOT

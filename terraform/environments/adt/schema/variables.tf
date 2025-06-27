@@ -55,3 +55,9 @@ variable "schema_name" {
   description = "schema name"
   default = "lead_mgmt_adt"
 }
+
+variable iam_user{
+  type = string
+  description = "iam user"
+  default = "gco-iam-svc-cicd-mbr-bc-np@gcp-prj-cicd-core.iam"
+}
