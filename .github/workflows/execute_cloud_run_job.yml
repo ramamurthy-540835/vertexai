@@ -43,3 +43,10 @@ jobs:
           gcloud config set project p-601-np-bcleadsmgmt-adt
           gcloud run jobs execute snow-sync-job --region=us-central1 \
           --project=p-601-np-bcleadsmgmt-adt
+
+      - name: "Check address space"
+        run: | 
+          gcloud compute addresses list \
+          --project=gcp-prj-transit-hub \
+          --regions=us-central1 \
+          --filter="subnetwork:gcp-snt-np-usc1-601-cloudruncloudsql-np"
