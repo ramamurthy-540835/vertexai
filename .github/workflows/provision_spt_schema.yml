@@ -11,8 +11,8 @@ on:
       - '.github/workflows/provision_spt_schema.yml'
 
   pull_request:
-    branches:
-      - "main"
+    tags:
+      - release-spt*
     paths:
      - 'terraform/environments/spt/schema/**.tf'
      - 'postgres_resources/**.sql'
