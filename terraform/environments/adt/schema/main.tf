@@ -65,7 +65,7 @@ terraform {
           user=postgres \
           password=RV/0V6@39%jU \
           sslmode=disable" \
-          -c "SELECT grantee, privilege_type FROM information_schema.role_table_grants WHERE table_schema = '$SCHEMA_NAME';"
+          -c "SELECT nspname AS schema,pg_get_userbyid(nspowner) AS owner,nspacl FROM pg_namespace WHERE nspname = '$SCHEMA_NAME';"
    EOT
    environment = {
      CLOUDSQL_INSTANCE = "${var.projectId}:${var.region}:${var.instance}"
