@@ -1,6 +1,7 @@
 variable "projectId" {
   description = "GCP project ID"
   type        = string
+  default     = "p-601-np-bcleadsmgmt-qat"
 }
 
 variable "region" {
@@ -9,10 +10,16 @@ variable "region" {
   default     = "us-central1"
 }
 
+variable "instance" {
+  description = "Cloud SQL instance name"
+  type        = string
+  default     = "lead-mgmt-qat"
+}
+
 variable "host" {
   description = "PostgreSQL host (e.g., Cloud SQL IP address or hostname)"
   type        = string
-  default     = "10.240.1.2"
+  default     = "10.240.1.8"
 }
 
 variable "port" {
@@ -47,4 +54,10 @@ variable "schema_name" {
   type = string
   description = "schema name"
   default = "lead_mgmt_qat"
+}
+
+variable iam_user{
+  type = string
+  description = "iam user"
+  default = "gco-iam-svc-cicd-mbr-bc-np@gcp-prj-cicd-core.iam"
 }
