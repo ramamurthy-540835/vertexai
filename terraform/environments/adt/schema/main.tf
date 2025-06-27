@@ -46,26 +46,6 @@ terraform {
            password=RV/0V6@39%jU \
            sslmode=disable" \
            -f /tmp/lead_mgmt_schema_creation.sql
-
-     #  Verify the schema was created
-     echo "Verifying schema creation..."
-     psql "host=127.0.0.1 \
-          port=5432 \
-          dbname=${var.database_name} \
-          user=postgres \
-          password=RV/0V6@39%jU \
-          sslmode=disable" \
-          -c "SELECT schema_name FROM information_schema.schemata WHERE schema_name = '$SCHEMA_NAME';"
-
-     # Verify privileges (example: list grants for schema)
-     echo "Verifying privileges..."
-     psql "host=127.0.0.1 \
-          port=5432 \
-          dbname=${var.database_name} \
-          user=postgres \
-          password=RV/0V6@39%jU \
-          sslmode=disable" \
-          -c "SELECT nspname AS schema,pg_get_userbyid(nspowner) AS owner,nspacl FROM pg_namespace WHERE nspname = '$SCHEMA_NAME';"
    EOT
    environment = {
      CLOUDSQL_INSTANCE = "${var.projectId}:${var.region}:${var.instance}"
@@ -74,26 +54,56 @@ terraform {
 
 }
 
-/*
- resource "null_resource" "initial_database_setup" {
+ resource "null_resource" "table_creation" {
  triggers = {
-   sql_script_hash = filesha256("../../../../postgres_resources/lead_mgmt_schema_creation.sql")
+   sql_script_hash = filesha256("../../../../postgres_resources/costco_db_ddl.sql")
  }
  provisioner "local-exec" {
    command = <<-EOT
      # Get access token for IAM authentication
      export PGPASSWORD=$(gcloud auth print-access-token)
+     export SCHEMA_NAME=${var.schema_name}
+
+     envsubst < "../../../../postgres_resources/costco_db_ddl.sql" > /tmp/costco_db_ddl.sql
+
      # Connect using private IP with IAM authentication
      psql "host=127.0.0.1\
            port=5432 \
            dbname=${var.database_name} \
            user=gco-iam-svc-cicd-mbr-bc-np@gcp-prj-cicd-core.iam \
            sslmode=disable" \
-           -f "../../../../postgres_resources/lead_mgmt_schema_creation.sql"
+           -f /tmp/costco_db_ddl.sql
    EOT
    environment = {
      CLOUDSQL_INSTANCE = "${var.projectId}:${var.region}:lead_mgmt_adt"
    }
  }
 
-}*/
+}
+
+resource "null_resource" "data_load" {
+ triggers = {
+   sql_script_hash = filesha256("../../../../postgres_resources/costco_db_dml.sql")
+ }
+ provisioner "local-exec" {
+   command = <<-EOT
+     # Get access token for IAM authentication
+     export PGPASSWORD=$(gcloud auth print-access-token)
+     export SCHEMA_NAME=${var.schema_name}
+
+     envsubst < "../../../../postgres_resources/costco_db_dml.sql" > /tmp/costco_db_dml.sql
+
+     # Connect using private IP with IAM authentication
+     psql "host=127.0.0.1\
+           port=5432 \
+           dbname=${var.database_name} \
+           user=gco-iam-svc-cicd-mbr-bc-np@gcp-prj-cicd-core.iam \
+           sslmode=disable" \
+           -f /tmp/costco_db_dml.sql
+   EOT
+   environment = {
+     CLOUDSQL_INSTANCE = "${var.projectId}:${var.region}:lead_mgmt_adt"
+   }
+ }
+
+}
