@@ -24,7 +24,7 @@ terraform {
   host     = var.host
   port     = var.port
   database = var.database_name
-  username = "gco-iam-svc-cicd-mbr-bc-np@gcp-prj-cicd-core.iam"
+  username = var.iam_user
   sslmode  = "disable"
 }
 
@@ -81,7 +81,7 @@ terraform {
            -f /tmp/costco_db_ddl.sql
    EOT
    environment = {
-     CLOUDSQL_INSTANCE = "${var.projectId}:${var.region}:lead_mgmt_adt"
+     CLOUDSQL_INSTANCE = "${var.projectId}:${var.region}:${var.instance}"
    }
  }
 
@@ -109,7 +109,7 @@ resource "null_resource" "data_load" {
            -f /tmp/costco_db_dml.sql
    EOT
    environment = {
-     CLOUDSQL_INSTANCE = "${var.projectId}:${var.region}:lead_mgmt_adt"
+     CLOUDSQL_INSTANCE = "${var.projectId}:${var.region}:${var.instance}"
    }
  }
 
