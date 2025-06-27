@@ -6,7 +6,7 @@ on:
     # branches:
     #   - main
     tags:
-      - tag_spt
+      - release-spt*
     paths:
       - 'terraform/environments/adt/infra/**.tf'
       - 'terraform/modules/**/**.tf'
@@ -16,7 +16,7 @@ on:
     # branches:
     #   - main
     tags:
-      - tag_spt
+      - release-spt*
     paths:
       - 'terraform/environments/adt/infra/**'
       - 'terraform/modules/**/**.tf'
