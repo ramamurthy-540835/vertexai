@@ -122,7 +122,7 @@ module "cloud_sql_instance" {
   private_network = "projects/gcp-prj-transit-hub/global/networks/gcp-vpc-np-host"
   subnetwork = "gcp-snt-np-usc1-601-cloudruncloudsql-np"
   database_name = "lead-mgmt-db"
-  password = "yI|m6\535*FZ"
+  password = "yI|m6?535*FZ"
   }
 /*
 module "snow_sync_scheduler" {

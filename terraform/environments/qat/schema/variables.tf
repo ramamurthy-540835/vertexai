@@ -42,3 +42,9 @@ variable "sql_scripts" {
   }))
   default = {}
 }
+
+variable "schema_name" {
+  type = string
+  description = "schema name"
+  default = "lead_mgmt_qat"
+}

@@ -1,4 +1,4 @@
-projectId	= "p-601-np-membership-adt"
+projectId	= "p-601-np-bcleadsmgmt-adt"
 # SQL Scripts to execute
 sql_scripts = {
   "create_schema" = {
