@@ -46,7 +46,7 @@ jobs:
 
       - name: "Check address space"
         run: | 
-          gcloud compute networks subnets describe gcp-snt-np-usc1-601-cloudruncloudsql-np \
+          gcloud compute networks subnets describe gcp-snt-np-usc1-601-membership-gsqldb-np \
           --project=gcp-prj-transit-hub \
           --region=us-central1 \
           --format="get(ipCidrRange)"
@@ -64,11 +64,3 @@ jobs:
           --project=gcp-prj-transit-hub \
           --filter="zone:us-central1-* AND networkInterfaces.subnetwork:projects/gcp-prj-transit-hub/regions/us-central1/subnetworks/gcp-snt-np-usc1-601-cloudruncloudsql-np" \
           --format="table(name,zone,status,networkInterfaces[0].networkIP:label=INTERNAL_IP)"
-              
-      - name: "VPC connectors using this subnetwork"
-        run: | 
-          gcloud compute networks vpc-access connectors list \
-          --region=us-central1 \
-          --project=gcp-prj-transit-hub \
-          --filter="subnet.name:gcp-snt-np-usc1-601-cloudruncloudsql-np"
-
