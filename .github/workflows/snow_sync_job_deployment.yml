@@ -14,7 +14,7 @@ on:
   push:
     branches:
       - main
-      - 'feature**'
+      - 'feature*'
     tags:
       - release-spt*
       - release-prod*
@@ -69,7 +69,7 @@ jobs:
             echo "$MODIFIED_FILES"
           fi
 
-          if [[ "$WORKFLOW_TRIGGER" == "True" || ("$REF" == refs/heads/feature** && "$MODIFIED_FILES" == *".github/workflows/snow_sync_job_deployment.yml"* )]]; then
+          if [[ "$WORKFLOW_TRIGGER" == "True" || ("$REF" == refs/heads/feature* && "$MODIFIED_FILES" == *".github/workflows/snow_sync_job_deployment.yml"* )]]; then
             echo "ENV=adt" >> $GITHUB_ENV
             echo "DEPLOY=true" >> $GITHUB_ENV
             echo "PROJECT_ID=p-601-np-bcleadsmgmt-adt" >> $GITHUB_ENV
