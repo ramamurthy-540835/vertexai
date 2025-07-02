@@ -126,6 +126,28 @@ jobs:
             --task-timeout=30m 
             --set-env-vars=${{ steps.env.outputs.env_vars }}
 
+      - name: Deploy cloud run service
+        if: env.DEPLOY == 'true'
+        uses: google-github-actions/deploy-cloudrun@v2
+        with:
+          service: cloud-scheduler-service
+          image: 'us-docker.pkg.dev/gcp-prj-images/gcp-gar-repo-mbrshp/cloud-run-service:latest'
+          project_id: ${{ env.PROJECT_ID }}
+          flags: |
+            --service-account=${{ env.SERVICE_ACCOUNT }}
+            --vpc-egress=all-traffic
+            --network=projects/gcp-prj-transit-hub/global/networks/gcp-vpc-np-host
+            --subnet=projects/gcp-prj-transit-hub/regions/us-central1/subnetworks/gcp-snt-np-usc1-601-cloudruncloudsql-np
+            --set-env-vars="PROJECT_ID=${{ env.PROJECT_ID }}"
+
+      - name: Set SERVICE_URL output
+        id: get-service-url
+        run: |
+          SERVICE_URL=$(gcloud run services describe cloud-scheduler-service \
+          --project ${{ env.PROJECT_ID }} --region us-central1 --format 'value(status.url)')
+          echo "SERVICE_URL=$SERVICE_URL"
+          echo "service_url=$SERVICE_URL" >> $GITHUB_OUTPUT
+
       - name: Add schedule to Cloud Run Job
         if: env.DEPLOY == 'true'
         run: |
@@ -133,8 +155,8 @@ jobs:
           --project ${{ env.PROJECT_ID }} \
           --location us-central1 \
           --schedule="0 0 * * *" \
-          --uri="https://us-central1-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/${{ env.PROJECT_ID }}/jobs/snow-sync-job:run"\
-          --http-method=POST \
+          --uri=${{ steps.get-service-url.outputs.service_url }}\
+          --http-method=GET \
           --oauth-service-account-email=${{ env.SERVICE_ACCOUNT }}
 
       - name: Describe deployed job
