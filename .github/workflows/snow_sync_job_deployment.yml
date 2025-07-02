@@ -135,7 +135,7 @@ jobs:
           project_id: ${{ env.PROJECT_ID }}
           flags: |
             --service-account=${{ env.SERVICE_ACCOUNT }}
-            --vpc-egress=private-ranges-only
+            --vpc-egress=all-traffic
             --ingress=internal
             --network=projects/gcp-prj-transit-hub/global/networks/gcp-vpc-np-host
             --subnet=projects/gcp-prj-transit-hub/regions/us-central1/subnetworks/gcp-snt-np-usc1-601-cloudruncloudsql-np
