@@ -121,7 +121,7 @@ jobs:
             --service-account=${{ env.SERVICE_ACCOUNT }}
             --vpc-egress=all-traffic
             --network=projects/gcp-prj-transit-hub/global/networks/gcp-vpc-np-host
-            --subnet=projects/gcp-prj-transit-hub/regions/us-central1/subnetworks/gcp-snt-np-usc1-601-cloudruncloudsql-np
+            --subnet=projects/gcp-prj-transit-hub/regions/us-central1/subnetworks/gcp-snt-np-usc1-601-cloudrunjobs-np
             --args="main.py,snow_validation"
             --task-timeout=30m 
             --set-env-vars=${{ steps.env.outputs.env_vars }}
@@ -138,7 +138,7 @@ jobs:
             --vpc-egress=all-traffic
             --ingress=internal
             --network=projects/gcp-prj-transit-hub/global/networks/gcp-vpc-np-host
-            --subnet=projects/gcp-prj-transit-hub/regions/us-central1/subnetworks/gcp-snt-np-usc1-601-cloudruncloudsql-np
+            --subnet=projects/gcp-prj-transit-hub/regions/us-central1/subnetworks/gcp-snt-np-usc1-601-cloudrunjobs-np
             --set-env-vars="PROJECT_ID=${{ env.PROJECT_ID }}"
 
       - name: Set SERVICE_URL output
