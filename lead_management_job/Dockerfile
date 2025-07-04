@@ -6,7 +6,7 @@ WORKDIR /app
 COPY . . 
 
 # Fail fast if expected app entry point is missing
-RUN test -f /app/main.py || (echo "❌ ERROR: main.py not found in /app" && exit 1)
+RUN test -f /app/a.py || (echo "❌ ERROR: main.py not found in /app" && exit 1)
 
 RUN pip install "cython<3.0.0" wheel
 RUN pip install --upgrade pip setuptools wheel \
