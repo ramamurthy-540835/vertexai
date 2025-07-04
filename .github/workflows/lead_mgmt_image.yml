@@ -79,6 +79,8 @@ jobs:
           images: |
             ghcr.io/${{ github.repository_owner }}/membership/lead-management/lead-mgmt
             us-docker.pkg.dev/gcp-prj-images/gcp-gar-repo-mbrshp/lead-mgmt
+      - name: Debug lead_management_job contents
+        run: ls -la ./lead_management_job
       - name: Build and push
         uses: docker/build-push-action@v6
         env:
