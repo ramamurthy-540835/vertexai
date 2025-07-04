@@ -120,7 +120,7 @@ jobs:
           image: 'us-docker.pkg.dev/gcp-prj-images/gcp-gar-repo-mbrshp/lead-mgmt:latest'
           project_id: ${{ env.PROJECT_ID }}
           flags: |
-            --service-account=gco-iam-svc-cicd-mbr-bc-np@gcp-prj-cicd-core.iam.gserviceaccount.com
+            --service-account=${{ env.SERVICE_ACCOUNT }}
             --vpc-egress=all-traffic
             --network=projects/gcp-prj-transit-hub/global/networks/gcp-vpc-np-host
             --subnet=projects/gcp-prj-transit-hub/regions/us-central1/subnetworks/gcp-snt-np-usc1-601-cloudrunjobs-np
