@@ -5,6 +5,9 @@ WORKDIR /app
 #configuration files,wheel file,properties file,requirements.txt,run.py,main.py
 COPY . . 
 
+# Fail fast if expected app entry point is missing
+RUN test -f /app/main.py || (echo "❌ ERROR: main.py not found in /app" && exit 1)
+
 RUN pip install "cython<3.0.0" wheel
 RUN pip install --upgrade pip setuptools wheel \
  && pip install "pyyaml==5.4.1" --no-build-isolation
