@@ -161,7 +161,7 @@ jobs:
           --schedule="0 0 * * *" \
           --uri=${{ steps.get-service-url.outputs.service_url }}  \
           --http-method=GET \
-          --oauth-service-account-email=${{ env.SERVICE_ACCOUNT }}
+          --oidc-service-account-email=${{ env.SERVICE_ACCOUNT }}
 
       - name: Describe deployed job
         if: env.DEPLOY == 'true'
