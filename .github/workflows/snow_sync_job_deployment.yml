@@ -159,7 +159,7 @@ jobs:
           --project ${{ env.PROJECT_ID }} \
           --location us-central1 \
           --schedule="0 0 * * *" \
-          --uri=${{ steps.get-service-url.outputs.service_url }}\
+          --uri=${{ steps.get-service-url.outputs.service_url }} \
           --http-method=GET \
           --oauth-service-account-email=${{ env.SERVICE_ACCOUNT }}
 
