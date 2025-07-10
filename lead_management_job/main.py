@@ -34,7 +34,7 @@ if __name__ == "__main__":
             "start_index": "1",
             "end_index": "5",
             "start_date": "2025-05-05",
-            "end_date": "2025-06-17"
+            "end_date": "2025-07-17"
             })
             headers = {
                     'Content-Type': 'application/json',
@@ -46,6 +46,7 @@ if __name__ == "__main__":
             response = requests.request("POST", url, headers=headers, data=payload, auth=auth)
 
             print(response.text)
+            print("Snow validation successfully completed")
         except Exception as ex:
             print("Error happened during snow_validation process")
             print(ex)
