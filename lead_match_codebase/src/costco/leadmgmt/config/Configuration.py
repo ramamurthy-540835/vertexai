@@ -48,7 +48,6 @@ class MatchQuery:
 @dataclass
 class DatabaseDetail:
     db_user: str
-    db_password: str
     schema_name: str
     instance_connection_name: str
     db_name: str
@@ -59,14 +58,14 @@ class DatabaseDetail:
     ip_type: IPTypes
 
     def __repr__(self):
-        return str({"db_user": self.db_user, "db_password": "*********", "schema_name": self.schema_name
+        return str({"db_user": self.db_user,  "schema_name": self.schema_name
                        , "instance_connection_name": self.instance_connection_name, "db_name": self.db_name
                        , "project_id": self.project_id, "insert_lead_table_name": self.insert_lead_table_name,
                     "insert_pos_table_name": self.insert_pos_table_name
                        , "audit_table_name": self.audit_table_name, "ip_type": self.ip_type})
 
     def __str__(self):
-        return str({"db_user": self.db_user, "db_password": "*********", "schema_name": self.schema_name
+        return str({"db_user": self.db_user, "schema_name": self.schema_name
                        , "instance_connection_name": self.instance_connection_name, "db_name": self.db_name
                        , "project_id": self.project_id, "insert_lead_table_name": self.insert_lead_table_name,
                     "insert_pos_table_name": self.insert_pos_table_name
@@ -83,17 +82,15 @@ class DatabaseDetail:
             ip_type = IPTypes.PSC
         else:
             ip_type = os.environ.get("CLOUD_SQL_IP_TYPE")
-        db_user_id: str = os.environ.get("POSTGRES_DB_USER")
-        db_password_id: str = os.environ.get("POSTGRES_DB_PASSWORD_ID")
+        db_user: str = os.environ.get("POSTGRES_DB_USER")
         project_id = os.environ.get("GCP_PROJECT_ID")
-        db_user: str = apputil.access_secret_version(project_id, db_user_id, version_id="latest")
-        db_password: str = apputil.access_secret_version(project_id, db_password_id, version_id="latest")
+        # db_user: str = apputil.access_secret_version(project_id, db_user_id, version_id="latest")
+        # db_password: str = apputil.access_secret_version(project_id, db_password_id, version_id="latest")
 
         return cls(
             schema_name=os.environ.get("DB_SCHEMA"),
             instance_connection_name=os.environ.get("DB_CONNECTION_NAME"),
             db_user=db_user,
-            db_password=db_password,
             db_name=os.environ.get("POSTGRES_DB_NAME"),
             project_id=project_id,
             insert_lead_table_name=os.environ.get("INSERT_LEAD_TABLE_NAME"),
@@ -119,17 +116,16 @@ class DatabaseDetail:
             ip_type = IPTypes.PSC
         else:
             ip_type = os.environ.get("CLOUD_SQL_IP_TYPE")
-        db_user_id: str = cls.get_config("DATABASE", "postgres_db_user", config, "postgres")
-        db_password_id: str = cls.get_config("DATABASE", "postgres_db_password_id", config, "postgres")
+        db_user: str = cls.get_config("DATABASE", "postgres_db_user", config, "postgres")
+        # db_password_id: str = cls.get_config("DATABASE", "postgres_db_password_id", config, "postgres")
         project_id = cls.get_config("DATABASE", "gcp_project_id", config, None)
-        db_user: str = apputil.access_secret_version(project_id, db_user_id, version_id="latest")
-        db_password: str = apputil.access_secret_version(project_id, db_password_id, version_id="latest")
+        # db_user: str = apputil.access_secret_version(project_id, db_user_id, version_id="latest")
+        # db_password: str = apputil.access_secret_version(project_id, db_password_id, version_id="latest")
 
         return cls(
             schema_name=cls.get_config("DATABASE", "db_schema", config, None),
             instance_connection_name=cls.get_config("DATABASE", "db_connection_name", config, None),
             db_user=db_user,
-            db_password=db_password,
             db_name=cls.get_config("DATABASE", "postgres_db_name", config, None),
             project_id=project_id,
             insert_lead_table_name=cls.get_config("DATABASE", "insert_lead_table_name", config, None),
@@ -147,7 +143,7 @@ class DatabaseDetail:
             self.instance_connection_name,
             "pg8000",
             user=self.db_user,
-            password=self.db_password,
+            enable_iam_auth=True,
             db=self.db_name,
             ip_type=self.ip_type
         )
