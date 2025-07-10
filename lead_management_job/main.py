@@ -105,7 +105,7 @@ if __name__ == "__main__":
         except Exception as ex:
             print("Error happened during trigger_match_job process")
             print(ex)
-            raise
+            raise ex
     else:
         print("Invalid Argument - Valid arguments are [snow_to_gcs,gcs_to_db ,snow_to_db]")
         raise Exception("Invalid Arguments - Valid arguments are snow_to_gcs,gcs_to_db ,snow_to_db")

@@ -139,6 +139,11 @@ class DatabaseDetail:
         connector = Connector()
         print("inside get connection")
 
+        print(f"  instance_connection_name = {self.instance_connection_name}")
+        print(f"  db_user                  = {self.db_user}")
+        print(f"  db_name                  = {self.db_name}")
+        print(f"  ip_type                  = {self.ip_type}")
+
         conn = connector.connect(
             self.instance_connection_name,
             "pg8000",
