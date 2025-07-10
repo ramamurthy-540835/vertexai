@@ -1,13 +1,13 @@
 import sys
 import uuid
-
+import os
 from costco.leadmgmt.config.Configuration import JobConfig
 from costco.leadmgmt.sync_snow_gcp import get_data_from_snow, load_data_to_db, write_lead_data_to_db, \
     write_pos_data_to_db, read_lead_data, read_pos_data, get_record_snow_to_gcs, trigger_match_job
 
 if __name__ == "__main__":
-
-    job_config = JobConfig("configuration.ini")
+    config_path = os.environ.get("CONFIG_FILE_PATH")
+    job_config = JobConfig(config_path)
 
     print("inside main")
     if len(sys.argv) == 1:
