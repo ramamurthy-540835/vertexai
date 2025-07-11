@@ -75,6 +75,15 @@ resource "google_sql_user" "iam_service_account_user" {
   type     = "CLOUD_IAM_SERVICE_ACCOUNT"
 }
 
+resource "google_sql_user" "iam_service_account_user2" {
+  # Note: for Postgres only, GCP requires omitting the ".gserviceaccount.com" suffix
+  # from the service account email due to length limits on database usernames.
+  project  = var.project
+  name     = trimsuffix(var.service_account_iam, ".gserviceaccount.com")
+  instance = google_sql_database_instance.this.name
+  type     = "CLOUD_IAM_SERVICE_ACCOUNT"
+}
+
 resource "google_sql_user" "postgres_admin" {
   name     = "postgres"
   password = var.password

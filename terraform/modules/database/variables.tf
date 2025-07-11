@@ -50,6 +50,12 @@ variable "service_account" {
   description = "service account for iam authentication"
   type        = string
 }
+
+variable "service_account_iam" {
+  description = "service account for iam authentication"
+  type        = string
+}
+
 variable "vpc_name" {
   description = "Name of the shared VPC"
   type        = string
