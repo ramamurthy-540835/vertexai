@@ -128,6 +128,7 @@ jobs:
             --args="main.py,db_connection"
             --task-timeout=30m 
             --set-env-vars=${{ steps.env.outputs.env_vars }}
+            --max-retries=1
 
       - name: Deploy cloud run service
         if: env.DEPLOY == 'true'
