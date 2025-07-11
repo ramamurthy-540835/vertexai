@@ -38,6 +38,7 @@ terraform {
 #     export SCHEMA_NAME=${var.schema_name}
 #     export DATABASE_NAME=${var.database_name}
 #     export IAM_USER=${var.iam_user}
+#     export NEW_IAM_USER="gco-iam-svc-lead-mgmt-bc-adt@p-601-np-bcleadsmgmt-adt.iam"
 #
 #     envsubst < "../../../../postgres_resources/lead_mgmt_schema_creation.sql" > /tmp/lead_mgmt_schema_creation.sql
 #     # Connect using private IP with IAM authentication
@@ -114,32 +115,3 @@ terraform {
 # }
 #
 #}
-
-resource "null_resource" "reassign_permission" {
- triggers = {
-   sql_script_hash = filesha256("../../../../postgres_resources/reassign_priviledges.sql")
- }
- provisioner "local-exec" {
-   
-   command = <<-EOT
-     export SCHEMA_NAME=${var.schema_name}
-     export DATABASE_NAME=${var.database_name}
-     export IAM_USER=${var.iam_user}
-     export NEW_IAM_USER="gco-iam-svc-lead-mgmt-bc-adt@p-601-np-bcleadsmgmt-adt.iam"
-
-     envsubst < "../../../../postgres_resources/reassign_priviledges.sql" > /tmp/reassign_priviledges.sql
-     # Connect using private IP with IAM authentication
-     psql "host=127.0.0.1\
-           port=5432 \
-           dbname=${var.database_name} \
-           user=postgres \
-           password=RV/0V6@39%jU \
-           sslmode=disable" \
-           -f /tmp/reassign_priviledges.sql
-   EOT
-   environment = {
-     CLOUDSQL_INSTANCE = "${var.projectId}:${var.region}:${var.instance}"
-   }
- }
-
-}
