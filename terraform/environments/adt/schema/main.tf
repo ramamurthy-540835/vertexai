@@ -117,7 +117,7 @@ terraform {
 
 resource "null_resource" "reassign_permission" {
  triggers = {
-   sql_script_hash = filesha256("../../../../postgres_resources/lead_mgmt_schema_creation.sql")
+   sql_script_hash = filesha256("../../../../postgres_resources/reassign_priviledges.sql")
  }
  provisioner "local-exec" {
    
@@ -127,7 +127,7 @@ resource "null_resource" "reassign_permission" {
      export IAM_USER=${var.iam_user}
      export NEW_IAM_USER="gco-iam-svc-lead-mgmt-bc-adt@p-601-np-bcleadsmgmt-adt.iam"
 
-     envsubst < "../../../../postgres_resources/lead_mgmt_schema_creation.sql" > /tmp/reassign_priviledges.sql
+     envsubst < "../../../../postgres_resources/reassign_priviledges.sql" > /tmp/reassign_priviledges.sql
      # Connect using private IP with IAM authentication
      psql "host=127.0.0.1\
            port=5432 \
