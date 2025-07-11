@@ -152,13 +152,6 @@ class DatabaseDetail:
             enable_iam_auth=True,
             ip_type=self.ip_type
         )
-
-        # Create a cursor and run test query
-        cursor = conn.cursor()
-        cursor.execute("SELECT NOW()")
-        result = cursor.fetchone()
-        print("Current timestamp from DB:", result)
-        
         print("returning from get connection")
         return conn
 
