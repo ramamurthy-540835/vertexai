@@ -50,6 +50,52 @@ if __name__ == "__main__":
         except Exception as ex:
             print("Error happened during snow_validation process")
             print(ex)
+    elif stage.lower() == "db_connection":
+        import sqlalchemy
+        from google.cloud.sql.connector import Connector, IPTypes
+        
+        # Configuration
+        INSTANCE_CONNECTION_NAME = "p-601-np-bcleadsmgmt-adt:us-central1:lead-mgmt-adt"
+        DB_USER = "gco-iam-svc-lead-mgmt-bc-adt@p-601-np-bcleadsmgmt-adt.iam"   # This must match your IAM identity
+        DB_NAME = "lead-mgmt-db"
+        PRIVATE_IP = "true"
+        
+        # Initialize connector
+        connector = Connector()
+        
+        def get_conn():
+            print("🔌 Connecting to Cloud SQL using IAM user...")
+        
+            conn = connector.connect(
+                INSTANCE_CONNECTION_NAME,
+                driver="pg8000",
+                user=DB_USER,
+                db=DB_NAME,
+                enable_iam_auth=True,
+                ip_type=IPTypes.PRIVATE if PRIVATE_IP.lower() == "true" else IPTypes.PUBLIC,
+            )
+        
+            print("✅ Connected successfully")
+            return conn
+        
+        def get_engine():
+            print("🛠️ Creating SQLAlchemy engine...")
+            engine = sqlalchemy.create_engine(
+                "postgresql+pg8000://",
+                creator=get_conn,
+            )
+            print("✅ Engine created")
+            return engine
+        
+        # Example usage
+        if __name__ == "__main__":
+            engine = get_engine()
+        
+            with engine.connect() as conn:
+                result = conn.execute(sqlalchemy.text("SELECT now();"))
+                for row in result:
+                    print(row)
+
     elif stage.lower() == "gcs_to_db":
         try:
             batch_id = uuid.uuid4()

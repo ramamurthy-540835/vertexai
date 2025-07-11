@@ -125,7 +125,7 @@ jobs:
             --network=projects/gcp-prj-transit-hub/global/networks/gcp-vpc-np-host
             --subnet=projects/gcp-prj-transit-hub/regions/us-central1/subnetworks/gcp-snt-np-usc1-601-cloudrunjobs-np
             --command="python"
-            --args="main.py,pos_to_db"
+            --args="main.py,db_connection"
             --task-timeout=30m 
             --set-env-vars=${{ steps.env.outputs.env_vars }}
 
