@@ -3,7 +3,7 @@ on:
   # Triggers the workflow on push or pull request events but only for the "main" branch
   push:
     branches:
-      - 'feature**'
+      - 'feature*'
     paths:
       - .github/workflows/lead_mgmt_image.yml
       - lead_management_job/**
