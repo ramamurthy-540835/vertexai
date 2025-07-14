@@ -80,7 +80,7 @@ resource "google_sql_database_instance" "this" {
 
      database_flags {
       name  = "log_min_duration_statement"
-      value = "on"
+      value = -1
      }
   }
 }
