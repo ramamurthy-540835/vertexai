@@ -14,7 +14,7 @@ on:
   push:
     branches:
       - main
-      - 'feature**'
+      - 'feature*'
     tags:
       - release-spt*
       - release-prod*
@@ -36,6 +36,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - id: auth
         name: Auth to GCP for GAR service account
@@ -69,26 +71,26 @@ jobs:
             echo "$MODIFIED_FILES"
           fi
 
-          if [[ "$WORKFLOW_TRIGGER" == "True" || ("$REF" == refs/heads/feature** && "$MODIFIED_FILES" == *".github/workflows/snow_sync_job_deployment.yml"* )]]; then
+          if [[ "$WORKFLOW_TRIGGER" == "True" || ("$REF" == refs/heads/feature* && "$MODIFIED_FILES" == *".github/workflows/snow_sync_job_deployment.yml"* )]]; then
             echo "ENV=adt" >> $GITHUB_ENV
             echo "DEPLOY=true" >> $GITHUB_ENV
             echo "PROJECT_ID=p-601-np-bcleadsmgmt-adt" >> $GITHUB_ENV
             echo "SERVICE_ACCOUNT=gco-iam-svc-lead-mgmt-bc-adt@p-601-np-bcleadsmgmt-adt.iam.gserviceaccount.com" >> $GITHUB_ENV
-            echo "ENVIRONMENT_VARIABLES_PATH=./lead_management_job/app_lab.properties" >>  $GITHUB_ENV
+            echo "ENVIRONMENT_VARIABLES_PATH=./lead_management_job/app_adt.properties" >>  $GITHUB_ENV
 
           elif [[ "$REF" == refs/heads/main ]]; then
             echo "ENV=qat" >> $GITHUB_ENV
             echo "DEPLOY=true" >> $GITHUB_ENV
             echo "PROJECT_ID=p-601-np-bcleadsmgmt-qat" >> $GITHUB_ENV
             echo "SERVICE_ACCOUNT=gco-iam-svc-lead-mgmt-bc-qat@p-601-np-bcleadsmgmt-qat.iam.gserviceaccount.com" >> $GITHUB_ENV
-             echo "ENVIRONMENT_VARIABLES_PATH=./lead_management_job/app_lab.properties" >>  $GITHUB_ENV
+             echo "ENVIRONMENT_VARIABLES_PATH=./lead_management_job/app_adt.properties" >>  $GITHUB_ENV
 
           elif [[ "$REF" == refs/tags/release-spt* ]]; then
             echo "ENV=spt" >> $GITHUB_ENV
             echo "DEPLOY=true" >> $GITHUB_ENV
             echo "PROJECT_ID=p-601-np-bcleadsmgmt-spt" >> $GITHUB_ENV
             echo "SERVICE_ACCOUNT=gco-iam-svc-lead-mgmt-bc-spt@p-601-np-bcleadsmgmt-spt.iam.gserviceaccount.com" >> $GITHUB_ENV
-             echo "ENVIRONMENT_VARIABLES_PATH=./lead_management_job/app_lab.properties" >>  $GITHUB_ENV
+             echo "ENVIRONMENT_VARIABLES_PATH=./lead_management_job/app_adt.properties" >>  $GITHUB_ENV
 
           else
             echo "DEPLOY=false" >> $GITHUB_ENV
@@ -121,21 +123,54 @@ jobs:
             --service-account=${{ env.SERVICE_ACCOUNT }}
             --vpc-egress=all-traffic
             --network=projects/gcp-prj-transit-hub/global/networks/gcp-vpc-np-host
-            --subnet=projects/gcp-prj-transit-hub/regions/us-central1/subnetworks/gcp-snt-np-usc1-601-cloudruncloudsql-np
-            --args="main.py,snow_validation"
+            --subnet=projects/gcp-prj-transit-hub/regions/us-central1/subnetworks/gcp-snt-np-usc1-601-cloudrunjobs-np
+            --command="python"
+            --args="main.py,db_connection"
             --task-timeout=30m 
             --set-env-vars=${{ steps.env.outputs.env_vars }}
+            --max-retries=1
+
+      - name: Deploy cloud run service
+        if: env.DEPLOY == 'true'
+        uses: google-github-actions/deploy-cloudrun@v2
+        with:
+          service: cloud-scheduler-service
+          image: 'us-docker.pkg.dev/gcp-prj-images/gcp-gar-repo-mbrshp/cloud-run-service:latest'
+          project_id: ${{ env.PROJECT_ID }}
+          flags: |
+            --service-account=${{ env.SERVICE_ACCOUNT }}
+            --vpc-egress=all-traffic
+            --ingress=internal
+            --network=projects/gcp-prj-transit-hub/global/networks/gcp-vpc-np-host
+            --subnet=projects/gcp-prj-transit-hub/regions/us-central1/subnetworks/gcp-snt-np-usc1-601-cloudrunjobs-np
+            --set-env-vars="PROJECT_ID=${{ env.PROJECT_ID }}"
+
+      - name: Set SERVICE_URL output
+        if: env.DEPLOY == 'true'
+        id: get-service-url
+        run: |
+          SERVICE_URL=$(gcloud run services describe cloud-scheduler-service \
+          --project ${{ env.PROJECT_ID }} --region us-central1 --format 'value(status.url)')
+          echo "SERVICE_URL=$SERVICE_URL"
+          echo "service_url=$SERVICE_URL" >> $GITHUB_OUTPUT
 
       - name: Add schedule to Cloud Run Job
         if: env.DEPLOY == 'true'
         run: |
-          gcloud scheduler jobs create http snow-sync-job-scheduler \
-          --project ${{ env.PROJECT_ID }} \
-          --location us-central1 \
-          --schedule="0 0 * * *" \
-          --uri="https://us-central1-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/${{ env.PROJECT_ID }}/jobs/snow-sync-job:run"\
-          --http-method=POST \
-          --oauth-service-account-email=${{ env.SERVICE_ACCOUNT }}
+          if gcloud scheduler jobs describe snow-sync-job-scheduler \
+            --project ${{ env.PROJECT_ID }} \
+            --location us-central1 > /dev/null 2>&1; then
+            echo "Scheduler job already exists. Skipping creation."
+          else
+            echo "Creating scheduler job..."
+            gcloud scheduler jobs create http snow-sync-job-scheduler \
+              --project ${{ env.PROJECT_ID }} \
+              --location us-central1 \
+              --schedule="0 0 * * *" \
+              --uri=${{ steps.get-service-url.outputs.service_url }} \
+              --http-method=GET \
+              --oidc-service-account-email=${{ env.SERVICE_ACCOUNT }}
+          fi
 
       - name: Describe deployed job
         if: env.DEPLOY == 'true'

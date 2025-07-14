@@ -36,6 +36,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - id: auth
         name: Auth to GCP for GAR service account
@@ -74,21 +76,21 @@ jobs:
             echo "DEPLOY=true" >> $GITHUB_ENV
             echo "PROJECT_ID=p-601-np-bcleadsmgmt-adt" >> $GITHUB_ENV
             echo "SERVICE_ACCOUNT=gco-iam-svc-lead-mgmt-bc-adt@p-601-np-bcleadsmgmt-adt.iam.gserviceaccount.com" >> $GITHUB_ENV
-            echo "ENVIRONMENT_VARIABLES_PATH=./lead_management_job/lead_matching_config.properties" >>  $GITHUB_ENV
+            echo "ENVIRONMENT_VARIABLES_PATH=./lead_management_job/lead_matching_config_adt.properties" >>  $GITHUB_ENV
 
           elif [[ "$REF" == refs/heads/main ]]; then
             echo "ENV=qat" >> $GITHUB_ENV
             echo "DEPLOY=true" >> $GITHUB_ENV
             echo "PROJECT_ID=p-601-np-bcleadsmgmt-qat" >> $GITHUB_ENV
             echo "SERVICE_ACCOUNT=gco-iam-svc-lead-mgmt-bc-qat@p-601-np-bcleadsmgmt-qat.iam.gserviceaccount.com" >> $GITHUB_ENV
-             echo "ENVIRONMENT_VARIABLES_PATH=./lead_management_job/lead_matching_config.properties" >>  $GITHUB_ENV
+             echo "ENVIRONMENT_VARIABLES_PATH=./lead_management_job/lead_matching_config_adt.properties" >>  $GITHUB_ENV
 
           elif [[ "$REF" == refs/tags/release-spt* ]]; then
             echo "ENV=spt" >> $GITHUB_ENV
             echo "DEPLOY=true" >> $GITHUB_ENV
             echo "PROJECT_ID=p-601-np-bcleadsmgmt-spt" >> $GITHUB_ENV
             echo "SERVICE_ACCOUNT=gco-iam-svc-lead-mgmt-bc-spt@p-601-np-bcleadsmgmt-spt.iam.gserviceaccount.com" >> $GITHUB_ENV
-             echo "ENVIRONMENT_VARIABLES_PATH=./lead_management_job/lead_matching_config.properties" >>  $GITHUB_ENV
+             echo "ENVIRONMENT_VARIABLES_PATH=./lead_management_job/lead_matching_config_adt.properties" >>  $GITHUB_ENV
 
           else
             echo "DEPLOY=false" >> $GITHUB_ENV
@@ -121,7 +123,8 @@ jobs:
             --service-account=${{ env.SERVICE_ACCOUNT }}
             --vpc-egress=all-traffic
             --network=projects/gcp-prj-transit-hub/global/networks/gcp-vpc-np-host
-            --subnet=projects/gcp-prj-transit-hub/regions/us-central1/subnetworks/gcp-snt-np-usc1-601-cloudruncloudsql-np
+            --subnet=projects/gcp-prj-transit-hub/regions/us-central1/subnetworks/gcp-snt-np-usc1-601-cloudrunjobs-np
+            --command="python"
             --args="run.py,run"
             --task-timeout=2h 
             --set-env-vars=${{ steps.env.outputs.env_vars }}
