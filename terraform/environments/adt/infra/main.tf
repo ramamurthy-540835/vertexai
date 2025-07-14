@@ -116,7 +116,7 @@ module "cloud_sql_instance" {
   availability_type = "REGIONAL"
   activation_policy = "ALWAYS"
   disk_size         = 100
-  service_account   = var.gcp_workload_identity_sa_email
+  #service_account   = var.gcp_workload_identity_sa_email
   service_account_iam = google_service_account.my_service_account.email
   host_project_id = "gcp-prj-transit-hub"
   vpc_name = "gcp-vpc-np-host"

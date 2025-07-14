@@ -37,30 +37,30 @@ jobs:
       #     gcloud config set project p-601-np-membership-adt
       #     gcloud run jobs executions delete snow-sync-job-mqdtz --region us-central1 --project p-601-np-membership-adt --quiet
 
-      # - name: "Run cloud run job in adt"
-      #   run: | 
-      #     unset CLOUDSDK_CORE_PROJECT
-      #     gcloud config set project p-601-np-bcleadsmgmt-adt
-      #     gcloud run jobs execute snow-sync-job --region=us-central1 \
-      #     --project=p-601-np-bcleadsmgmt-adt
+       - name: "Run cloud run job in adt"
+         run: | 
+           unset CLOUDSDK_CORE_PROJECT
+           gcloud config set project p-601-np-bcleadsmgmt-adt
+           gcloud run jobs execute snow-sync-job --region=us-central1 \
+           --project=p-601-np-bcleadsmgmt-adt
 
-      - name: "Check address space"
-        run: | 
-          gcloud compute networks subnets describe gcp-snt-np-usc1-601-membership-gsqldb-np \
-          --project=gcp-prj-transit-hub \
-          --region=us-central1 \
-          --format="get(ipCidrRange)"
+      #- name: "Check address space"
+      #  run: | 
+      #    gcloud compute networks subnets describe gcp-snt-np-usc1-601-membership-gsqldb-np \
+      #    --project=gcp-prj-transit-hub \
+      #    --region=us-central1 \
+      #    --format="get(ipCidrRange)"
 
-      - name: "addresses in subnetwork"
-        run: | 
-          gcloud compute addresses list \
-          --project=gcp-prj-transit-hub \
-          --filter="region:us-central1 AND subnetwork:projects/gcp-prj-transit-hub/regions/us-central1/subnetworks/gcp-snt-np-usc1-601-cloudruncloudsql-np" \
-          --format="table(name,address,addressType,status,users[].basename():label=USED_BY)"
+      #- name: "addresses in subnetwork"
+      #  run: | 
+      #    gcloud compute addresses list \
+      #    --project=gcp-prj-transit-hub \
+      #    --filter="region:us-central1 AND subnetwork:projects/gcp-prj-transit-hub/regions/us-central1/subnetworks/gcp-snt-np-usc1-601-cloudruncloudsql-np" \
+      #    --format="table(name,address,addressType,status,users[].basename():label=USED_BY)"
 
-      - name: "vms in subnetwork"
-        run: | 
-          gcloud compute instances list \
-          --project=gcp-prj-transit-hub \
-          --filter="zone:us-central1-* AND networkInterfaces.subnetwork:projects/gcp-prj-transit-hub/regions/us-central1/subnetworks/gcp-snt-np-usc1-601-cloudruncloudsql-np" \
-          --format="table(name,zone,status,networkInterfaces[0].networkIP:label=INTERNAL_IP)"
+      #- name: "vms in subnetwork"
+      #  run: | 
+      #    gcloud compute instances list \
+      #    --project=gcp-prj-transit-hub \
+      #    --filter="zone:us-central1-* AND networkInterfaces.subnetwork:projects/gcp-prj-transit-hub/regions/us-central1/subnetworks/gcp-snt-np-usc1-601-cloudruncloudsql-np" \
+      #    --format="table(name,zone,status,networkInterfaces[0].networkIP:label=INTERNAL_IP)"

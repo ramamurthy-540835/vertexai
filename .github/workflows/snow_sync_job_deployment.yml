@@ -146,6 +146,7 @@ jobs:
             --set-env-vars="PROJECT_ID=${{ env.PROJECT_ID }}"
 
       - name: Set SERVICE_URL output
+        if: env.DEPLOY == 'true'
         id: get-service-url
         run: |
           SERVICE_URL=$(gcloud run services describe cloud-scheduler-service \

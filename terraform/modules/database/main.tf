@@ -1,13 +1,3 @@
-# PostgreSQL provider configuration
-#terraform {
-#  required_providers {
-#    postgresql = {
-#      source  = "cyrilgdn/postgresql"
-#      version = "~> 1.21"
-#    }
-#  }
-# }
-
  data "google_compute_network" "shared_vpc" {
    name    = var.vpc_name
    project = var.host_project_id  # <-- specify the project where the VPC actually lives
@@ -63,26 +53,55 @@ resource "google_sql_database_instance" "this" {
       name  = "cloudsql.iam_authentication"
       value = "on"
     }
+
+    database_flags {
+      name  = "log_temp_files"
+      value =  0
+    }
+
+     database_flags {
+      name  = "log_lock_waits"
+      value = "on"
+    }
+    
+     database_flags {
+      name  = "log_disconnections"
+      value = "on"
+    }
+      database_flags {
+      name  = "log_connections"
+      value = "on"
+    }
+
+    database_flags {
+      name  = "log_checkpoints"
+      value = "on"
+    }
+
+     database_flags {
+      name  = "log_min_duration_statement"
+      value = "on"
+     }
   }
 }
 
-resource "google_sql_user" "iam_service_account_user" {
-  # Note: for Postgres only, GCP requires omitting the ".gserviceaccount.com" suffix
-  # from the service account email due to length limits on database usernames.
-  project  = var.project
-  name     = trimsuffix(var.service_account, ".gserviceaccount.com")
-  instance = google_sql_database_instance.this.name
-  type     = "CLOUD_IAM_SERVICE_ACCOUNT"
-}
+#resource "google_sql_user" "iam_service_account_user" {
+#  # Note: for Postgres only, GCP requires omitting the ".gserviceaccount.com" suffix
+#  # from the service account email due to length limits on database usernames.
+#  project  = var.project
+#  name     = trimsuffix(var.service_account, ".gserviceaccount.com")
+#  instance = google_sql_database_instance.this.name
+#  type     = "CLOUD_IAM_SERVICE_ACCOUNT"
+#}
 
-resource "google_sql_user" "iam_service_account_user2" {
+resource "google_sql_user" "iam_service_account_user_id" {
   # Note: for Postgres only, GCP requires omitting the ".gserviceaccount.com" suffix
   # from the service account email due to length limits on database usernames.
   project  = var.project
   name     = trimsuffix(var.service_account_iam, ".gserviceaccount.com")
   instance = google_sql_database_instance.this.name
   type     = "CLOUD_IAM_SERVICE_ACCOUNT"
-}
+ }
 
 resource "google_sql_user" "postgres_admin" {
   name     = "postgres"

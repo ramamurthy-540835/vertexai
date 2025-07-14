@@ -36,21 +36,7 @@ jobs:
         run: |
           unset CLOUDSDK_CORE_PROJECT
           gcloud config set project p-601-np-bcleadsmgmt-adt
-          gcloud services enable serviceusage.googleapis.com
-      
-      # - name: "Cancel an execution"
-      #   run: |
-      #     unset CLOUDSDK_CORE_PROJECT
-      #     gcloud config set project p-601-np-membership-adt
-      #     gcloud run jobs executions delete snow-sync-job-mqdtz --region us-central1 --project p-601-np-membership-adt --quiet
-
-      # - name: "Run cloud run job in adt"
-      #   run: | 
-      #     unset CLOUDSDK_CORE_PROJECT
-      #     gcloud config set project p-601-np-membership-adt
-      #     gcloud run jobs execute snow-sync-job --region=us-central1 \
-      #     --project=p-601-np-membership-adt
-      
+          gcloud services enable serviceusage.googleapis.com 
  
       - name: "Enable Service Usage API for SPT"
         run: |
