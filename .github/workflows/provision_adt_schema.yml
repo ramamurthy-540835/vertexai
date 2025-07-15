@@ -24,7 +24,7 @@ jobs:
     name: "Provision schema"
     runs-on:
       - self-hosted
-      - us-west1
+      - us-central1
     environment: ${{ github.event.pull_request.head.ref }}
     strategy:
       matrix:
