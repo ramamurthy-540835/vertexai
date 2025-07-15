@@ -59,5 +59,5 @@ variable "schema_name" {
 variable iam_user{
   type = string
   description = "iam user"
-  default = "gco-iam-svc-cicd-mbr-bc-np@gcp-prj-cicd-core.iam"
+  default = "gco-iam-svc-lead-mgmt-bc-adt@p-601-np-bcleadsmgmt-adt.iam"
 }
