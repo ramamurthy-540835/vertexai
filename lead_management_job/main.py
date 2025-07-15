@@ -56,9 +56,7 @@ if __name__ == "__main__":
         
         # Configuration
         INSTANCE_CONNECTION_NAME = "p-601-np-bcleadsmgmt-adt:us-central1:lead-mgmt-adt"
-        #DB_USER = "gco-iam-svc-cicd-mbr-bc-np@gcp-prj-cicd-core.iam"   # This must match your IAM identity
-        DB_USER = "postgres"
-        PASS = "RV/0V6@39%jU"
+        DB_USER = "gco-iam-svc-lead-mgmt-bc-adt@p-601-np-bcleadsmgmt-adt.iam"   # This must match your IAM identity
         DB_NAME = "lead-mgmt-db"
         PRIVATE_IP = "true"
         
@@ -73,8 +71,7 @@ if __name__ == "__main__":
                 driver="pg8000",
                 user=DB_USER,
                 db=DB_NAME,
-                password=PASS,
-               # enable_iam_auth=True,
+                enable_iam_auth=True,
                 ip_type=IPTypes.PRIVATE if PRIVATE_IP.lower() == "true" else IPTypes.PUBLIC,
             )
         

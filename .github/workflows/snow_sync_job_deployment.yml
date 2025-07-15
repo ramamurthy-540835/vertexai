@@ -27,7 +27,7 @@ jobs:
   build-and-deploy:
     runs-on:
       - self-hosted
-      - us-west1
+      - us-central1
     permissions:
       id-token: write
       contents: read
@@ -125,7 +125,7 @@ jobs:
             --network=projects/gcp-prj-transit-hub/global/networks/gcp-vpc-np-host
             --subnet=projects/gcp-prj-transit-hub/regions/us-central1/subnetworks/gcp-snt-np-usc1-601-cloudrunjobs-np
             --command="python"
-            --args="main.py,db_connection"
+            --args="main.py,pos_to_db"
             --task-timeout=30m 
             --set-env-vars=${{ steps.env.outputs.env_vars }}
             --max-retries=1
