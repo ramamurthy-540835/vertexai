@@ -38,7 +38,7 @@ resource "null_resource" "initial_database_setup" {
      export SCHEMA_NAME=${var.schema_name}
      export DATABASE_NAME=${var.database_name}
      export IAM_USER=${var.iam_user}
-     #export NEW_IAM_USER="gco-iam-svc-lead-mgmt-bc-adt@p-601-np-bcleadsmgmt-adt.iam"
+     export NEW_IAM_USER="gco-iam-svc-lead-mgmt-bc-adt@p-601-np-bcleadsmgmt-adt.iam"
 
      envsubst < "../../../../postgres_resources/lead_mgmt_schema_creation.sql" > /tmp/lead_mgmt_schema_creation.sql
      # Connect using private IP with IAM authentication
