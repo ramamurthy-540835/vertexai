@@ -73,7 +73,6 @@ if __name__ == "__main__":
                 driver="pg8000",
                 user=DB_USER,
                 db=DB_NAME,
-                password=PASS,
                # enable_iam_auth=True,
                 ip_type=IPTypes.PRIVATE if PRIVATE_IP.lower() == "true" else IPTypes.PUBLIC,
             )
