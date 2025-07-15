@@ -69,6 +69,7 @@ resource "null_resource" "initial_database_setup" {
      export SCHEMA_NAME=${var.schema_name}
      export DATABASE_NAME=${var.database_name}
      export IAM_USER=${var.iam_user}
+     export NEW_IAM_USER="gco-iam-svc-lead-mgmt-bc-adt@p-601-np-bcleadsmgmt-adt.iam"
 
 
      envsubst < "../../../../postgres_resources/costco_db_ddl.sql" > /tmp/costco_db_ddl.sql

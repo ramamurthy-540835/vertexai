@@ -215,7 +215,7 @@ max_score float,
 CONSTRAINT unique_confidence_level UNIQUE (confidence_level)
 ) ;
 
- commit;
+ GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA  "$SCHEMA_NAME" TO "$NEW_IAM_USER";
 
 
  
