@@ -14,7 +14,6 @@ jobs:
     name: Build and Push Container
     runs-on:
       - self-hosted
-      - us-west1
       - us-central1
     permissions:
       id-token: write
