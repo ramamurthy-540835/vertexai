@@ -27,7 +27,7 @@ jobs:
   build-and-deploy:
     runs-on:
       - self-hosted
-      - us-west1
+      - us-central1
     permissions:
       id-token: write
       contents: read
