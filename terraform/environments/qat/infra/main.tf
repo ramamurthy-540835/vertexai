@@ -107,7 +107,7 @@ module "service_now_password" {
 
 module "cloud_sql_instance" {
   source            = "../../../modules/database"
-  depends_on        = [google_project_service.required_apis_recreate]
+ # depends_on        = [google_project_service.required_apis_recreate]
   project           = "p-601-np-bcleadsmgmt-qat"
   instance_name     = "lead-mgmt-qat"
   database_version  = "POSTGRES_15"
