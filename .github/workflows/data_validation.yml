@@ -84,7 +84,11 @@ jobs:
 
             PGPASSWORD="$(gcloud auth print-access-token)" psql \
             "hostaddr=127.0.0.1 port=5432 dbname=lead-mgmt-db user=gco-iam-svc-cicd-mbr-bc-np@gcp-prj-cicd-core.iam sslmode=disable" --no-password -c \
-            'select * from lead_mgmt_adt.transaction limit 2;'
+            'truncate table lead_mgmt_adt.batch_audit;'
+
+            PGPASSWORD="$(gcloud auth print-access-token)" psql \
+            "hostaddr=127.0.0.1 port=5432 dbname=lead-mgmt-db user=gco-iam-svc-cicd-mbr-bc-np@gcp-prj-cicd-core.iam sslmode=disable" --no-password -c \
+            'select count(*) from lead_mgmt_adt.lead;'
 
           # Verify connection
           echo "Cloud SQL Proxy started successfully"
