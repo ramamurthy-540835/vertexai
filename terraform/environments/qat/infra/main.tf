@@ -34,7 +34,8 @@ resource "google_project_service" "required_apis_recreate" {
     "storage.googleapis.com",
     "cloudscheduler.googleapis.com",
     "servicenetworking.googleapis.com",
-    "run.googleapis.com"
+    "run.googleapis.com",
+    "containerthreatdetection.googleapis.com"
   ]) 
 
   project = var.projectId
@@ -106,7 +107,7 @@ module "service_now_password" {
 
 module "cloud_sql_instance" {
   source            = "../../../modules/database"
-  depends_on        = [google_project_service.required_apis_recreate]
+ # depends_on        = [google_project_service.required_apis_recreate]
   project           = "p-601-np-bcleadsmgmt-qat"
   instance_name     = "lead-mgmt-qat"
   database_version  = "POSTGRES_15"
@@ -146,3 +147,8 @@ module "monitoring_alert" {
   second_condition_display_name = "SNOW Sync Job Failure Condition"
 }
 
+resource "google_storage_bucket_iam_member" "bucket_legacy_owner" {
+  bucket = "gcp-gcs-lead-mgmt-us-qat"
+  role   = "roles/storage.legacyBucketOwner"
+  member = "serviceAccount:gco-iam-svc-lead-mgmt-bc-qat@p-601-np-bcleadsmgmt-qat.iam.gserviceaccount.com"
+}
