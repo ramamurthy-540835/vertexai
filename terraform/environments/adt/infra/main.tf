@@ -147,7 +147,7 @@ module "monitoring_alert" {
   second_condition_display_name = "SNOW Sync Job Failure Condition"
 }
 
-resource "google_storage_bucket_iam_member" "bucket_legacy_owner" {
+resource "google_storage_bucket_iam_member" "bucket_legacy_owner"{
   bucket = "gcp-gcs-lead-mgmt-us-adt"
   role   = "roles/storage.legacyBucketOwner"
   member = "serviceAccount:gco-iam-svc-lead-mgmt-bc-adt@p-601-np-bcleadsmgmt-adt.iam.gserviceaccount.com"
