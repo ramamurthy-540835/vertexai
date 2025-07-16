@@ -34,7 +34,8 @@ resource "google_project_service" "required_apis_recreate" {
     "storage.googleapis.com",
     "cloudscheduler.googleapis.com",
     "servicenetworking.googleapis.com",
-    "run.googleapis.com"
+    "run.googleapis.com",
+    "containerthreatdetection.googleapis.com"
   ]) 
 
   project = var.projectId
@@ -144,5 +145,11 @@ module "monitoring_alert" {
   policy_display_name          = "Cloud Run Job Failure Alert"
   first_condition_display_name = "Match Job Failure Condition"
   second_condition_display_name = "SNOW Sync Job Failure Condition"
+}
+
+resource "google_storage_bucket_iam_member" "bucket_legacy_owner" {
+  bucket = "gcp-gcs-lead-mgmt-us-spt"
+  role   = "roles/storage.legacyBucketOwner"
+  member = "serviceAccount:gco-iam-svc-lead-mgmt-bc-spt@p-601-np-bcleadsmgmt-spt.iam.gserviceaccount.com"
 }
 

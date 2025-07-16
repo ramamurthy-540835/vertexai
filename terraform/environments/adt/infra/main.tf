@@ -34,7 +34,8 @@ resource "google_project_service" "required_apis_recreate" {
     "storage.googleapis.com",
     "cloudscheduler.googleapis.com",
     "servicenetworking.googleapis.com",
-    "run.googleapis.com"
+    "run.googleapis.com",
+    "containerthreatdetection.googleapis.com"
   ]) 
 
   project = var.projectId
