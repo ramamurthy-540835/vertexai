@@ -83,14 +83,14 @@ jobs:
             echo "DEPLOY=true" >> $GITHUB_ENV
             echo "PROJECT_ID=p-601-np-bcleadsmgmt-qat" >> $GITHUB_ENV
             echo "SERVICE_ACCOUNT=gco-iam-svc-lead-mgmt-bc-qat@p-601-np-bcleadsmgmt-qat.iam.gserviceaccount.com" >> $GITHUB_ENV
-             echo "ENVIRONMENT_VARIABLES_PATH=./lead_management_job/lead_matching_config_adt.properties" >>  $GITHUB_ENV
+             echo "ENVIRONMENT_VARIABLES_PATH=./lead_management_job/lead_matching_config_qat.properties" >>  $GITHUB_ENV
 
           elif [[ "$REF" == refs/tags/release-spt* ]]; then
             echo "ENV=spt" >> $GITHUB_ENV
             echo "DEPLOY=true" >> $GITHUB_ENV
             echo "PROJECT_ID=p-601-np-bcleadsmgmt-spt" >> $GITHUB_ENV
             echo "SERVICE_ACCOUNT=gco-iam-svc-lead-mgmt-bc-spt@p-601-np-bcleadsmgmt-spt.iam.gserviceaccount.com" >> $GITHUB_ENV
-             echo "ENVIRONMENT_VARIABLES_PATH=./lead_management_job/lead_matching_config_adt.properties" >>  $GITHUB_ENV
+             echo "ENVIRONMENT_VARIABLES_PATH=./lead_management_job/lead_matching_config_spt.properties" >>  $GITHUB_ENV
 
           else
             echo "DEPLOY=false" >> $GITHUB_ENV
