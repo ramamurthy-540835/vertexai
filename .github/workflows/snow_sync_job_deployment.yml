@@ -125,10 +125,10 @@ jobs:
             --network=projects/gcp-prj-transit-hub/global/networks/gcp-vpc-np-host
             --subnet=projects/gcp-prj-transit-hub/regions/us-central1/subnetworks/gcp-snt-np-usc1-601-cloudrunjobs-np
             --command="python"
-            --args="main.py,pos_to_db"
-            --task-timeout=30m 
+            --args="main.py,snow_to_db"
+            --task-timeout=2h 
             --set-env-vars=${{ steps.env.outputs.env_vars }}
-            --max-retries=1
+            --max-retries=0
 
       - name: Deploy cloud run service
         if: env.DEPLOY == 'true'

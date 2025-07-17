@@ -116,3 +116,31 @@ resource "null_resource" "data_load" {
  }
 
 }
+resource "null_resource" "alter_table" {
+ depends_on = [null_resource.table_creation]
+ triggers = {
+   sql_script_hash = filesha256("../../../../postgres_resources/costco_alter_table.sql")
+ }
+ provisioner "local-exec" {
+   command = <<-EOT
+     # Get access token for IAM authentication
+     export PGPASSWORD=$(gcloud auth print-access-token)
+     export SCHEMA_NAME=${var.schema_name}
+
+     envsubst < "../../../../postgres_resources/costco_alter_table.sql" > /tmp/costco_alter_table.sql
+
+     # Connect using private IP with IAM authentication
+     psql "host=127.0.0.1\
+           port=5432 \
+           dbname=${var.database_name} \
+           user=${var.iam_user} \
+           sslmode=disable" \
+           -f /tmp/costco_alter_table.sql
+   EOT
+   environment = {
+     CLOUDSQL_INSTANCE = "${var.projectId}:${var.region}:${var.instance}"
+   }
+ }
+
+}
+

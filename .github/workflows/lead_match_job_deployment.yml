@@ -128,6 +128,7 @@ jobs:
             --args="run.py,run"
             --task-timeout=2h 
             --set-env-vars=${{ steps.env.outputs.env_vars }}
+            --max-retries=0
       - name: Describe deployed job
         if: env.DEPLOY == 'true'
         run: |
