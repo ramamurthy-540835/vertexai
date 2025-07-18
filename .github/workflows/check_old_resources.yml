@@ -41,11 +41,11 @@ jobs:
     - name: Initialize Terraform backend
       run: terraform init -input=false
 
-    - name: Disable deletion protection via gcloud
-      run: |
-        gcloud sql instances patch lead-mgmt-adt \
-          --no-deletion-protection \
-          --project=p-601-np-membership-adt
+    # - name: Disable deletion protection via gcloud
+    #   run: |
+    #     gcloud sql instances patch lead-mgmt-adt \
+    #       --no-deletion-protection \
+    #       --project=p-601-np-membership-adt
 
     - name: List resources in remote state
       run: terraform state list
