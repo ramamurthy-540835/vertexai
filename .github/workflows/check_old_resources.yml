@@ -1,0 +1,43 @@
+permissions:
+  contents: read
+name: Terraform View Remote State Without Code
+
+on:
+  workflow_dispatch:  # run manually
+
+jobs:
+  view-state:
+    runs-on: ubuntu-latest
+
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+    - name: Checkout (empty repo)
+      uses: actions/checkout@v4
+
+    - name: Set up Google Cloud auth
+      uses: google-github-actions/auth@v2
+      with:
+        credentials_json: '${{ secrets.GCP_CREDENTIALS }}'
+
+    - name: Install Terraform
+      uses: hashicorp/setup-terraform@v3
+
+    - name: Create minimal Terraform backend config
+      run: |
+        cat > main.tf <<EOF
+        terraform {
+          backend "gcs" {
+            bucket = "gcp-gcs-cicd-core-mbr-bc-lead"
+            prefix = "adt/bc"
+          }
+        }
+        EOF
+
+    - name: Initialize Terraform backend
+      run: terraform init -input=false
+
+    - name: List resources in remote state
+      run: terraform state list
