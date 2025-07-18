@@ -46,24 +46,12 @@ jobs:
         gcloud sql instances patch lead-mgmt-adt \
           --no-deletion-protection \
           --project=p-601-np-membership-adt
-    
-    - name: refresh terraform
-      run: terraform refresh
 
     - name: List resources in remote state
       run: terraform state list
 
-    - name: Destroy resources one by one
-      run: | 
-        resources=(
-          module.cloud_sql_instance.google_sql_database.app_database
-          module.cloud_sql_instance.google_sql_database_instance.this
-          module.cloud_sql_instance.google_sql_user.iam_service_account_user
-          module.cloud_sql_instance.google_sql_user.postgres_admin
-          module.cloud_sql_instance.null_resource.postgresql_ready
-        )
+    - name: Refresh Terraform state
+      run: terraform refresh -input=false
 
-        for res in "${resources[@]}"; do
-          echo "Destroying resource: $res"
-          terraform destroy -auto-approve -target="$res" || echo "Failed to destroy $res, continuing..."
-        done
+    - name: Destroy Cloud SQL instance
+      run: terraform destroy -auto-approve -target=module.cloud_sql_instance.google_sql_database_instance.this
