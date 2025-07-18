@@ -46,5 +46,23 @@ jobs:
     #- name: List resources in remote state
      # run: terraform state list
 
-    - name: Destroy specific resource
-      run: terraform destroy -auto-approve -target=google_project_service.required_apis_recreate["artifactregistry.googleapis.com"]
+    - name: Destroy resources one by one
+      run: |
+        resources=(
+          'google_project_service.required_apis_recreate["artifactregistry.googleapis.com"]'
+          'google_project_service.required_apis_recreate["cloudfunctions.googleapis.com"]'
+          'google_project_service.required_apis_recreate["cloudresourcemanager.googleapis.com"]'
+          'google_project_service.required_apis_recreate["cloudscheduler.googleapis.com"]'
+          'google_project_service.required_apis_recreate["monitoring.googleapis.com"]'
+          'google_project_service.required_apis_recreate["pubsub.googleapis.com"]'
+          'google_project_service.required_apis_recreate["secretmanager.googleapis.com"]'
+          'google_project_service.required_apis_recreate["servicenetworking.googleapis.com"]'
+          'google_project_service.required_apis_recreate["sqladmin.googleapis.com"]'
+          'google_project_service.required_apis_recreate["storage.googleapis.com"]'
+          'google_service_account.my_service_account'
+        )
+
+        for res in "${resources[@]}"; do
+          echo "Destroying resource: $res"
+          terraform destroy -auto-approve -target="$res" || echo "Failed to destroy $res, continuing..."
+        done
