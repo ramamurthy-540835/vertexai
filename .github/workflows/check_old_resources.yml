@@ -68,6 +68,7 @@ jobs:
           deletion_protection  = false
           project              = "p-601-np-membership-adt"
           region               = "us-central1"
+          database_version = "POSTGRES_15"
           settings {
             tier = "db-f1-micro"
           }
