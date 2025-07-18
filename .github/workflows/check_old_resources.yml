@@ -1,5 +1,3 @@
-permissions:
-  contents: read
 name: Terraform View Remote State Without Code
 
 on:
