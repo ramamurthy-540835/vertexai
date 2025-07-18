@@ -76,7 +76,7 @@ jobs:
 
         terraform init -input=false
 
-        terraform import google_sql_database_instance.this p-601-np-membership-adt:lead-mgmt-adt
+        terraform import google_sql_database_instance.this lead-mgmt-adt
 
         terraform apply -auto-approve
 
