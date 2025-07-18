@@ -43,14 +43,17 @@ jobs:
     - name: Initialize Terraform backend
       run: terraform init -input=false
 
-    #- name: List resources in remote state
-     # run: terraform state list
+    - name: List resources in remote state
+     run: terraform state list
 
     - name: Destroy resources one by one
       run: |
         resources=(
-          google_service_account.my_service_account
-          module.snow_sync_scheduler.google_pubsub_topic.snow_sync_trigger
+          module.service_now_password.google_secret_manager_secret.this
+          module.service_now_password.google_secret_manager_secret_version.this
+          module.service_now_username.google_secret_manager_secret.this
+          module.service_now_username.google_secret_manager_secret_version.this
+          module.snow_sync_scheduler.google_cloud_scheduler_job.snow_sync_scheduler
         )
 
         for res in "${resources[@]}"; do
