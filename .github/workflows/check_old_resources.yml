@@ -77,8 +77,6 @@ jobs:
 
         terraform init -input=false
 
-        terraform import google_sql_database_instance.this lead-mgmt-adt
-
         terraform apply -auto-approve
 
         terraform destroy -auto-approve -target=google_sql_database_instance.this
