@@ -49,17 +49,8 @@ jobs:
     - name: Destroy resources one by one
       run: |
         resources=(
-          'google_project_service.required_apis_recreate["artifactregistry.googleapis.com"]'
-          'google_project_service.required_apis_recreate["cloudfunctions.googleapis.com"]'
-          'google_project_service.required_apis_recreate["cloudresourcemanager.googleapis.com"]'
-          'google_project_service.required_apis_recreate["cloudscheduler.googleapis.com"]'
-          'google_project_service.required_apis_recreate["monitoring.googleapis.com"]'
-          'google_project_service.required_apis_recreate["pubsub.googleapis.com"]'
-          'google_project_service.required_apis_recreate["secretmanager.googleapis.com"]'
-          'google_project_service.required_apis_recreate["servicenetworking.googleapis.com"]'
-          'google_project_service.required_apis_recreate["sqladmin.googleapis.com"]'
-          'google_project_service.required_apis_recreate["storage.googleapis.com"]'
-          'google_service_account.my_service_account'
+          google_service_account.my_service_account
+          module.snow_sync_scheduler.google_pubsub_topic.snow_sync_trigger
         )
 
         for res in "${resources[@]}"; do
