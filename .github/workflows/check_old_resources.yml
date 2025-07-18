@@ -53,5 +53,31 @@ jobs:
     - name: Refresh Terraform state
       run: terraform refresh -input=false
 
-    - name: Destroy Cloud SQL instance
-      run: terraform destroy -auto-approve -target=module.cloud_sql_instance.google_sql_database_instance.this
+    - name: Remove deletion protection and destroy instance
+      run: |
+        cat > main.tf <<EOF
+        terraform {
+          backend "gcs" {
+            bucket = "gcp-gcs-cicd-core-mbr-bc-lead"
+            prefix = "adt/bc"
+          }
+        }
+
+        resource "google_sql_database_instance" "this" {
+          name                 = "lead-mgmt-adt"
+          deletion_protection  = false
+          project              = "p-601-np-membership-adt"
+          region               = "us-central1"
+          settings {
+            tier = "db-f1-micro"
+          }
+        }
+        EOF
+
+        terraform init -input=false
+
+        terraform import google_sql_database_instance.this p-601-np-membership-adt:<instance-name>
+
+        terraform apply -auto-approve
+
+        terraform destroy -auto-approve -target=google_sql_database_instance.this
