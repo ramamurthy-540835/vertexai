@@ -19,10 +19,10 @@ jobs:
       id: "auth"
       uses: "google-github-actions/auth@v2"
       with:
-          create_credentials_file: true
-          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
-          service_account: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
-          project_id: 'p-601-np-membership-adt'
+        create_credentials_file: true
+        workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
+        service_account: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
+        project_id: 'p-601-np-membership-adt'
 
     - name: Install Terraform
       uses: hashicorp/setup-terraform@v3
@@ -42,7 +42,7 @@ jobs:
       run: terraform init -input=false
 
     - name: List resources in remote state
-     run: terraform state list
+      run: terraform state list
 
     - name: Destroy resources one by one
       run: | 
