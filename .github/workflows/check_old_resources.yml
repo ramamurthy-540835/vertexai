@@ -47,7 +47,7 @@ jobs:
      run: terraform state list
 
     - name: Destroy resources one by one
-      run: |
+      run: | 
         resources=(
           module.service_now_password.google_secret_manager_secret.this
           module.service_now_password.google_secret_manager_secret_version.this
