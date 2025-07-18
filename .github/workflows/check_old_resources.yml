@@ -1,3 +1,5 @@
+permissions:
+  contents: read
 name: Terraform View Remote State Without Code
 
 on:
@@ -6,6 +8,10 @@ on:
 jobs:
   view-state:
     runs-on: ubuntu-latest
+
+    permissions:
+      id-token: write
+      contents: read
 
     steps:
     - name: Checkout (empty repo)
