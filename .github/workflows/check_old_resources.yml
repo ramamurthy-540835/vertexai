@@ -17,10 +17,14 @@ jobs:
     - name: Checkout (empty repo)
       uses: actions/checkout@v4
 
-    - name: Set up Google Cloud auth
-      uses: google-github-actions/auth@v2
+    - name: "Auth in GCP"
+      id: "auth"
+      uses: "google-github-actions/auth@v2"
       with:
-        credentials_json: '${{ secrets.GCP_CREDENTIALS }}'
+          create_credentials_file: true
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
+          service_account: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
+          project_id: 'p-601-np-membership-adt'
 
     - name: Install Terraform
       uses: hashicorp/setup-terraform@v3
