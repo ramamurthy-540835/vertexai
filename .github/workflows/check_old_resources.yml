@@ -45,3 +45,6 @@ jobs:
 
     - name: List resources in remote state
       run: terraform state list
+
+    - name: Destroy specific resource
+      run: terraform destroy -auto-approve -target=module.monitoring_alert.google_monitoring_alert_policy.cloud_run_job_failure
