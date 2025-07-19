@@ -53,33 +53,33 @@ jobs:
     # - name: Refresh Terraform state
     #   run: terraform refresh -input=false
 
-    - name: Remove deletion protection and destroy instance
-      run: |
-        cat > main.tf <<EOF
-        terraform {
-          backend "gcs" {
-            bucket = "gcp-gcs-cicd-core-mbr-bc-lead"
-            prefix = "adt/bc"
-          }
-        }
+    # - name: Remove deletion protection and destroy instance
+    #   run: |
+    #     cat > main.tf <<EOF
+    #     terraform {
+    #       backend "gcs" {
+    #         bucket = "gcp-gcs-cicd-core-mbr-bc-lead"
+    #         prefix = "adt/bc"
+    #       }
+    #     }
 
-        resource "google_sql_database_instance" "this" {
-          name                 = "lead-mgmt-adt"
-          deletion_protection  = false
-          project              = "p-601-np-membership-adt"
-          region               = "us-central1"
-          database_version = "POSTGRES_15"
-          settings {
-            tier = "db-f1-micro"
-          }
-        }
-        EOF
+    #     resource "google_sql_database_instance" "this" {
+    #       name                 = "lead-mgmt-adt"
+    #       deletion_protection  = false
+    #       project              = "p-601-np-membership-adt"
+    #       region               = "us-central1"
+    #       database_version = "POSTGRES_15"
+    #       settings {
+    #         tier = "db-f1-micro"
+    #       }
+    #     }
+    #     EOF
 
-        terraform init -input=false
+    #     terraform init -input=false
 
-        terraform apply -auto-approve
+    #     terraform apply -auto-approve
 
-        terraform destroy -auto-approve -target=google_sql_database_instance.this
+    #     terraform destroy -auto-approve -target=google_sql_database_instance.this
 
     - name: Delete instance via gcloud
       run: |
