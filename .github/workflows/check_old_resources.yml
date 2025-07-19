@@ -80,12 +80,3 @@ jobs:
     #     terraform apply -auto-approve
 
     #     terraform destroy -auto-approve -target=google_sql_database_instance.this
-
-    - name: Delete instance via gcloud
-      run: |
-        gcloud sql instances delete lead-mgmt-adt \
-          --quiet \
-          --project=p-601-np-membership-adt
-
-    - name: Remove resource from Terraform state
-      run: terraform state rm module.cloud_sql_instance.google_sql_database_instance.this
