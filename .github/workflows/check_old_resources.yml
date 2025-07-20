@@ -80,3 +80,41 @@ jobs:
     #     terraform apply -auto-approve
 
     #     terraform destroy -auto-approve -target=google_sql_database_instance.this
+
+    - name: Destroy resources one by one
+      run: |
+        resources=(
+          google_project_service.required_apis_recreate["artifactregistry.googleapis.com"]
+          google_project_service.required_apis_recreate["cloudfunctions.googleapis.com"]
+          google_project_service.required_apis_recreate["cloudresourcemanager.googleapis.com"]
+          google_project_service.required_apis_recreate["cloudscheduler.googleapis.com"]
+          google_project_service.required_apis_recreate["monitoring.googleapis.com"]
+          google_project_service.required_apis_recreate["pubsub.googleapis.com"]
+          google_project_service.required_apis_recreate["secretmanager.googleapis.com"]
+          google_project_service.required_apis_recreate["servicenetworking.googleapis.com"]
+          google_project_service.required_apis_recreate["sqladmin.googleapis.com"]
+          google_project_service.required_apis_recreate["storage.googleapis.com"]
+          google_service_account.my_service_account
+          google_storage_bucket.this
+          module.cloud_sql_instance.data.google_compute_network.shared_vpc
+          module.cloud_sql_instance.data.google_compute_subnetwork.my-subnetwork
+          module.cloud_sql_instance.google_sql_database.app_database
+          module.cloud_sql_instance.google_sql_database_instance.this
+          module.cloud_sql_instance.google_sql_user.iam_service_account_user
+          module.cloud_sql_instance.google_sql_user.postgres_admin
+          module.cloud_sql_instance.null_resource.postgresql_ready
+          module.kubeflow_registry.google_artifact_registry_repository.this
+          module.monitoring_alert.google_monitoring_alert_policy.cloud_run_job_failure
+          module.monitoring_alert.google_monitoring_notification_channel.lead_mgmt_email
+          module.service_now_password.google_secret_manager_secret.this
+          module.service_now_password.google_secret_manager_secret_version.this
+          module.service_now_username.google_secret_manager_secret.this
+          module.service_now_username.google_secret_manager_secret_version.this
+          module.snow_sync_scheduler.google_cloud_scheduler_job.snow_sync_scheduler
+          module.snow_sync_scheduler.google_pubsub_topic.snow_sync_trigger
+        )
+
+        for res in "${resources[@]}"; do
+          echo "Destroying resource: $res"
+          terraform destroy -auto-approve -target="$res" || echo "Failed to destroy $res, continuing..."
+        done
