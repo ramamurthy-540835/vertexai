@@ -41,20 +41,20 @@ jobs:
     - name: Initialize Terraform backend
       run: terraform init -input=false
 
-    - name: Disable deletion protection via gcloud
-      run: |
-        gcloud sql instances patch lead-mgmt-qat \
-          --no-deletion-protection \
-          --project=p-601-np-membership-qat
+    # - name: Disable deletion protection via gcloud
+    #   run: |
+    #     gcloud sql instances patch lead-mgmt-qat \
+    #       --no-deletion-protection \
+    #       --project=p-601-np-membership-qat
 
-    - name: Delete instance via gcloud
-      run: |
-        gcloud sql instances delete lead-mgmt-qat \
-          --quiet \
-          --project=p-601-np-membership-qat
+    # - name: Delete instance via gcloud
+    #   run: |
+    #     gcloud sql instances delete lead-mgmt-qat \
+    #       --quiet \
+    #       --project=p-601-np-membership-qat
 
-    - name: Remove resource from Terraform state
-      run: terraform state rm module.cloud_sql_instance.google_sql_database_instance.this
+    # - name: Remove resource from Terraform state
+    #   run: terraform state rm module.cloud_sql_instance.google_sql_database_instance.this
 
     - name: Refresh Terraform state
       run: terraform refresh -input=false
