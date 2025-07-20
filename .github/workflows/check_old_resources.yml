@@ -22,7 +22,7 @@ jobs:
         create_credentials_file: true
         workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
         service_account: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
-        project_id: 'p-601-np-membership-qat'
+        project_id: 'p-601-np-membership-spt'
 
     - name: Install Terraform
       uses: hashicorp/setup-terraform@v3
@@ -33,7 +33,7 @@ jobs:
         terraform {
           backend "gcs" {
             bucket = "gcp-gcs-cicd-core-mbr-bc-lead"
-            prefix = "qat/bc"
+            prefix = "spt/bc"
           }
         }
         EOF
@@ -43,15 +43,15 @@ jobs:
 
     # - name: Disable deletion protection via gcloud
     #   run: |
-    #     gcloud sql instances patch lead-mgmt-qat \
+    #     gcloud sql instances patch lead-mgmt-spt \
     #       --no-deletion-protection \
-    #       --project=p-601-np-membership-qat
+    #       --project=p-601-np-membership-spt
 
     # - name: Delete instance via gcloud
     #   run: |
-    #     gcloud sql instances delete lead-mgmt-qat \
+    #     gcloud sql instances delete lead-mgmt-spt \
     #       --quiet \
-    #       --project=p-601-np-membership-qat
+    #       --project=p-601-np-membership-spt
 
     # - name: Remove resource from Terraform state
     #   run: terraform state rm module.cloud_sql_instance.google_sql_database_instance.this
@@ -130,4 +130,3 @@ jobs:
     - name: Destroy resources one by one
       run: |
         gcloud run jobs delete lead-match-job --region=us-central1 --quiet
-        gcloud run jobs delete snow-sync-job --region=us-central1 --quiet
