@@ -120,5 +120,5 @@ jobs:
     #     done
     - name: Destroy resources one by one
       run: |
-        gcloud run jobs delete lead-match-job --region=us-central1
-        gcloud run jobs delete snow-sync-job --region=us-central1
+        gcloud run jobs delete lead-match-job --region=us-central1 --quiet
+        gcloud run jobs delete snow-sync-job --region=us-central1 --quiet
