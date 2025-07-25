@@ -84,7 +84,7 @@ resource "google_sql_database_instance" "this" {
      }
 
      database_flags {
-      name  = "enable_audit_logging"
+      name  = "cloudsql.enable_pgaudit"
       value = "on"
      }
   }
