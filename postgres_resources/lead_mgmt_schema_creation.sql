@@ -13,6 +13,9 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA "$SCHEMA_NAME" GRANT ALL ON TABLES TO "$IAM_U
 -- Create vector extension
 CREATE EXTENSION IF NOT EXISTS vector; -- installs into public
 
+-- create pgaudit extension
+CREATE EXTENSION IF NOT EXISTS pgaudit;
+
 -- Grant same privileges to new user
 GRANT ALL PRIVILEGES ON DATABASE "lead-mgmt-db" TO "$NEW_IAM_USER";
 GRANT ALL PRIVILEGES ON SCHEMA  "$SCHEMA_NAME" TO "$NEW_IAM_USER";
