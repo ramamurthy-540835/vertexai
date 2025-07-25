@@ -82,6 +82,11 @@ resource "google_sql_database_instance" "this" {
       name  = "log_min_duration_statement"
       value = -1
      }
+
+     database_flags {
+      name  = "cloudsql.enable_pgaudit"
+      value = "on"
+     }
   }
 }
 
