@@ -22,10 +22,17 @@ jobs:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
           service_account: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
 
-      - name: Enable Point-in-Time Recovery
+      - name: Enable Point-in-Time Recovery spt
         run: |
           unset CLOUDSDK_CORE_PROJECT
-          gcloud config set project p-601-np-bcleadsmgmt-adt
-          gcloud sql instances patch lead-mgmt-adt \
+          gcloud config set project p-601-np-bcleadsmgmt-spt
+          gcloud sql instances patch lead-mgmt-spt \
+            --enable-point-in-time-recovery \
+            --quiet
+      - name: Enable Point-in-Time Recovery qat
+        run: |
+          unset CLOUDSDK_CORE_PROJECT
+          gcloud config set project p-601-np-bcleadsmgmt-qat
+          gcloud sql instances patch lead-mgmt-qat \
             --enable-point-in-time-recovery \
             --quiet
