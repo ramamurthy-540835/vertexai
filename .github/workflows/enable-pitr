@@ -1,0 +1,31 @@
+name: Enable Cloud SQL Point-in-Time Recovery
+
+on:
+  workflow_dispatch:   # manual trigger from GitHub UI
+
+jobs:
+  enable-pitr:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          create_credentials_file: true
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
+          service_account: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
+          project_id: 'p-601-np-membership-spt'
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
+
+      - name: Enable Point-in-Time Recovery
+        run: |
+          gcloud sql instances patch ${{ secrets.CLOUDSQL_INSTANCE_NAME }} \
+            --enable-point-in-time-recovery \
+            --quiet
