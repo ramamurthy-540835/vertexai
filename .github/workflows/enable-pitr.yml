@@ -17,15 +17,11 @@ jobs:
           create_credentials_file: true
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
           service_account: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
-          project_id: 'p-601-np-membership-spt'
-
-      - name: Set up gcloud
-        uses: google-github-actions/setup-gcloud@v2
-        with:
-          project_id: ${{ secrets.GCP_PROJECT_ID }}
 
       - name: Enable Point-in-Time Recovery
         run: |
-          gcloud sql instances patch ${{ secrets.CLOUDSQL_INSTANCE_NAME }} \
+          unset CLOUDSDK_CORE_PROJECT
+          gcloud config set project p-601-np-bcleadsmgmt-adt
+          gcloud sql instances patch lead-mgmt-adt \
             --enable-point-in-time-recovery \
             --quiet
