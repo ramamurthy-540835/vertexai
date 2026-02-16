@@ -45,8 +45,6 @@ module "logging_bucket" {
   bucket_name               = "gcp-gcs-${var.prefix}-${var.country}-${var.environment}-logs"
   location                  = var.location
   labels                    = var.labels
-  log_bucket                = "gcp-gcs-${var.prefix}-${var.country}-${var.environment}-logs"
-  log_object_prefix         = "self-logs/"
   grant_logging_permissions = true
 }
 
