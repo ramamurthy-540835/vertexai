@@ -57,3 +57,4 @@ variable "sql_scripts" {
   }))
   default = {}
 }
+

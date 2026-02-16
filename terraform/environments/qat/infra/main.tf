@@ -22,6 +22,42 @@ terraform {
   }
 }
 
+moved {
+  from = google_storage_bucket.this
+  to   = module.main_bucket.google_storage_bucket.this
+}
+
+moved {
+  from = google_service_account.my_service_account
+  to   = module.project_init.google_service_account.main
+}
+
+module "project_init" {
+  source                       = "../../../modules/project_init"
+  project_id                   = var.projectId
+  service_account_id           = "gco-iam-svc-lead-mgmt-bc-qat"
+  service_account_display_name = "gco-iam-svc-lead-mgmt-bc-qat"
+}
+
+module "logging_bucket" {
+  source                    = "../../../modules/gcs_bucket"
+  project_id                = var.projectId
+  bucket_name               = "gcp-gcs-${var.prefix}-${var.country}-${var.environment}-logs"
+  location                  = var.location
+  labels                    = var.labels
+  grant_logging_permissions = true
+}
+
+module "main_bucket" {
+  source            = "../../../modules/gcs_bucket"
+  project_id        = var.projectId
+  bucket_name       = "gcp-gcs-${var.prefix}-${var.country}-${var.environment}"
+  location          = var.location
+  labels            = var.labels
+  log_bucket        = module.logging_bucket.bucket_name
+  log_object_prefix = "logs/"
+}
+
 resource "google_project_service" "required_apis_recreate" {
   for_each = toset([
     "pubsub.googleapis.com",
@@ -44,37 +80,6 @@ resource "google_project_service" "required_apis_recreate" {
   disable_on_destroy = false
 }
 
-resource "google_storage_bucket" "this" {
-  name          = "gcp-gcs-${var.prefix}-${var.country}-${var.environment}"
-  location      = var.location
-  force_destroy = true
-
-  uniform_bucket_level_access = true
-  public_access_prevention    = "enforced"
-  project                     = var.projectId
-  labels                      = var.labels
-  versioning {
-    enabled = true
-  }
-
-  lifecycle_rule {
-    condition {
-      days_since_noncurrent_time = 7
-    }
-    action {
-      type = "Delete"
-    }
-  }
-  lifecycle_rule {
-    condition {
-      with_state = "ARCHIVED"
-      num_newer_versions = 2
-    }
-    action {
-      type = "Delete"
-    }
-  }
-}
 
 /*module "kubeflow_registry" {
  source        = "../../../modules/artifact_registry"
@@ -85,10 +90,6 @@ resource "google_storage_bucket" "this" {
  project       = var.projectId
 }*/
 
-resource "google_service_account" "my_service_account" {
-      account_id   = "gco-iam-svc-lead-mgmt-bc-qat"
-      display_name = "gco-iam-svc-lead-mgmt-bc-qat"
-    }
 
 module "service_now_username" {
  source        = "../../../modules/secret_manager"
@@ -118,7 +119,7 @@ module "cloud_sql_instance" {
   activation_policy = "ALWAYS"
   disk_size         = 100
   service_account   = var.gcp_workload_identity_sa_email
-  service_account_iam = google_service_account.my_service_account.email
+  service_account_iam = module.project_init.service_account_email
   host_project_id = "gcp-prj-transit-hub"
   vpc_name = "gcp-vpc-np-host"
   private_network = "projects/gcp-prj-transit-hub/global/networks/gcp-vpc-np-host"
@@ -150,5 +151,5 @@ module "monitoring_alert" {
 resource "google_storage_bucket_iam_member" "bucket_legacy_owner" {
   bucket = "gcp-gcs-lead-mgmt-us-qat"
   role   = "roles/storage.legacyBucketOwner"
-  member = "serviceAccount:gco-iam-svc-lead-mgmt-bc-qat@p-601-np-bcleadsmgmt-qat.iam.gserviceaccount.com"
+  member = "serviceAccount:${module.project_init.service_account_email}"
 }

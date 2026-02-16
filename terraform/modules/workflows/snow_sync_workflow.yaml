@@ -1,0 +1,99 @@
+main:
+  params: [input]
+  steps:
+    - init:
+        assign:
+          - project_id: ${sys.get_env("GOOGLE_CLOUD_PROJECT_ID")}
+          - job_location: us-central1
+          - job_name: snow-sync-job
+          - job_name_par: snow-sync-job-par
+          - batch_id: ${uuid.generate()}
+  
+    - load_leads_from_snow_to_gcs:
+        call: googleapis.run.v1.namespaces.jobs.run
+        args:
+          name: ${"namespaces/" + project_id + "/jobs/" + job_name}
+          location: ${job_location}
+          body:
+            overrides:
+              containerOverrides:
+                env:
+                  - name: BATCH_ID
+                    value: ${batch_id}
+                args:
+                  - main.py
+                  - snow_to_gcs_lead
+          connector_params:
+            timeout: 72000
+            polling_policy:
+                initial_delay: 5              # Start polling after 5 seconds
+                multiplier: 1.5               # Increase delay by 1.5x after each poll
+                max_delay: 60                 # Max 60 seconds between polls
+            skip_polling: false
+  
+    - load_lead_to_db:
+        call: googleapis.run.v1.namespaces.jobs.run
+        args:
+          name: ${"namespaces/" + project_id + "/jobs/" + job_name}
+          location: ${job_location}
+          body:
+            overrides:
+              containerOverrides:
+                env:
+                  - name: BATCH_ID
+                    value: ${batch_id}
+                args:
+                  - main.py
+                  - lead_to_db
+          connector_params:
+            timeout: 72000
+            polling_policy:
+                initial_delay: 5              # Start polling after 5 seconds
+                multiplier: 1.5               # Increase delay by 1.5x after each poll
+                max_delay: 60                 # Max 60 seconds between polls
+            skip_polling: false
+  
+
+    - load_pos_from_snow_to_gcs:
+        call: googleapis.run.v1.namespaces.jobs.run
+        args:
+          name: ${"namespaces/" + project_id + "/jobs/" + job_name}
+          location: ${job_location}
+          body:
+            overrides:
+              containerOverrides:
+                env:
+                  - name: BATCH_ID
+                    value: ${batch_id}
+                args:
+                  - main.py
+                  - snow_to_gcs_pos
+          connector_params:
+            timeout: 72000
+            polling_policy:
+                initial_delay: 5              # Start polling after 5 seconds
+                multiplier: 1.5               # Increase delay by 1.5x after each poll
+                max_delay: 60                 # Max 60 seconds between polls
+            skip_polling: false
+  
+    - load_pos_to_db:
+        call: googleapis.run.v1.namespaces.jobs.run
+        args:
+          name: ${"namespaces/" + project_id + "/jobs/" + job_name}
+          location: ${job_location}
+          body:
+            overrides:
+              containerOverrides:
+                env:
+                  - name: BATCH_ID
+                    value: ${batch_id}
+                args:
+                  - main.py
+                  - pos_to_db
+          connector_params:
+            timeout: 72000
+            polling_policy:
+                initial_delay: 5              # Start polling after 5 seconds
+                multiplier: 1.5               # Increase delay by 1.5x after each poll
+                max_delay: 60                 # Max 60 seconds between polls
+            skip_polling: false

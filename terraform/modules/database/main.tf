@@ -27,9 +27,13 @@ resource "google_sql_database_instance" "this" {
     #}
 
     backup_configuration {
-      enabled = true
+      #enabled = true
       # Uncomment only if using MySQL
       # binary_log_enabled = true
+      enabled                        = var.backup_enabled
+      point_in_time_recovery_enabled = var.point_in_time_recovery_enabled
+      start_time                     = var.backup_start_time
+      transaction_log_retention_days = var.transaction_log_retention_days
     }
 
      ip_configuration {
@@ -44,6 +48,7 @@ resource "google_sql_database_instance" "this" {
     disk_autoresize = true
     disk_size = var.disk_size
 
+    
     insights_config {
       query_insights_enabled = true
     }

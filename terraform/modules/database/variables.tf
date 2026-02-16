@@ -85,3 +85,23 @@ variable "password" {
   description = "Database password"
   type        = string
 }
+
+variable "backup_enabled" {
+  type    = bool
+  default = true
+}
+
+variable "point_in_time_recovery_enabled" {
+  type    = bool
+  default = true
+}
+
+variable "backup_start_time" {
+  type    = string
+  default = "03:00"
+}
+
+variable "transaction_log_retention_days" {
+  type    = number
+  default = 7
+}

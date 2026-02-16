@@ -1,4 +1,4 @@
 output "bucket_name" {
   description = "Fully qualified cs bucket name"
-  value       = google_storage_bucket.this.name
+  value       = module.main_bucket.bucket_name
 }
