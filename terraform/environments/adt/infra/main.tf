@@ -130,3 +130,10 @@ module "iam_management" {
     }
   ]
 }
+
+module "workflows" {
+  source                = "../../../modules/workflows"
+  project_id            = var.projectId
+  region                = var.region
+  service_account_email = module.project_init.service_account_email
+}
