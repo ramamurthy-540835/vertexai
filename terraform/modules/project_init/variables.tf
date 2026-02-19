@@ -18,7 +18,8 @@ variable "services" {
     "cloudscheduler.googleapis.com",
     "servicenetworking.googleapis.com",
     "run.googleapis.com",
-    "containerthreatdetection.googleapis.com"
+    "containerthreatdetection.googleapis.com",
+    "logging.googleapis.com"
   ]
 }
 

@@ -137,3 +137,11 @@ module "workflows" {
   region                = var.region
   service_account_email = module.project_init.service_account_email
 }
+
+
+module "security_monitoring" {
+  source                = "../../../modules/security_monitoring"
+  project_id            = var.projectId
+  notification_channels = [module.monitoring_alert.notification_channel_id]
+}
+

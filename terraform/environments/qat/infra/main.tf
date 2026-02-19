@@ -153,3 +153,17 @@ resource "google_storage_bucket_iam_member" "bucket_legacy_owner" {
   role   = "roles/storage.legacyBucketOwner"
   member = "serviceAccount:${module.project_init.service_account_email}"
 }
+
+
+module "workflows" {
+  source                = "../../../modules/workflows"
+  project_id            = var.projectId
+  region                = var.region
+  service_account_email = module.project_init.service_account_email
+}
+
+module "security_monitoring" {
+  source                = "../../../modules/security_monitoring"
+  project_id            = var.projectId
+  notification_channels = [module.monitoring_alert.notification_channel_id]
+}
