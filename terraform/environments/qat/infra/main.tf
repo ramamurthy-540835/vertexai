@@ -12,6 +12,7 @@ terraform {
       version = ">= 4.22.0"
     }
     archive = {}
+    time    = {}
   }
 }
 

@@ -10,6 +10,21 @@ resource "google_logging_metric" "project_ownership_change" {
   }
 }
 
+
+# Wait for log-based metrics to propagate before creating alert policies.
+# GCP can take up to 10 minutes; 120s covers the typical propagation window.
+resource "time_sleep" "wait_for_metrics" {
+  create_duration = "120s"
+
+  depends_on = [
+    google_logging_metric.project_ownership_change,
+    google_logging_metric.audit_config_change,
+    google_logging_metric.sql_instance_config_change,
+    google_logging_metric.custom_role_change,
+    google_logging_metric.gcs_iam_change,
+  ]
+}
+
 resource "google_monitoring_alert_policy" "project_ownership_change_alert" {
   display_name = "Project Ownership Assignment/Change Alert"
   combiner     = "OR"
@@ -29,7 +44,7 @@ resource "google_monitoring_alert_policy" "project_ownership_change_alert" {
   notification_channels = var.notification_channels
   project               = var.project_id
 
-  depends_on = [google_logging_metric.project_ownership_change]
+  depends_on = [time_sleep.wait_for_metrics]
 }
 
 # Audit Configuration Changes
@@ -63,7 +78,7 @@ resource "google_monitoring_alert_policy" "audit_config_change_alert" {
   notification_channels = var.notification_channels
   project               = var.project_id
 
-  depends_on = [google_logging_metric.audit_config_change]
+  depends_on = [time_sleep.wait_for_metrics]
 }
 
 # SQL Instance Configuration Changes
@@ -97,7 +112,7 @@ resource "google_monitoring_alert_policy" "sql_instance_config_change_alert" {
   notification_channels = var.notification_channels
   project               = var.project_id
 
-  depends_on = [google_logging_metric.sql_instance_config_change]
+  depends_on = [time_sleep.wait_for_metrics]
 }
 
 # Custom Role Changes
@@ -131,7 +146,7 @@ resource "google_monitoring_alert_policy" "custom_role_change_alert" {
   notification_channels = var.notification_channels
   project               = var.project_id
 
-  depends_on = [google_logging_metric.custom_role_change]
+  depends_on = [time_sleep.wait_for_metrics]
 }
 
 # Cloud Storage IAM Permission Changes
@@ -165,5 +180,5 @@ resource "google_monitoring_alert_policy" "gcs_iam_change_alert" {
   notification_channels = var.notification_channels
   project               = var.project_id
 
-  depends_on = [google_logging_metric.gcs_iam_change]
+  depends_on = [time_sleep.wait_for_metrics]
 }
