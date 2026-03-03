@@ -29,14 +29,14 @@ jobs:
         working-directory: ./terraform/environments/adt/infra
         run: terraform init
 
-      - name: "Force Unlock"
-        working-directory: ./terraform/environments/adt/infra
-        run: terraform force-unlock -force 1771237945115192
-      # - name: Enable Point-in-Time Recovery spt
-      #   run: |
-      #     unset CLOUDSDK_CORE_PROJECT
-      #     gcloud config set project p-601-np-bcleadsmgmt-spt
-      #     gcloud sql instances patch lead-mgmt-spt \
+
+      - name: Enable Point-in-Time Recovery spt
+        run: |
+          unset CLOUDSDK_CORE_PROJECT
+          gcloud config set project p-601-np-bcleadsmgmt-adt
+          gcloud services enable aiplatform.googleapis.com --project=p-601-np-bcleadsmgmt-adt
+
+      #    gcloud sql instances patch lead-mgmt-spt \
       #       --enable-point-in-time-recovery \
       #       --quiet
       # - name: Enable Point-in-Time Recovery qat
