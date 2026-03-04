@@ -88,11 +88,15 @@ jobs:
 
             PGPASSWORD="$(gcloud auth print-access-token)" psql \
             "hostaddr=127.0.0.1 port=5432 dbname=lead-mgmt-db user=gco-iam-svc-cicd-mbr-bc-np@gcp-prj-cicd-core.iam sslmode=disable" --no-password -c \
-            'select count(*) from lead_mgmt_adt.account;'
+            'truncate table lead_mgmt_adt.batch_audit;' 
 
             PGPASSWORD="$(gcloud auth print-access-token)" psql \
             "hostaddr=127.0.0.1 port=5432 dbname=lead-mgmt-db user=gco-iam-svc-cicd-mbr-bc-np@gcp-prj-cicd-core.iam sslmode=disable" --no-password -c \
-            "select * from lead_mgmt_adt.account where business_name = 'DRAGON SMOKE LLC' and address_line_one = '11819 198TH AVE SE';"
+            'truncate table lead_mgmt_adt.error_audit;' 
+
+            PGPASSWORD="$(gcloud auth print-access-token)" psql \
+            "hostaddr=127.0.0.1 port=5432 dbname=lead-mgmt-db user=gco-iam-svc-cicd-mbr-bc-np@gcp-prj-cicd-core.iam sslmode=disable" --no-password -c \
+            "select * from lead_mgmt_adt.account where business_name = 'Shoreline Fire Station 64' and address_line_one = '719 N 185th St';"
 
           # Verify connection
           echo "Cloud SQL Proxy started successfully"

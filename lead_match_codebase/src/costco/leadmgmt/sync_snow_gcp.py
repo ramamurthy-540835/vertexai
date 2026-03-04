@@ -13,6 +13,7 @@ from google.cloud import storage, pubsub_v1
 from sqlalchemy import Integer, text, BigInteger
 from sqlalchemy.dialects.postgresql import UUID, insert
 import costco.leadmgmt.database.batch_audit_util as ba_util
+import costco.leadmgmt.database.error_audit_util as ea_util
 from costco.leadmgmt.config.Configuration import JobConfig, StorageConfig, SnowConfig, TransformConfig
 from costco.leadmgmt.database.DBUtil import DatabaseDetail, get_table_row_count
 from costco.leadmgmt.util.logger import app_logger
@@ -35,7 +36,7 @@ def split_lead_account_bo(lead_df, batch_id, transform_config):
     return account_df, final_lead_df
 
 
-def split_lead_bo(lead_df, contact_df, batch_id, transform_config: TransformConfig):
+def split_lead_bo(lead_df, contact_df, batch_id, transform_config: TransformConfig,job_config):
     acct_dedup_columns = ['address_line_one', 'address_line_two', 'city', 'state', 'zip_code', 'business_name']
     ls_account_columns = transform_config.account_columns
     ls_lead_columns = transform_config.lead_columns
@@ -47,6 +48,27 @@ def split_lead_bo(lead_df, contact_df, batch_id, transform_config: TransformConf
 
     if lead_df is not None:
         lead_df["batch_id"] = batch_id
+
+        # Separate rows where account_id is missing
+        missing_account_df = lead_df[lead_df["account_id"].isna() | (lead_df["account_id"] == "")]
+
+        # Log them into the error log table
+        if not missing_account_df.empty:
+            database_config: DatabaseDetail = job_config.db_config
+            for _, row in missing_account_df.iterrows():
+                ea_util.add_error_audit(
+                    entity_type="lead_id",
+                    entity_id=str(row.get("lead_id", "")),  # or whatever identifier you want
+                    error_message="Missing account_id",
+                    db_config=database_config,
+                    batch_id=batch_id
+                )
+                app_logger.info(f"{len(missing_account_df)} rows logged into error_audit")
+
+
+        # Keep only rows where account_id is present
+        lead_df = lead_df[lead_df["account_id"].notna() & (lead_df["account_id"] != "")]
+
         account_df = lead_df[ls_account_columns]
         final_lead_df = lead_df[ls_lead_columns]
         app_logger.debug(f"length of account before dedup {len(account_df)}")
@@ -54,6 +76,25 @@ def split_lead_bo(lead_df, contact_df, batch_id, transform_config: TransformConf
 
     if contact_df is not None:
         contact_df["batch_id"] = batch_id
+        # Separate rows where account_id is missing
+        missing_contact_df = contact_df[contact_df["contact_id"].isna() | (contact_df["contact_id"] == "")]
+
+        # Log them into the error log table
+        if not missing_contact_df.empty:
+            database_config: DatabaseDetail = job_config.db_config
+            for _, row in missing_contact_df.iterrows():
+                ea_util.add_error_audit(
+                    entity_type="lead_id",
+                    entity_id=str(row.get("lead_id", "")),  # or whatever identifier you want
+                    error_message="Missing contact_id",
+                    db_config=database_config,
+                    batch_id=batch_id
+                )
+                app_logger.info(f"{len(missing_contact_df)} rows logged into error_audit")
+
+
+        # Keep only rows where contact_id is present
+        contact_df = contact_df[contact_df["contact_id"].notna() & (contact_df["contact_id"] != "")]
         contact_df = contact_df[ls_contact_columns]
         app_logger.debug(f"length of contact dataframe {len(contact_df)}")
 
@@ -107,12 +148,13 @@ def upsert_using_business_key(df, table_name, unique_key_columns, primary_key_co
         raise
 
 
-def upsert_using_primary_key(df, table_name, primary_key_column, db_config: DatabaseDetail):
+def upsert_using_primary_key(df, table_name, primary_key_column, db_config: DatabaseDetail,batch_id):
     print( "inside  upsert_using_primary_key ###")
     log_limit = 1000
     total_error_record = 0
     total_success_count = 0
-    max_error_limit = 10
+    max_error_limit = -1
+    failed_ids = []   # <-- keep track of failed primary keys
     if df is None:
         app_logger.debug(f"No records to process. input dataframe is empty for table - {table_name}")
         return total_success_count, total_error_record
@@ -132,20 +174,24 @@ def upsert_using_primary_key(df, table_name, primary_key_column, db_config: Data
                         """
         )
         print(f"inside  upsert_using_primary_key ### - {insert_query}")
-        with db_config.get_engine().connect() as connection:
+        with db_config.get_engine().begin() as connection:
             print("inside get connection")
             for index, row in df.iterrows():
                 # update_column = 'batch_id'
                 try:
-
-                    #print("inside iterate row --->")
-                    # Convert NaN values to None for SQL NULL
-                    row_data = {col: None if pd.isna(value) or value =="" else value for col, value in row.items()}
-                    #row_data = row.to_dict()
-                    #print(row_data)
-                    result = connection.execute(insert_query, row_data)
-                    total_success_count += 1
+                    with connection.begin_nested():  # create savepoint
+                        #print("inside iterate row --->")
+                        # Convert NaN values to None for SQL NULL
+                        row_data = {col: None if pd.isna(value) or value =="" else value for col, value in row.items()}
+                        #row_data = row.to_dict()
+                        #print(row_data)
+                        result = connection.execute(insert_query, row_data)
+                        total_success_count += 1
                 except Exception as e:
+                    failed_id = row[primary_key_column]
+                    failed_ids.append(failed_id)   # <-- collect failed ID
+                    #connection.commit()
+                    ea_util.add_error_audit(primary_key_column, failed_id, str(e), db_config,batch_id)
                     app_logger.error(
                         f"Error UPSERTing row with index {index} and {primary_key_column} = {row[primary_key_column]}: {e}")
                     print("exception occurred during pos insert ###########")
@@ -157,10 +203,10 @@ def upsert_using_primary_key(df, table_name, primary_key_column, db_config: Data
 
                 if index != 0 and index % log_limit == 0:
                     app_logger.debug(f"processed {index} records ")
-                    connection.commit()
-                if total_error_record > max_error_limit:
+                    #connection.commit()
+                if max_error_limit != -1 and total_error_record > max_error_limit:
                     raise Exception(f"Number of records failure reached max limit {max_error_limit} ")
-            connection.commit()
+            #connection.commit()
             app_logger.debug(f"Total records processed successfully :{total_success_count}")
     except Exception as e:
         app_logger.error(f"Error occurred while insert/update records to table {table_name} ")
@@ -168,7 +214,7 @@ def upsert_using_primary_key(df, table_name, primary_key_column, db_config: Data
         import traceback
         app_logger.debug(traceback.format_exc())
         raise e
-    return total_success_count, total_error_record
+    return total_success_count, total_error_record, failed_ids
 
 
 def read_data_from_snow(url, username, password, payload, auth_type='Basic'):
@@ -514,13 +560,13 @@ def write_lead_data_to_db(batch_id, job_config, chunk_size=1000):
         try:
 
             account_df, contact_df, lead_df = split_lead_bo(cleansed_lead_df, cleansed_contact_df, batch_id,
-                                                            transform_config)
+                                                            transform_config,job_config)
             app_logger.debug("upsert account data")
-            upsert_using_primary_key(account_df, f"{schema}.account", "account_id", database_config)
+            upsert_using_primary_key(account_df, f"{schema}.account", "account_id", database_config,batch_id)
             app_logger.debug("upsert lead data")
-            lead_success, lead_failure = upsert_using_primary_key(lead_df, f"{schema}.lead", "lead_id", database_config)
+            lead_success, lead_failure, failed_ids = upsert_using_primary_key(lead_df, f"{schema}.lead", "lead_id", database_config,batch_id)
             app_logger.debug("upsert contact data")
-            upsert_using_primary_key(contact_df, f"{schema}.contact", "contact_id", database_config)
+            upsert_using_primary_key(contact_df, f"{schema}.contact", "contact_id", database_config,batch_id)
 
             ba_util.update_batch_id(batch_id, 'lead', "db_load", input_count, lead_success, "Completed",
                                     database_config)
@@ -596,10 +642,10 @@ def write_pos_data_to_db(batch_id, job_config: JobConfig, chunk_size=1000):
                 total_count = len(transformed_df)
                 # upsert_pos_data(transformed_df, database_config)
                 print("before invoking upsert_using_primary_key ")
-                success_count, failure_count = upsert_using_primary_key(transformed_df,
+                success_count, failure_count, failed_ids = upsert_using_primary_key(transformed_df,
                                                         f"{database_config.schema_name}.transaction",
                                                          "pos_id",
-                                                                        database_config)
+                                                                        database_config,batch_id)
                 ba_util.update_batch_id(batch_id, "pos", "db_load", total_count, success_count,
                                         "Completed", database_config)
                 pos_record_count_after_load = get_table_row_count(database_config, "transaction")

@@ -42,7 +42,14 @@ jobs:
            unset CLOUDSDK_CORE_PROJECT
            gcloud config set project p-601-np-bcleadsmgmt-adt
            gcloud run jobs execute snow-sync-job --region=us-central1 \
-           --project=p-601-np-bcleadsmgmt-adt
+           --project=p-601-np-bcleadsmgmt-adt \
+           --args="main.py,match_job"
+
+      # - name: "Run cloud run job through workflows"
+      #   run: | 
+      #      unset CLOUDSDK_CORE_PROJECT
+      #      gcloud config set project p-601-np-bcleadsmgmt-adt
+      #      gcloud workflows execute snow_sync_workflow --location=us-central1
 
       #- name: "Check address space"
       #  run: | 
