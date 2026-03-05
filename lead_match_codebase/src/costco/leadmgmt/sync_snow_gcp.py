@@ -157,7 +157,7 @@ def upsert_using_primary_key(df, table_name, primary_key_column, db_config: Data
     failed_ids = []   # <-- keep track of failed primary keys
     if df is None:
         app_logger.debug(f"No records to process. input dataframe is empty for table - {table_name}")
-        return total_success_count, total_error_record
+        return total_success_count, total_error_record,failed_ids
     try:
 
         app_logger.debug("inside upsert_dataframe_sqlalchemy")
