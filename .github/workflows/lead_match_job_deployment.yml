@@ -125,7 +125,7 @@ jobs:
             --network=projects/gcp-prj-transit-hub/global/networks/gcp-vpc-np-host
             --subnet=projects/gcp-prj-transit-hub/regions/us-central1/subnetworks/gcp-snt-np-usc1-601-cloudrunjobs-np
             --command="python"
-            --args="run.py,run"
+            --args="run.py,run_pipeline"
             --task-timeout=2h 
             --set-env-vars=${{ steps.env.outputs.env_vars }}
             --max-retries=0

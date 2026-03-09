@@ -1,27 +1,36 @@
 import os
 from flask import Flask
+from google.cloud import workflows_v1
+from google.cloud.workflows import executions_v1
+#from google.cloud.workflows.executions_v1.types import executions
+
 app = Flask(__name__)
 
-# pip install google-cloud-run
-from google.cloud import run_v2
-
 @app.route('/')
-def hello():
+def trigger_workflow():
+    project_id = os.environ.get("PROJECT_ID")
+    location = "us-central1"
+    workflow_id = "snow_sync_workflow"  # 👈 update with your workflow name
 
-    PROJECT_ID = os.environ.get("PROJECT_ID")
+    # Create Workflows Executions client
+    execution_client = executions_v1.ExecutionsClient()
 
-    client = run_v2.JobsClient()
+    # Create Workflows client
+    workflows_client = workflows_v1.WorkflowsClient()
 
-    # UPDATE TO YOUR JOB NAME, REGION, AND PROJECT ID
-    job_name = f'projects/{PROJECT_ID}/locations/us-central1/jobs/snow-sync-job' 
 
-    print("Triggering job...")
-    request = run_v2.RunJobRequest(name=job_name)
-    operation = client.run_job(request=request)
-    response = operation.result()
+    # Build the workflow resource path
+    parent = workflows_client.workflow_path(project_id, location, workflow_id)
 
-    print(response)
-    return "Done!"
+    # Create execution request (no arguments)
+    execution = execution_client.create_execution(request={"parent": parent})
+    print(f"Workflow execution started: {execution.name}")
+
+    # To get execution details:
+    updated_execution = execution_client.get_execution(name=execution.name)
+    print(f"Execution state: {updated_execution.state}")
+    print(f"Execution result: {updated_execution.result}")
+
 
 if __name__ == '__main__':
     app.run(debug=False, host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))

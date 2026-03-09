@@ -13,7 +13,7 @@ def run_pipeline(config_file_path):
     pipeline_name = os.environ.get("PIPELINE_NAME")
     vertex_ai_network = os.environ.get("VERTEX_AI_NETWORK")
     service_account = os.environ.get("SERVICE_ACCOUNT")
-    registry_url = os.environ.get("ARTIFACT_REGISTRY_URL")
+    registry_url = os.environ.get("REGISTRY_URL")
 
     aiplatform.init(project=project_id, location=region)
     template_path = f"{registry_url}/{pipeline_name}/latest"

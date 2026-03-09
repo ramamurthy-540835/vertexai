@@ -1,4 +1,4 @@
-name: lead_mgmt_image_creation
+name: cloud_run_service_image_creation
 on:
   # Triggers the workflow on push or pull request events but only for the "main" branch
   push:
@@ -59,3 +59,13 @@ jobs:
           push: true
           labels: ${{ steps.meta.outputs.labels }}
           tags: us-docker.pkg.dev/gcp-prj-images/gcp-gar-repo-mbrshp/cloud-run-service:latest
+  deploy-snow-sync-job:
+    name: Trigger Workflow to Deploy Snow Sync Job
+    needs: build-and-push-container
+    uses: ./.github/workflows/snow_sync_job_deployment.yml
+    with:
+      workflow_trigger_event: "True"
+    secrets:
+      GCP_WORKLOAD_IDENTITY_PROVIDER_ID: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
+      GCP_WORKLOAD_IDENTITY_SA_EMAIL: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
+         
