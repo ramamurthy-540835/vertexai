@@ -6,6 +6,7 @@ on:
       - 'feature**'
     paths:
       - lead_match_codebase/**
+      - .github/workflows/deploy_match_job.yml
   
 env:
   PROJECT_ID: 'p-601-np-bcleadsmgmt-adt' # TODO: update to your Google Cloud project ID
