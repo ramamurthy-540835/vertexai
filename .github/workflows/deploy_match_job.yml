@@ -43,5 +43,5 @@ jobs:
           gcloud config set project p-601-np-bcleadsmgmt-adt
           gcloud run jobs execute lead-match-job \
           --region us-central1 \
-          --args="run_match_job.py,compile_pipeline"
+          --args="run.py,compile_pipeline"
         
