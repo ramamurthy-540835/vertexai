@@ -380,7 +380,48 @@ def read_gcs_to_dataframe(bucket_name: str, file_pattern: str, datatype: dict, e
         file_path = f"gs://{bucket_name}/{blob.name}"
         app_logger.debug(file_path)
         if file_type == "csv":
-            df = pd.read_csv(file_path, encoding=encoding, dtype=datatype)
+            #df = pd.read_csv(file_path, encoding=encoding, dtype=datatype)
+            try:
+                df = pd.read_csv(file_path, encoding=encoding, dtype=datatype)
+
+            except Exception as e:
+
+                app_logger.warning(f"Datatype error while reading {file_path}: {e}")
+
+                # Read without datatype enforcement
+                df = pd.read_csv(file_path, encoding=encoding)
+
+                # Try converting column by column
+                for col, dtype in datatype.items():
+
+                    if col not in df.columns:
+                        continue
+
+                    try:
+                        df[col] = df[col].astype(dtype)
+
+                    except Exception as col_error:
+
+                        bad_rows = df[~df[col].astype(str).str.match(r"^-?\d+$")]
+
+                        if not bad_rows.empty:
+
+                            for _, row in bad_rows.iterrows():
+
+                                ea_util.add_error_audit(
+                                    entity_type="pos_id",
+                                    entity_id=str(row.get("pos_id", "")),
+                                    error_message=f"Invalid datatype for column {col}: {row[col]}",
+                                    db_config=database_config,
+                                    batch_id=batch_id
+                                )
+
+                            # remove bad rows
+                            df = df.drop(bad_rows.index)
+
+                        # convert remaining rows
+                        df[col] = df[col].astype(dtype)
+
             dfs.append(df)
         elif file_type == "json":
 
