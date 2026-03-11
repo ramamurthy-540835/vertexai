@@ -14,6 +14,7 @@ def run_pipeline(config_file_path):
     vertex_ai_network = os.environ.get("VERTEX_AI_NETWORK")
     service_account = os.environ.get("SERVICE_ACCOUNT")
     registry_url = os.environ.get("ARTIFACT_REGISTRY_URL")
+    bucket = os.environ.get("GCS_BUCKET")
 
     aiplatform.init(project=project_id, location=region)
     template_path = f"{registry_url}/{pipeline_name}/latest"
@@ -25,6 +26,7 @@ def run_pipeline(config_file_path):
     job = aiplatform.PipelineJob(
         display_name=f"{pipeline_name}-latest",
         template_path=template_path,
+        pipeline_root=f"gs://{bucket}/pipelines",
         parameter_values={
             'match_id': match_id,
             'config_file_path': config_file_path
