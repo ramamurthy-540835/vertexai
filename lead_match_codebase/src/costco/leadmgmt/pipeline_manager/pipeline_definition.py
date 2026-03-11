@@ -11,8 +11,6 @@ CPU_LIMIT_EG = os.environ.get("CPU_LIMIT_EG")
 MEMORY_LIMIT_EG = os.environ.get("MEMORY_LIMIT_EG")
 
 
-
-
 @dsl.component(base_image=BASE_IMAGE)
 def load_and_preprocess_data_cloud_sql(base_name: str, config_file_path: str) -> str:
     from costco.leadmgmt.components.data_ingestion_cloud_sql import load_and_preprocess_data_cloud_sql
