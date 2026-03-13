@@ -188,8 +188,18 @@ def embedding_generation(file_leads: str, config_file_path: str):
     # Check if dataframes are not empty before proceeding
     if not leads_insert_df.empty:
         # Assign embeddings to respective columns in the dataframe
-        leads_insert_df['combined_embedding'] = process_in_batch(leads_insert_df, 'combined_embedding',
+        print("Rows in leads_insert_df:", len(leads_insert_df))
+        problem_rows = leads_insert_df[
+        leads_insert_df['combined_field'].isna() |
+        (leads_insert_df['combined_field'].astype(str).str.strip() == '')
+    ]
+
+        print("Rows with empty combined_field:", len(problem_rows))
+        print(problem_rows[['lead_id', 'combined_field']].head(20))
+        embeddings = process_in_batch(leads_insert_df, 'combined_embedding',
                                                                  'combined_field')  # column name to  be changed
+        print("Embeddings generated:", len(embeddings))
+        leads_insert_df['combined_embedding'] = embeddings                                                         
         leads_insert_df['address_embedding'] = process_in_batch(leads_insert_df, 'address_embedding',
                                                                 'full_address')  # column name to  be changed
         leads_insert_df['name_embedding'] = process_in_batch(leads_insert_df, 'name_embedding',

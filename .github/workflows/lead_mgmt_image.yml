@@ -109,4 +109,14 @@ jobs:
     secrets:
       GCP_WORKLOAD_IDENTITY_PROVIDER_ID: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
       GCP_WORKLOAD_IDENTITY_SA_EMAIL: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
+  compile-match-job:
+    name: Trigger Workflow to compile match job
+    needs: build-and-push-container
+    uses: ./.github/workflows/deploy_match_job.yml
+    with:
+      workflow_trigger_event: "True"
+    secrets:
+      GCP_WORKLOAD_IDENTITY_PROVIDER_ID: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
+      GCP_WORKLOAD_IDENTITY_SA_EMAIL: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
+ 
  

@@ -1,9 +1,19 @@
 name: deploy_match_job
 on:
+  workflow_call:
+    inputs:
+      workflow_trigger_event:
+        required: true
+        type: string
+    secrets:
+      GCP_WORKLOAD_IDENTITY_PROVIDER_ID:
+        required: true
+      GCP_WORKLOAD_IDENTITY_SA_EMAIL:
+        required: true
   #Triggers the workflow on push or pull request events but only for the "main" branch
   push:
     branches:
-      - 'feature**'
+      - 'feature*'
     paths:
       - lead_match_codebase/**
       - .github/workflows/deploy_match_job.yml
