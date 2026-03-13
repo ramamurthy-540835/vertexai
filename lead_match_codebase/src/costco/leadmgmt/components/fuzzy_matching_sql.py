@@ -133,6 +133,13 @@ def fuzzy_matching(file_classified_path: str, config_file_path: str) -> str:
 
     df_fuzzy_result = master_df[master_df['similarity_score'] >= 80]
 
+    print("Rows in fuzzy result:", len(df_fuzzy_result))
+    print("Unique lead_ids:", df_fuzzy_result['lead_id'].nunique())
+
+    duplicates = df_fuzzy_result[df_fuzzy_result.duplicated('lead_id', keep=False)]
+    print("Duplicate leads:", duplicates.shape[0])
+    print(duplicates[['lead_id','pos_id','account_number','similarity_score']].head(20))
+
     # Step 1: Merge classified_df with df_result on 'lead_id'
     merged_df = pd.merge(classified_df, df_fuzzy_result, how='left', on='lead_id', suffixes=('_primary', '_fuzzy'))
 
