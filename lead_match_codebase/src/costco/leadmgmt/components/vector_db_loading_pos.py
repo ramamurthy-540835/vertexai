@@ -57,7 +57,7 @@ def process_in_batch(df, embedding_column_name, column_name):
     df[column_name] = df[column_name].fillna('')
     df_to_embed = df[df[column_name].str.strip() != ''].copy()
 
-    batch_size = 250
+    batch_size = 200
     batches = [
         df_to_embed[column_name].iloc[i:i + batch_size].tolist()
         for i in range(0, len(df_to_embed), batch_size)
