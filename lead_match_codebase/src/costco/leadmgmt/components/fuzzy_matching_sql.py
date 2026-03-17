@@ -147,49 +147,10 @@ def fuzzy_matching(file_classified_path: str, config_file_path: str) -> str:
     pd.notna(merged_df['pos_id_fuzzy'])
 )
   
-#     merged_df.loc[(merged_df['similarity_score_primary'] < merged_df['similarity_score_fuzzy']) & pd.notna(
-#         merged_df['pos_id_fuzzy']),
-#     'account_number_primary'] = merged_df['account_number_fuzzy']
+    merged_df.loc[(merged_df['similarity_score_primary'] < merged_df['similarity_score_fuzzy']) & pd.notna(
+        merged_df['pos_id_fuzzy']),
+    'account_number_primary'] = merged_df['account_number_fuzzy']
 
-
-    try:
-        print("Step: Applying update logic")
-
-        cond = (
-            (merged_df['similarity_score_primary'] < merged_df['similarity_score_fuzzy']) &
-            pd.notna(merged_df['pos_id_fuzzy'])
-        )
-
-        merged_df['account_number_primary'] = merged_df['account_number_primary'].where(
-            ~cond,
-            merged_df['account_number_fuzzy']
-        )
-
-        print("Update successful")
-
-    except Exception as e:
-        print("ERROR during update:", str(e))
-
-        print("Debugging problematic rows...")
-
-        import numpy as np
-
-        problem_rows = merged_df.loc[cond].copy()
-
-        # Try converting one by one to detect failure
-        for idx, row in problem_rows.iterrows():
-            try:
-                val = row['account_number_fuzzy']
-                float(val)  # force conversion check
-            except Exception as inner_e:
-                print("❌ Problem found!")
-                print("Lead ID:", row['lead_id'])
-                print("Account Number:", val)
-                print("POS ID:", row['pos_id_fuzzy'])
-                print("Error:", inner_e)
-                break
-
-        raise
     
     merged_df.loc[(merged_df['similarity_score_primary'] < merged_df['similarity_score_fuzzy']) & pd.notna(
         merged_df['pos_id_fuzzy']),
@@ -197,12 +158,11 @@ def fuzzy_matching(file_classified_path: str, config_file_path: str) -> str:
 
     ### checking results
     merged_df.info()
-    print(merged_df.head(5))
-    print(merged_df.tail(5))
 
     merged_df.loc[(merged_df['similarity_score_primary'] < merged_df['similarity_score_fuzzy']) & pd.notna(
         merged_df['pos_id_fuzzy']),
-    'similarity_score_primary'] = merged_df['similarity_score_fuzzy']
+    'similarity_score_primary'] = merged_df['similarity_score_fuzzy'].astype('Int64')
+
 
     # Step 3: Drop the result columns if you don't need them anymore
     merged_df.drop(columns=['pos_id_fuzzy', 'similarity_score_fuzzy','account_number_fuzzy'], inplace=True)
