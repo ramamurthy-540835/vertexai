@@ -34,6 +34,7 @@ def get_gcs_file_path(uri: str) -> str:
     return f"gs://{bucket_name}/{files[0]}"
 
 
+
 def lead_table_update(engine, leads_dataframe, create_temp_table_lead, insert_query_lead,schema_name):
     with engine.connect() as connection:
         with connection.begin():  # Automatically commits the transaction
