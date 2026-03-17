@@ -133,12 +133,6 @@ def fuzzy_matching(file_classified_path: str, config_file_path: str) -> str:
 
     df_fuzzy_result = master_df[master_df['similarity_score'] >= 80]
 
-    # print("Rows in fuzzy result:", len(df_fuzzy_result))
-    # print("Unique lead_ids:", df_fuzzy_result['lead_id'].nunique())
-
-    # duplicates = df_fuzzy_result[df_fuzzy_result.duplicated('lead_id', keep=False)]
-    # print("Duplicate leads:", duplicates.shape[0])
-    # print(duplicates[['lead_id','pos_id','account_number','similarity_score']].head(20))
 
     # Step 1: Merge classified_df with df_result on 'lead_id'
     merged_df = pd.merge(classified_df, df_fuzzy_result, how='left', on='lead_id', suffixes=('_primary', '_fuzzy'))
@@ -152,17 +146,10 @@ def fuzzy_matching(file_classified_path: str, config_file_path: str) -> str:
     (merged_df['similarity_score_primary'] < merged_df['similarity_score_fuzzy']) &
     pd.notna(merged_df['pos_id_fuzzy'])
 )
-    # try:
-    #     merged_df.loc[(merged_df['similarity_score_primary'] < merged_df['similarity_score_fuzzy']) & pd.notna(
-    #         merged_df['pos_id_fuzzy']),
-    #     'account_number_primary'] = merged_df['account_number_fuzzy']
-    # except:
-    #     print("ERROR in Step 7:", str(e))
-
-    #     print("Debug info:")
-    #     print("Cond true count:", cond.sum())
-    #     print("Dtypes:")
-    #     print(merged_df[['account_number_primary','account_number_fuzzy']].dtypes)
+  
+#     merged_df.loc[(merged_df['similarity_score_primary'] < merged_df['similarity_score_fuzzy']) & pd.notna(
+#         merged_df['pos_id_fuzzy']),
+#     'account_number_primary'] = merged_df['account_number_fuzzy']
 
 
     try:
@@ -207,6 +194,11 @@ def fuzzy_matching(file_classified_path: str, config_file_path: str) -> str:
     merged_df.loc[(merged_df['similarity_score_primary'] < merged_df['similarity_score_fuzzy']) & pd.notna(
         merged_df['pos_id_fuzzy']),
     'match_type'] = "Fuzzy"
+
+    ### checking results
+    merged_df.info()
+    print(merged_df.head(5))
+    print(merged_df.tail(5))
 
     merged_df.loc[(merged_df['similarity_score_primary'] < merged_df['similarity_score_fuzzy']) & pd.notna(
         merged_df['pos_id_fuzzy']),
