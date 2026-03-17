@@ -149,7 +149,7 @@ def fuzzy_matching(file_classified_path: str, config_file_path: str) -> str:
   
     merged_df.loc[(merged_df['similarity_score_primary'] < merged_df['similarity_score_fuzzy']) & pd.notna(
         merged_df['pos_id_fuzzy']),
-    'account_number_primary'] = merged_df['account_number_fuzzy']
+    'account_number_primary'] = merged_df['account_number_fuzzy'].astype('float64')
 
     
     merged_df.loc[(merged_df['similarity_score_primary'] < merged_df['similarity_score_fuzzy']) & pd.notna(
