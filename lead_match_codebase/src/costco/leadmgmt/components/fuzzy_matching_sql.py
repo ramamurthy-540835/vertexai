@@ -158,12 +158,12 @@ def fuzzy_matching(file_classified_path: str, config_file_path: str) -> str:
 
     ### checking results
     merged_df.info()
-    merged_df[['pos_id_primary', 'similarity_score_primary', 'pos_id_fuzzy', 'similarity_score_fuzzy']].head(5)
-    merged_df[['pos_id_primary', 'similarity_score_primary', 'pos_id_fuzzy', 'similarity_score_fuzzy']].tail(5)
+    print(merged_df[['pos_id_primary', 'similarity_score_primary', 'pos_id_fuzzy', 'similarity_score_fuzzy']].head(5))
+    print(merged_df[['pos_id_primary', 'similarity_score_primary', 'pos_id_fuzzy', 'similarity_score_fuzzy']].tail(5))
 
     merged_df.loc[(merged_df['similarity_score_primary'] < merged_df['similarity_score_fuzzy']) & pd.notna(
         merged_df['pos_id_fuzzy']) & pd.notna(merged_df['similarity_score_fuzzy']),
-    'similarity_score_primary'] = merged_df['similarity_score_fuzzy'].astype('int64')
+    'similarity_score_primary'] = merged_df['similarity_score_fuzzy'].astype('Int64')
 
 
     # Step 3: Drop the result columns if you don't need them anymore
