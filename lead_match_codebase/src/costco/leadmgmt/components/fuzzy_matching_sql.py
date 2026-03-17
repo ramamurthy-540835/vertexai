@@ -148,31 +148,17 @@ def fuzzy_matching(file_classified_path: str, config_file_path: str) -> str:
         merged_df['pos_id_fuzzy']),
     'pos_id_primary'] = merged_df['pos_id_fuzzy']
 
-    # Debugging 
     cond = (
     (merged_df['similarity_score_primary'] < merged_df['similarity_score_fuzzy']) &
     pd.notna(merged_df['pos_id_fuzzy'])
 )
-    import numpy as np
 
-    problem_rows = merged_df.loc[cond].copy()
+    # merged_df.loc[(merged_df['similarity_score_primary'] < merged_df['similarity_score_fuzzy']) & pd.notna(
+    #     merged_df['pos_id_fuzzy']),
+    # 'account_number_primary'] = merged_df['account_number_fuzzy']
 
-    problem_rows = problem_rows[
-        problem_rows['account_number_fuzzy'].apply(lambda x: not np.isscalar(x))
-    ]
-
-    print("Problem rows:")
-    print(problem_rows[['lead_id','account_number_fuzzy','pos_id_fuzzy']])
-
-    print("Problem lead_ids:")
-    print(problem_rows['lead_id'].unique())
-
-    # Debugging ends
-
-    merged_df.loc[(merged_df['similarity_score_primary'] < merged_df['similarity_score_fuzzy']) & pd.notna(
-        merged_df['pos_id_fuzzy']),
-    'account_number_primary'] = merged_df['account_number_fuzzy']
-
+    merged_df.loc[cond, 'account_number_primary'] = merged_df.loc[cond, 'account_number_fuzzy']
+    
     merged_df.loc[(merged_df['similarity_score_primary'] < merged_df['similarity_score_fuzzy']) & pd.notna(
         merged_df['pos_id_fuzzy']),
     'match_type'] = "Fuzzy"
