@@ -133,12 +133,12 @@ def fuzzy_matching(file_classified_path: str, config_file_path: str) -> str:
 
     df_fuzzy_result = master_df[master_df['similarity_score'] >= 80]
 
-    print("Rows in fuzzy result:", len(df_fuzzy_result))
-    print("Unique lead_ids:", df_fuzzy_result['lead_id'].nunique())
+    # print("Rows in fuzzy result:", len(df_fuzzy_result))
+    # print("Unique lead_ids:", df_fuzzy_result['lead_id'].nunique())
 
-    duplicates = df_fuzzy_result[df_fuzzy_result.duplicated('lead_id', keep=False)]
-    print("Duplicate leads:", duplicates.shape[0])
-    print(duplicates[['lead_id','pos_id','account_number','similarity_score']].head(20))
+    # duplicates = df_fuzzy_result[df_fuzzy_result.duplicated('lead_id', keep=False)]
+    # print("Duplicate leads:", duplicates.shape[0])
+    # print(duplicates[['lead_id','pos_id','account_number','similarity_score']].head(20))
 
     # Step 1: Merge classified_df with df_result on 'lead_id'
     merged_df = pd.merge(classified_df, df_fuzzy_result, how='left', on='lead_id', suffixes=('_primary', '_fuzzy'))
@@ -152,12 +152,57 @@ def fuzzy_matching(file_classified_path: str, config_file_path: str) -> str:
     (merged_df['similarity_score_primary'] < merged_df['similarity_score_fuzzy']) &
     pd.notna(merged_df['pos_id_fuzzy'])
 )
+    # try:
+    #     merged_df.loc[(merged_df['similarity_score_primary'] < merged_df['similarity_score_fuzzy']) & pd.notna(
+    #         merged_df['pos_id_fuzzy']),
+    #     'account_number_primary'] = merged_df['account_number_fuzzy']
+    # except:
+    #     print("ERROR in Step 7:", str(e))
 
-    # merged_df.loc[(merged_df['similarity_score_primary'] < merged_df['similarity_score_fuzzy']) & pd.notna(
-    #     merged_df['pos_id_fuzzy']),
-    # 'account_number_primary'] = merged_df['account_number_fuzzy']
+    #     print("Debug info:")
+    #     print("Cond true count:", cond.sum())
+    #     print("Dtypes:")
+    #     print(merged_df[['account_number_primary','account_number_fuzzy']].dtypes)
 
-    merged_df.loc[cond, 'account_number_primary'] = merged_df.loc[cond, 'account_number_fuzzy']
+
+    try:
+        print("Step: Applying update logic")
+
+        cond = (
+            (merged_df['similarity_score_primary'] < merged_df['similarity_score_fuzzy']) &
+            pd.notna(merged_df['pos_id_fuzzy'])
+        )
+
+        merged_df['account_number_primary'] = merged_df['account_number_primary'].where(
+            ~cond,
+            merged_df['account_number_fuzzy']
+        )
+
+        print("Update successful")
+
+    except Exception as e:
+        print("ERROR during update:", str(e))
+
+        print("Debugging problematic rows...")
+
+        import numpy as np
+
+        problem_rows = merged_df.loc[cond].copy()
+
+        # Try converting one by one to detect failure
+        for idx, row in problem_rows.iterrows():
+            try:
+                val = row['account_number_fuzzy']
+                float(val)  # force conversion check
+            except Exception as inner_e:
+                print("❌ Problem found!")
+                print("Lead ID:", row['lead_id'])
+                print("Account Number:", val)
+                print("POS ID:", row['pos_id_fuzzy'])
+                print("Error:", inner_e)
+                break
+
+        raise
     
     merged_df.loc[(merged_df['similarity_score_primary'] < merged_df['similarity_score_fuzzy']) & pd.notna(
         merged_df['pos_id_fuzzy']),
