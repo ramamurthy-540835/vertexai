@@ -1,0 +1,57 @@
+name: deploy_match_job
+on:
+  workflow_call:
+    inputs:
+      workflow_trigger_event:
+        required: true
+        type: string
+    secrets:
+      GCP_WORKLOAD_IDENTITY_PROVIDER_ID:
+        required: true
+      GCP_WORKLOAD_IDENTITY_SA_EMAIL:
+        required: true
+  #Triggers the workflow on push or pull request events but only for the "main" branch
+  push:
+    branches:
+      - 'feature*'
+    paths:
+      - lead_match_codebase/**
+      - .github/workflows/deploy_match_job.yml
+  
+env:
+  PROJECT_ID: 'p-601-np-bcleadsmgmt-adt' # TODO: update to your Google Cloud project ID
+  REGION: 'us-central1' # TODO: update to your region
+
+jobs:
+  run:
+    name: "auth"
+    runs-on: "ubuntu-latest"
+    environment: ${{ github.event.pull_request.head.ref }}
+    strategy:
+      matrix:
+        env: ['adt'] #,['adt', 'qat', 'spt'] # Exclude prd from auto-plan
+    
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: "Checkout code"
+        uses: actions/checkout@v4
+
+      - name: "Auth in GCP"
+        id: "auth"
+        uses: "google-github-actions/auth@v2"
+        with:
+          create_credentials_file: true
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
+          service_account: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
+
+      - name: "Deploy match job"
+        run: |
+          unset CLOUDSDK_CORE_PROJECT
+          gcloud config set project p-601-np-bcleadsmgmt-adt
+          gcloud run jobs execute lead-match-job \
+          --region us-central1 \
+          --args="run.py,compile_pipeline"
+        

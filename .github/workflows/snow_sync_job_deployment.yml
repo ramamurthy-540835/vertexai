@@ -151,7 +151,7 @@ jobs:
         id: get-service-url
         run: |
           SERVICE_URL=$(gcloud run services describe cloud-scheduler-service \
-          --project ${{ env.PROJECT_ID }} --region us-central1 --format 'value(status.url)')
+          --project ${{ env.PROJECT_ID }} --region us-central1 --format 'value(status.uri)')
           echo "SERVICE_URL=$SERVICE_URL"
           echo "service_url=$SERVICE_URL" >> $GITHUB_OUTPUT
 

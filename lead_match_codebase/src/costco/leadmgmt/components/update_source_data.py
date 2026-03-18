@@ -6,6 +6,7 @@ from costco.leadmgmt.config.Configuration import JobConfig
 from costco.leadmgmt.util.apputil import load_file_from_gcs
 from google.cloud import storage
 from sqlalchemy.types import TIMESTAMP
+import numpy as np
 
 def get_gcs_file_path(uri: str) -> str:
     if not uri.startswith("gs://"):
@@ -32,6 +33,7 @@ def get_gcs_file_path(uri: str) -> str:
         raise ValueError(f"Expected exactly one file in '{uri}', found {len(files)}")
 
     return f"gs://{bucket_name}/{files[0]}"
+
 
 
 def lead_table_update(engine, leads_dataframe, create_temp_table_lead, insert_query_lead,schema_name):
@@ -127,8 +129,8 @@ def update_cloud_sql(config_file_path: str,file_path: str = ""):
     # preprocessing leads_dataframe
     # Assign 'closed_fiscal_period' and 'closed_fiscal_year' for 'High' confidence level
     leads_dataframe = final_df[final_df['confidence_level'].isin(['High', 'Medium', 'Low'])]
-    leads_dataframe.loc[:, 'closed_fiscal_period'] = None
-    leads_dataframe.loc[:, 'closed_fiscal_year'] = None
+    leads_dataframe.loc[:, 'closed_fiscal_period'] = np.nan
+    leads_dataframe.loc[:, 'closed_fiscal_year'] = np.nan
     high_confidence = leads_dataframe[leads_dataframe['confidence_level'] == 'High']
 
     leads_dataframe.loc[high_confidence.index, 'closed_fiscal_period'] = 8

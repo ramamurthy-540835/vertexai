@@ -31,6 +31,8 @@ def trigger_workflow():
     print(f"Execution state: {updated_execution.state}")
     print(f"Execution result: {updated_execution.result}")
 
+    return f"Workflow execution started: {execution.name}", 200
+
 
 if __name__ == '__main__':
     app.run(debug=False, host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))

@@ -133,6 +133,7 @@ def fuzzy_matching(file_classified_path: str, config_file_path: str) -> str:
 
     df_fuzzy_result = master_df[master_df['similarity_score'] >= 80]
 
+
     # Step 1: Merge classified_df with df_result on 'lead_id'
     merged_df = pd.merge(classified_df, df_fuzzy_result, how='left', on='lead_id', suffixes=('_primary', '_fuzzy'))
 
@@ -141,17 +142,29 @@ def fuzzy_matching(file_classified_path: str, config_file_path: str) -> str:
         merged_df['pos_id_fuzzy']),
     'pos_id_primary'] = merged_df['pos_id_fuzzy']
 
+  
     merged_df.loc[(merged_df['similarity_score_primary'] < merged_df['similarity_score_fuzzy']) & pd.notna(
         merged_df['pos_id_fuzzy']),
-    'account_number_primary'] = merged_df['account_number_fuzzy']
+    'account_number_primary'] = merged_df['account_number_fuzzy'].astype('float64')
 
+    
     merged_df.loc[(merged_df['similarity_score_primary'] < merged_df['similarity_score_fuzzy']) & pd.notna(
         merged_df['pos_id_fuzzy']),
     'match_type'] = "Fuzzy"
 
+    ### checking results
+    merged_df.info()
+    #print(merged_df[['pos_id_primary', 'similarity_score_primary', 'pos_id_fuzzy', 'similarity_score_fuzzy']].head(5))
+    print(merged_df[['pos_id_primary', 'similarity_score_primary', 'pos_id_fuzzy', 'similarity_score_fuzzy']].tail(5))
+
+    merged_df['similarity_score_primary'] = merged_df['similarity_score_primary'].astype('float64')
+    merged_df['similarity_score_fuzzy'] = merged_df['similarity_score_fuzzy'].astype('float64')
+
+
     merged_df.loc[(merged_df['similarity_score_primary'] < merged_df['similarity_score_fuzzy']) & pd.notna(
-        merged_df['pos_id_fuzzy']),
+        merged_df['pos_id_fuzzy']) & pd.notna(merged_df['similarity_score_fuzzy']),
     'similarity_score_primary'] = merged_df['similarity_score_fuzzy']
+
 
     # Step 3: Drop the result columns if you don't need them anymore
     merged_df.drop(columns=['pos_id_fuzzy', 'similarity_score_fuzzy','account_number_fuzzy'], inplace=True)

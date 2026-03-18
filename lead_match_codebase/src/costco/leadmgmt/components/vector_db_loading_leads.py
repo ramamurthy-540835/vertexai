@@ -80,7 +80,7 @@ def process_in_batch(df, embedding_column_name, column_name):
     df[column_name] = df[column_name].fillna('')
     df_to_embed = df[df[column_name].str.strip() != ''].copy()
 
-    batch_size = 250
+    batch_size = 200
     batches = [
         df_to_embed[column_name].iloc[i:i + batch_size].tolist()
         for i in range(0, len(df_to_embed), batch_size)
@@ -188,8 +188,18 @@ def embedding_generation(file_leads: str, config_file_path: str):
     # Check if dataframes are not empty before proceeding
     if not leads_insert_df.empty:
         # Assign embeddings to respective columns in the dataframe
-        leads_insert_df['combined_embedding'] = process_in_batch(leads_insert_df, 'combined_embedding',
+        print("Rows in leads_insert_df:", len(leads_insert_df))
+        problem_rows = leads_insert_df[
+        leads_insert_df['combined_field'].isna() |
+        (leads_insert_df['combined_field'].astype(str).str.strip() == '')
+    ]
+
+        print("Rows with empty combined_field:", len(problem_rows))
+        print(problem_rows[['lead_id', 'combined_field']].head(20))
+        embeddings = process_in_batch(leads_insert_df, 'combined_embedding',
                                                                  'combined_field')  # column name to  be changed
+        print("Embeddings generated:", len(embeddings))
+        leads_insert_df['combined_embedding'] = embeddings                                                         
         leads_insert_df['address_embedding'] = process_in_batch(leads_insert_df, 'address_embedding',
                                                                 'full_address')  # column name to  be changed
         leads_insert_df['name_embedding'] = process_in_batch(leads_insert_df, 'name_embedding',
