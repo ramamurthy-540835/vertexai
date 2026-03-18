@@ -32,71 +32,76 @@ jobs:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
           service_account: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
           project_id: 'p-601-np-bcleadsmgmt-adt'
-
-      - name: "Install additional utilities"
-        run: |
-          if ! command -v unzip >/dev/null 2>&1; then
-            echo "Installing unzip..."
-            sudo apt-get update && sudo apt-get install -y unzip
-          else
-            echo "unzip is already installed"
-          fi 
-
-          if ! command -v psql >/dev/null 2>&1; then
-            echo "Installing PostgreSQL client..."
-            sudo apt-get update && sudo apt-get install -y postgresql-client
-          else
-            echo "psql is already installed"
-          fi
-
-          if ! command -v node >/dev/null 2>&1; then
-            echo "Installing Node.js..."
-            curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-            sudo apt-get install -y nodejs
-          else
-            echo "Node.js is already installed"
-          fi
-      - name: "Download and setup Cloud SQL Proxy"
-        run: |
-          if ! command -v cloud-sql-proxy >/dev/null 2>&1; then
-            echo "Installing Cloud SQL Auth Proxy..."
-            # Download Cloud SQL Proxy
-            wget https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/v2.8.0/cloud-sql-proxy.linux.amd64 -O cloud-sql-proxy
-            chmod +x cloud-sql-proxy
-          else
-            echo "Cloud SQL Proxy is already installed"
-          fi
-          # Start Cloud SQL Proxy in background
-          ./cloud-sql-proxy p-601-np-bcleadsmgmt-adt:us-central1:lead-mgmt-adt \
-            --port 5432 \
-            --private-ip \
-            --auto-iam-authn &
           
-          # Wait for proxy to be ready
-          sleep 10
+      - name: Cancel pipeline
+        run: |
+          gcloud ai pipeline-jobs cancel 4031934548081115136 \
+            --region=us-central1
 
-          # Set access token for IAM DB auth
-            export PGPASSWORD=$(gcloud auth print-access-token)
+      # - name: "Install additional utilities"
+      #   run: |
+      #     if ! command -v unzip >/dev/null 2>&1; then
+      #       echo "Installing unzip..."
+      #       sudo apt-get update && sudo apt-get install -y unzip
+      #     else
+      #       echo "unzip is already installed"
+      #     fi 
 
-          # Verify connection to database with psql (check connection only, no queries)
-            PGPASSWORD="$(gcloud auth print-access-token)" psql \
-            "hostaddr=127.0.0.1 port=5432 dbname=lead-mgmt-db user=gco-iam-svc-cicd-mbr-bc-np@gcp-prj-cicd-core.iam sslmode=disable" --no-password -c '\conninfo'
+      #     if ! command -v psql >/dev/null 2>&1; then
+      #       echo "Installing PostgreSQL client..."
+      #       sudo apt-get update && sudo apt-get install -y postgresql-client
+      #     else
+      #       echo "psql is already installed"
+      #     fi
 
-            PGPASSWORD="$(gcloud auth print-access-token)" psql \
-            "hostaddr=127.0.0.1 port=5432 dbname=lead-mgmt-db user=gco-iam-svc-cicd-mbr-bc-np@gcp-prj-cicd-core.iam sslmode=disable" --no-password -c \
-            'select count(*) from lead_mgmt_adt.transaction;'
+      #     if ! command -v node >/dev/null 2>&1; then
+      #       echo "Installing Node.js..."
+      #       curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+      #       sudo apt-get install -y nodejs
+      #     else
+      #       echo "Node.js is already installed"
+      #     fi
+      # - name: "Download and setup Cloud SQL Proxy"
+      #   run: |
+      #     if ! command -v cloud-sql-proxy >/dev/null 2>&1; then
+      #       echo "Installing Cloud SQL Auth Proxy..."
+      #       # Download Cloud SQL Proxy
+      #       wget https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/v2.8.0/cloud-sql-proxy.linux.amd64 -O cloud-sql-proxy
+      #       chmod +x cloud-sql-proxy
+      #     else
+      #       echo "Cloud SQL Proxy is already installed"
+      #     fi
+      #     # Start Cloud SQL Proxy in background
+      #     ./cloud-sql-proxy p-601-np-bcleadsmgmt-adt:us-central1:lead-mgmt-adt \
+      #       --port 5432 \
+      #       --private-ip \
+      #       --auto-iam-authn &
+          
+      #     # Wait for proxy to be ready
+      #     sleep 10
 
-            PGPASSWORD="$(gcloud auth print-access-token)" psql \
-            "hostaddr=127.0.0.1 port=5432 dbname=lead-mgmt-db user=gco-iam-svc-cicd-mbr-bc-np@gcp-prj-cicd-core.iam sslmode=disable" --no-password -c \
-            'truncate table lead_mgmt_adt.batch_audit;' 
+      #     # Set access token for IAM DB auth
+      #       export PGPASSWORD=$(gcloud auth print-access-token)
 
-            PGPASSWORD="$(gcloud auth print-access-token)" psql \
-            "hostaddr=127.0.0.1 port=5432 dbname=lead-mgmt-db user=gco-iam-svc-cicd-mbr-bc-np@gcp-prj-cicd-core.iam sslmode=disable" --no-password -c \
-            'truncate table lead_mgmt_adt.error_audit;' 
+      #     # Verify connection to database with psql (check connection only, no queries)
+      #       PGPASSWORD="$(gcloud auth print-access-token)" psql \
+      #       "hostaddr=127.0.0.1 port=5432 dbname=lead-mgmt-db user=gco-iam-svc-cicd-mbr-bc-np@gcp-prj-cicd-core.iam sslmode=disable" --no-password -c '\conninfo'
 
-            PGPASSWORD="$(gcloud auth print-access-token)" psql \
-            "hostaddr=127.0.0.1 port=5432 dbname=lead-mgmt-db user=gco-iam-svc-cicd-mbr-bc-np@gcp-prj-cicd-core.iam sslmode=disable" --no-password -c \
-            "select * from lead_mgmt_adt.account where business_name = 'Shoreline Fire Station 64' and address_line_one = '719 N 185th St';"
+      #       PGPASSWORD="$(gcloud auth print-access-token)" psql \
+      #       "hostaddr=127.0.0.1 port=5432 dbname=lead-mgmt-db user=gco-iam-svc-cicd-mbr-bc-np@gcp-prj-cicd-core.iam sslmode=disable" --no-password -c \
+      #       'select count(*) from lead_mgmt_adt.transaction;'
 
-          # Verify connection
-          echo "Cloud SQL Proxy started successfully"
+      #       PGPASSWORD="$(gcloud auth print-access-token)" psql \
+      #       "hostaddr=127.0.0.1 port=5432 dbname=lead-mgmt-db user=gco-iam-svc-cicd-mbr-bc-np@gcp-prj-cicd-core.iam sslmode=disable" --no-password -c \
+      #       'truncate table lead_mgmt_adt.batch_audit;' 
+
+      #       PGPASSWORD="$(gcloud auth print-access-token)" psql \
+      #       "hostaddr=127.0.0.1 port=5432 dbname=lead-mgmt-db user=gco-iam-svc-cicd-mbr-bc-np@gcp-prj-cicd-core.iam sslmode=disable" --no-password -c \
+      #       'truncate table lead_mgmt_adt.error_audit;' 
+
+      #       PGPASSWORD="$(gcloud auth print-access-token)" psql \
+      #       "hostaddr=127.0.0.1 port=5432 dbname=lead-mgmt-db user=gco-iam-svc-cicd-mbr-bc-np@gcp-prj-cicd-core.iam sslmode=disable" --no-password -c \
+      #       "select * from lead_mgmt_adt.account where business_name = 'Shoreline Fire Station 64' and address_line_one = '719 N 185th St';"
+
+      #     # Verify connection
+      #     echo "Cloud SQL Proxy started successfully"
