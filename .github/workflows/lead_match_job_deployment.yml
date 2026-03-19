@@ -126,7 +126,7 @@ jobs:
             --subnet=projects/gcp-prj-transit-hub/regions/us-central1/subnetworks/gcp-snt-np-usc1-601-cloudrunjobs-np
             --command="python"
             --args="run.py,run_pipeline"
-            --task-timeout=2h 
+            --task-timeout=5h 
             --set-env-vars=${{ steps.env.outputs.env_vars }}
             --max-retries=0
       - name: Describe deployed job
