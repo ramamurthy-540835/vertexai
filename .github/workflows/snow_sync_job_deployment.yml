@@ -127,7 +127,7 @@ jobs:
             --subnet=projects/gcp-prj-transit-hub/regions/us-central1/subnetworks/gcp-snt-np-usc1-601-cloudrunjobs-np
             --command="python"
             --args="main.py,snow_to_db"
-            --task-timeout=5h 
+            --task-timeout=40h 
             --set-env-vars=${{ steps.env.outputs.env_vars }}
             --max-retries=0
 

@@ -4,7 +4,7 @@ on:
   workflow_dispatch:  # Trigger manually
 
 env:
-  PROJECT_ID: 'p-601-np-bcleadsmgmt-adt' # TODO: update to your Google Cloud project ID
+  PROJECT_ID: 'p-601-np-bcleadsmgmt-qat' # TODO: update to your Google Cloud project ID
   REGION: 'us-central1' # TODO: update to your region
 
 jobs:
@@ -14,7 +14,7 @@ jobs:
     environment: ${{ github.event.pull_request.head.ref }}
     strategy:
       matrix:
-        env: ['adt'] #,['adt', 'qat', 'spt'] # Exclude prd from auto-plan
+        env: ['qat'] #,['qat', 'qat', 'spt'] # Exclude prd from auto-plan
     
     permissions:
       id-token: write
@@ -34,21 +34,21 @@ jobs:
       # - name: "Cancel an execution"
       #   run: |
       #     unset CLOUDSDK_CORE_PROJECT
-      #     gcloud config set project p-601-np-membership-adt
-      #     gcloud run jobs executions delete snow-sync-job-mqdtz --region us-central1 --project p-601-np-membership-adt --quiet
+      #     gcloud config set project p-601-np-membership-qat
+      #     gcloud run jobs executions delete snow-sync-job-mqdtz --region us-central1 --project p-601-np-membership-qat --quiet
 
-      - name: "Run cloud run job in adt"
+      - name: "Run cloud run job in qat"
         run: | 
            unset CLOUDSDK_CORE_PROJECT
-           gcloud config set project p-601-np-bcleadsmgmt-adt
+           gcloud config set project p-601-np-bcleadsmgmt-qat
            gcloud run jobs execute snow-sync-job --region=us-central1 \
-           --project=p-601-np-bcleadsmgmt-adt \
+           --project=p-601-np-bcleadsmgmt-qat \
            --args="main.py,match_job"
 
       # - name: "Run cloud run job through workflows"
       #   run: | 
       #      unset CLOUDSDK_CORE_PROJECT
-      #      gcloud config set project p-601-np-bcleadsmgmt-adt
+      #      gcloud config set project p-601-np-bcleadsmgmt-qat
       #      gcloud workflows execute snow_sync_workflow --location=us-central1
 
       #- name: "Check address space"
