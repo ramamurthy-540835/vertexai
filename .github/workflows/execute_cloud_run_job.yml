@@ -31,11 +31,11 @@ jobs:
           create_credentials_file: true
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
           service_account: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}    
-      - name: "Cancel an execution"
-        run: |
-          unset CLOUDSDK_CORE_PROJECT
-          gcloud config set project p-601-np-membership-qat
-          gcloud run jobs executions delete snow-sync-job-ktvm4 --region us-central1 --project p-601-np-membership-qat --quiet
+      # - name: "Cancel an execution"
+      #   run: |
+      #     unset CLOUDSDK_CORE_PROJECT
+      #     gcloud config set project p-601-np-membership-qat
+      #     gcloud run jobs executions delete snow-sync-job-ktvm4 --region us-central1 --project p-601-np-membership-qat --quiet
 
       # - name: "Run cloud run job in qat"
       #   run: | 
