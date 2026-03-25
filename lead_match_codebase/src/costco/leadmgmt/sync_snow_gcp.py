@@ -755,7 +755,7 @@ def read_lead_data(batch_id, snow_config: SnowConfig, gcs_config: StorageConfig,
 
 
 def read_pos_data(batch_id, snow_config: SnowConfig, gcs_config: StorageConfig, database_config: DatabaseDetail,
-                  batch_size=5000):
+                  batch_size=10000):
     if not batch_id:
         batch_id = uuid.uuid4()
     ba_util.add_batch_id(batch_id, "pos", "staging", "Started", database_config)
