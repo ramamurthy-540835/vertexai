@@ -7,7 +7,7 @@ on:
         - main
       paths:
         - 'terraform/environments/qat/infra/**.tf'
-        - 'terraform/modules/**/**.tf'
+        - 'terraform/modules/**/**'
         - '.github/workflows/provision_qat.yml'
 
   pull_request:
@@ -15,7 +15,7 @@ on:
         - main
       paths:
         - 'terraform/environments/qat/infra/**'
-        - 'terraform/modules/**/**.tf'
+        - 'terraform/modules/**/**'
         - '.github/workflows/provision_qat.yml'
 
 

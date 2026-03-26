@@ -35,7 +35,7 @@ jobs:
       #   run: |
       #     unset CLOUDSDK_CORE_PROJECT
       #     gcloud config set project p-601-np-bcleadsmgmt-qat
-      #     gcloud run jobs executions cancel snow-sync-job-f5hdl --region us-central1 --project p-601-np-bcleadsmgmt-qat --quiet
+      #     gcloud run jobs executions cancel snow-sync-job-jvd4q --region us-central1 --project p-601-np-bcleadsmgmt-qat --quiet
 
       # - name: "Run cloud run job in qat"
       #   run: | 
@@ -50,7 +50,7 @@ jobs:
            unset CLOUDSDK_CORE_PROJECT
            gcloud config set project p-601-np-bcleadsmgmt-qat
            gcloud workflows execute snow_sync_workflow --location=us-central1 \
-           --data='{"batch_id":"29883fe6-dbe2-46ce-81c2-e9da2b4f1146","start_at":"leads_to_db"}'
+           --data='{"batch_id":"7bd759e8-cde4-44a1-9c4b-3689d199ada3","start_at":"leads_to_db"}'
 
       #- name: "Check address space"
       #  run: | 

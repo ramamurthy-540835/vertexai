@@ -19,7 +19,7 @@ on:
       - release-spt*
     paths:
       - 'terraform/environments/adt/infra/**'
-      - 'terraform/modules/**/**.tf'
+      - 'terraform/modules/**/**'
       - '.github/workflows/provision_adt.yml'
 
 
