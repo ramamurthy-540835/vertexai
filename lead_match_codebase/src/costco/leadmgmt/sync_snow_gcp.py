@@ -556,6 +556,11 @@ def write_lead_data_to_db(batch_id, job_config, chunk_size=1000):
                                         datatype=contact_type_dict, encoding=encoding,
                                         file_type=file_type)
         cleansed_lead_df = transform_lead(df, lead_rename_dict, batch_id)
+        if cleansed_lead_df is not None and "membership_number" in cleansed_lead_df.columns:
+            cleansed_lead_df["membership_number"] = pd.to_numeric(
+        cleansed_lead_df["membership_number"],
+        errors="coerce"
+    ).astype("Int64")
         contact_df = None
         account_df = None
         lead_df = None
