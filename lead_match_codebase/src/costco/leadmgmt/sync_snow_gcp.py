@@ -4,6 +4,7 @@ import logging
 import sys
 import time
 import uuid
+import os
 from datetime import datetime, timezone
 
 import pandas as pd
@@ -339,6 +340,8 @@ def read_gcs_to_dataframe_lead(bucket_name: str, file_pattern: str, datatype: di
 
             ls_result = data['result']['results']
             df = pd.DataFrame(ls_result)
+            if "membership_number" in df.columns:
+                df["membership_number"] = pd.to_numeric(df["membership_number"], errors="coerce")
             df = df.astype(datatype)
             dfs_lead.append(df)
             df_cont = pd.json_normalize(ls_result, 'cont_details')
@@ -556,11 +559,6 @@ def write_lead_data_to_db(batch_id, job_config, chunk_size=1000):
                                         datatype=contact_type_dict, encoding=encoding,
                                         file_type=file_type)
         cleansed_lead_df = transform_lead(df, lead_rename_dict, batch_id)
-        if cleansed_lead_df is not None and "membership_number" in cleansed_lead_df.columns:
-            cleansed_lead_df["membership_number"] = pd.to_numeric(
-        cleansed_lead_df["membership_number"],
-        errors="coerce"
-    ).astype("Int64")
         contact_df = None
         account_df = None
         lead_df = None
@@ -817,7 +815,7 @@ def get_record_snow_to_gcs(batch_id, data_type: str, job_config: JobConfig):
     ba_util.add_batch_id(batch_id, data_type, "staging", "Started", database_config)
     start_date, end_date = get_date_range(database_config, snow_config, data_type, )
     start_index = 1
-    batch_size = snow_config.max_batch_size
+    batch_size = os.get_env("BATCH_SIZE",snow_config.max_batch_size)
     end_index = batch_size
     data_found = True
     total_rec_count = 0

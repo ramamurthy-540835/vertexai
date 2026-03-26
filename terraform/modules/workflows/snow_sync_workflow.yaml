@@ -7,8 +7,19 @@ main:
           - job_location: us-central1
           - job_name: snow-sync-job
           - job_name_par: snow-sync-job-par
-          - batch_id: ${uuid.generate()}
-  
+          - batch_id: ${default(input.resume_batch_id, uuid.generate())}
+          - start_at: ${default(input.start_at, "leads_to_gcs")}
+    - determine_start_point:
+        switch:
+          - condition: ${start_at == "leads_to_db"}
+            next: load_lead_to_db
+          - condition: ${start_at == "pos_to_gcs"}
+            next: load_pos_from_snow_to_gcs
+          - condition: ${start_at == "pos_to_db"}
+            next: load_pos_to_db
+          - condition: true # Default / full rerun
+            next: load_leads_from_snow_to_gcs
+
     - load_leads_from_snow_to_gcs:
         call: googleapis.run.v1.namespaces.jobs.run
         args:
