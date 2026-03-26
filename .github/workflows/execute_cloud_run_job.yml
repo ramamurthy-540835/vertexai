@@ -49,7 +49,8 @@ jobs:
         run: | 
            unset CLOUDSDK_CORE_PROJECT
            gcloud config set project p-601-np-bcleadsmgmt-qat
-           gcloud workflows execute snow_sync_workflow --location=us-central1
+           gcloud workflows execute snow_sync_workflow --location=us-central1 \
+           --data='{"batch_id":"29883fe6-dbe2-46ce-81c2-e9da2b4f1146","start_at":"leads_to_db"}'
 
       #- name: "Check address space"
       #  run: | 
