@@ -815,7 +815,7 @@ def get_record_snow_to_gcs(batch_id, data_type: str, job_config: JobConfig):
     ba_util.add_batch_id(batch_id, data_type, "staging", "Started", database_config)
     start_date, end_date = get_date_range(database_config, snow_config, data_type, )
     start_index = 1
-    batch_size = os.get_env("BATCH_SIZE",snow_config.max_batch_size)
+    batch_size = int(os.getenv("BATCH_SIZE", snow_config.max_batch_size))
     end_index = batch_size
     data_found = True
     total_rec_count = 0
