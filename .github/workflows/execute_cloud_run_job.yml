@@ -83,12 +83,12 @@ jobs:
 
            # Conditionally add resume_batch_id if provided
            if [ -n "${{ github.event.inputs.resume_batch_id }}" ]; then
-            JSON_DATA=$(echo "$JSON_DATA" | jq --arg id "${{ github.event.inputs.resume_batch_id }}" '.resume_batch_id = $id')
+            JSON_DATA=$(echo "$JSON_DATA" | jq --arg id "${{ github.event.inputs.resume_batch_id }}" '.batch_id = $id')
            fi
 
            # Conditionally add start_at_step if provided and not empty
            if [ -n "${{ github.event.inputs.start_at_step }}" ]; then
-             JSON_DATA=$(echo "$JSON_DATA" | jq --arg step "${{ github.event.inputs.start_at_step }}" '.start_stage = $step')
+             JSON_DATA=$(echo "$JSON_DATA" | jq --arg step "${{ github.event.inputs.start_at_step }}" '.start_at = $step')
            fi
 
            # Ensure the JSON_DATA is not just "{}" if no inputs were provided,
@@ -103,7 +103,7 @@ jobs:
             --data="$JSON_DATA" # Pass the constructed JSON data
 
            #gcloud workflows execute snow_sync_workflow --location=us-central1 \
-           #--data='{"resume_batch_id":"7bd759e8-cde4-44a1-9c4b-3689d199ada3","start_at":"leads_to_db"}'
+           #--data='{"batch_id":"7bd759e8-cde4-44a1-9c4b-3689d199ada3","start_at":"leads_to_db"}'
 
       #- name: "Check address space"
       #  run: | 
