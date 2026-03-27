@@ -83,7 +83,7 @@ jobs:
 
            # Conditionally add resume_batch_id if provided
            if [ -n "${{ github.event.inputs.resume_batch_id }}" ]; then
-            JSON_DATA=$(echo "$JSON_DATA" | jq --arg id "${{ github.event.inputs.resume_batch_id }}" '.batch_id = $id')
+            JSON_DATA=$(echo "$JSON_DATA" | jq --arg id "${{ github.event.inputs.resume_batch_id }}" '.resume_batch_id = $id')
            fi
 
            # Conditionally add start_at_step if provided and not empty

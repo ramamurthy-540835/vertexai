@@ -7,8 +7,9 @@ main:
           - job_location: us-central1
           - job_name: snow-sync-job
           - job_name_par: snow-sync-job-par
-          - batch_id: ${default(input.resume_batch_id, uuid.generate())}
-          - start_at: ${default(input.start_at, "leads_to_gcs")}
+          - batch_id: ${default(map.get(input, "resume_batch_id"), uuid.generate())}
+          - start_at: ${default(map.get(input, "start_at"), "leads_to_gcs")}
+          
     - determine_start_point:
         switch:
           - condition: ${start_at == "leads_to_db"}
