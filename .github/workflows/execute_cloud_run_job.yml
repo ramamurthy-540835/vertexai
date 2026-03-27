@@ -99,7 +99,7 @@ jobs:
 
            gcloud workflows execute snow_sync_workflow \
             --location=us-central1 \
-            --project=p-601-lab-bc-leads-mgmt \
+            --project=$PROJECT_ID \
             --data="$JSON_DATA" # Pass the constructed JSON data
 
            #gcloud workflows execute snow_sync_workflow --location=us-central1 \
