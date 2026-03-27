@@ -27,7 +27,7 @@ on:
           - 'pos_to_gcs'
           - 'pos_to_db'
 env:
-  PROJECT_ID: 'p-601-np-bcleadsmgmt-${{ github.event.inputs.environment }}'' # TODO: update to your Google Cloud project ID
+  PROJECT_ID: 'p-601-np-bcleadsmgmt-${{ github.event.inputs.environment }}' # TODO: update to your Google Cloud project ID
   REGION: 'us-central1' # TODO: update to your region
 
 jobs:
