@@ -35,10 +35,13 @@ jobs:
     name: "auth"
     runs-on: "ubuntu-latest"
     environment: ${{ github.event.pull_request.head.ref }}
-    strategy:
-      matrix:
-        env: [ ${{ github.event.inputs.environment }}] #,['qat', 'qat', 'spt'] # Exclude prd from auto-plan
-    
+    # strategy:
+    #   matrix:
+    #     env: [ ${{ github.event.inputs.environment }}] #,['qat', 'qat', 'spt'] # Exclude prd from auto-plan
+    env:
+      TARGET_ENV_VAR: ${{ github.event.inputs.environment }}
+      PROJECT_ID_FOR_GCP: 'p-601-np-bcleadsmgmt-${{ github.event.inputs.environment }}'
+
     permissions:
       id-token: write
       contents: read
