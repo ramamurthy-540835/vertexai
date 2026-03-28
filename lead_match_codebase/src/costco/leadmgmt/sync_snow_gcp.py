@@ -226,7 +226,7 @@ def upsert_using_primary_key(df, table_name, primary_key_column, db_config: Data
             #     #connection.commit()
             if max_error_limit != -1 and total_error_record > max_error_limit:
                 raise Exception(f"Number of records failure reached max limit {max_error_limit} ")
-        app_logger.debug(f"Total records processed successfully :{total_success_count}")
+            app_logger.debug(f"Total records processed successfully :{total_success_count}")
     except Exception as e:
         app_logger.error(f"Error occurred while insert/update records to table {table_name} ")
         app_logger.error(e)
