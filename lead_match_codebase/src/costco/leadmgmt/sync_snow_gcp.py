@@ -288,7 +288,7 @@ def archive_gcs_files(
     for blob in blobs:
         source_path = blob.name  # Full path in source bucket
 
-        destination_path = f"{destination_folder}/{source_path.split('/')[-1]}/{timestamp}"
+        destination_path = f"{destination_folder}/{source_path.split('/')[-2]}/{timestamp}"
 
         # Copy file to archive bucket
         source_blob = source_bucket.blob(source_path)

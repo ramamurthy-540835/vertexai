@@ -2,9 +2,32 @@ name: "cloud_run_job_execution"
 
 on:
   workflow_dispatch:  # Trigger manually
-
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'adt'
+        type: choice
+        options:
+          - 'adt'
+          - 'qat'
+          - 'spt'
+      resume_batch_id:
+        description: 'Specific batch_id to resume old run'
+        required: false
+        type: string
+      start_stage:
+        description: 'Start from which stage of the workflow'
+        required: false
+        default: 'leads_to_gcs'
+        type: choice
+        options:
+          - 'leads_to_gcs'
+          - 'leads_to_db'
+          - 'pos_to_gcs'
+          - 'pos_to_db'
 env:
-  PROJECT_ID: 'p-601-np-bcleadsmgmt-qat' # TODO: update to your Google Cloud project ID
+  PROJECT_ID: 'p-601-np-bcleadsmgmt-${{ github.event.inputs.environment }}' # TODO: update to your Google Cloud project ID
   REGION: 'us-central1' # TODO: update to your region
 
 jobs:
@@ -12,10 +35,13 @@ jobs:
     name: "auth"
     runs-on: "ubuntu-latest"
     environment: ${{ github.event.pull_request.head.ref }}
-    strategy:
-      matrix:
-        env: ['qat'] #,['qat', 'qat', 'spt'] # Exclude prd from auto-plan
-    
+    # strategy:
+    #   matrix:
+    #     env: [ ${{ github.event.inputs.environment }}] #,['qat', 'qat', 'spt'] # Exclude prd from auto-plan
+    env:
+      TARGET_ENV_VAR: ${{ github.event.inputs.environment }}
+      PROJECT_ID_FOR_GCP: 'p-601-np-bcleadsmgmt-${{ github.event.inputs.environment }}'
+
     permissions:
       id-token: write
       contents: read
@@ -48,9 +74,36 @@ jobs:
       - name: "Run cloud run job through workflows"
         run: | 
            unset CLOUDSDK_CORE_PROJECT
-           gcloud config set project p-601-np-bcleadsmgmt-qat
-           gcloud workflows execute snow_sync_workflow --location=us-central1 \
-           --data='{"resume_batch_id":"7bd759e8-cde4-44a1-9c4b-3689d199ada3","start_at":"leads_to_db"}'
+           gcloud config set project $PROJECT_ID
+           # Construct the JSON data string using GitHub event inputs
+           # Note: We're using github.event.inputs.<input_name> to get the values
+
+           # Initialize an empty JSON object
+           JSON_DATA='{}'
+
+           # Conditionally add resume_batch_id if provided
+           if [ -n "${{ github.event.inputs.resume_batch_id }}" ]; then
+            JSON_DATA=$(echo "$JSON_DATA" | jq --arg id "${{ github.event.inputs.resume_batch_id }}" '.resume_batch_id = $id')
+           fi
+
+           # Conditionally add start_at_step if provided and not empty
+           if [ -n "${{ github.event.inputs.start_at_step }}" ]; then
+             JSON_DATA=$(echo "$JSON_DATA" | jq --arg step "${{ github.event.inputs.start_at_step }}" '.start_at = $step')
+           fi
+
+           # Ensure the JSON_DATA is not just "{}" if no inputs were provided,
+           # or provide a default structure expected by your workflow.
+           # For this example, we assume the workflow can handle an empty JSON object.
+
+           echo "Constructed JSON data: $JSON_DATA"
+
+           gcloud workflows execute snow_sync_workflow \
+            --location=us-central1 \
+            --project=$PROJECT_ID \
+            --data="$JSON_DATA" # Pass the constructed JSON data
+
+           #gcloud workflows execute snow_sync_workflow --location=us-central1 \
+           #--data='{"batch_id":"7bd759e8-cde4-44a1-9c4b-3689d199ada3","start_at":"leads_to_db"}'
 
       #- name: "Check address space"
       #  run: | 
