@@ -194,22 +194,23 @@ def upsert_using_primary_key(df, table_name, primary_key_column, db_config: Data
                                 with connection.begin_nested():  # create savepoint
                                     #print("inside iterate row --->")
                                     # Convert NaN values to None for SQL NULL
-                                    row_data = {col: None if pd.isna(value) or value =="" else value for col, value in row.items()}
+                                    row_data = {col: None if pd.isna(value) or value =="" else value for col, value in batch_row.items()}
                                     #row_data = row.to_dict()
                                     #print(row_data)
                                     result = connection.execute(insert_query, row_data)
                                     total_success_count += 1
                             except Exception as e:
-                                failed_id = row[primary_key_column]
-                                failed_ids.append(failed_id)   # <-- collect failed ID
+                                failed_id = batch_row[primary_key_column]
+                                failed_ids = set()
+                                failed_ids.add(failed_id)   # <-- collect failed ID
                                 #connection.commit()
                                 ea_util.add_error_audit(primary_key_column, failed_id, str(e), db_config,batch_id)
                                 app_logger.error(
-                                    f"Error UPSERTing row with index {index} and {primary_key_column} = {row[primary_key_column]}: {e}")
+                                    f"Error UPSERTing row with index {batch_index} and {primary_key_column} = {batch_row[primary_key_column]}: {e}")
                                 print("exception occurred during pos insert ###########")
                                 print(e)
 
-                                row_data = row.to_dict()
+                                row_data = batch_row.to_dict()
                                 print("The data involved with error: ", row_data)
                                 total_error_record += 1
 
@@ -221,19 +222,19 @@ def upsert_using_primary_key(df, table_name, primary_key_column, db_config: Data
 
                 # Clear the batch after processing
                 current_batch = []
-            # if index != 0 and index % log_limit == 0:
-            #     app_logger.debug(f"processed {index} records ")
+            if index != 0 and index % log_limit == 0:
+                app_logger.debug(f"processed {index} records ")
             #     #connection.commit()
             if max_error_limit != -1 and total_error_record > max_error_limit:
                 raise Exception(f"Number of records failure reached max limit {max_error_limit} ")
-            app_logger.debug(f"Total records processed successfully :{total_success_count}")
+            #app_logger.debug(f"Total records processed successfully :{total_success_count}")
     except Exception as e:
         app_logger.error(f"Error occurred while insert/update records to table {table_name} ")
         app_logger.error(e)
         import traceback
         app_logger.debug(traceback.format_exc())
         raise e
-    return total_success_count, total_error_record, failed_ids
+    return total_success_count, total_error_record, list(failed_ids)
 
 
 def read_data_from_snow(url, username, password, payload, auth_type='Basic'):
