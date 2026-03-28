@@ -163,7 +163,11 @@ def upsert_using_primary_key(df, table_name, primary_key_column, db_config: Data
         app_logger.debug(f"No records to process. input dataframe is empty for table - {table_name}")
         return total_success_count, total_error_record,failed_ids
     try:
-        engine = db_config.get_engine()
+        #engine = db_config.get_engine()
+        cache_key = f"{db_config.instance_connection_name}/{db_config.db_name}/{db_config.db_user}"
+        if cache_key not in _engine_cache:
+            _engine_cache[cache_key] = db_config.get_engine()
+        engine = _engine_cache[cache_key]
         app_logger.debug("inside upsert_dataframe_sqlalchemy")
 
         columns = ", ".join(f'{col}' for col in df.columns)
@@ -179,40 +183,41 @@ def upsert_using_primary_key(df, table_name, primary_key_column, db_config: Data
         )
         print(f"inside  upsert_using_primary_key ### - {insert_query}")
         failed_ids = set()
-        for index, row in df.iterrows(): 
-            # update_column = 'batch_id'
-            # Store rows (or their processed data) in a temporary batch
-            current_batch.append((index, row))
+        with engine.connect() as connection:
+            for index, row in df.iterrows(): 
+                # update_column = 'batch_id'
+                # Store rows (or their processed data) in a temporary batch
+                current_batch.append((index, row))
 
-            # If the batch is full or it's the last row, process the batch in a transaction
-            if len(current_batch) >= batch_size or index == len(df) - 1:
-                try:
-                    # Start a new transaction for this batch
-                    with engine.begin() as connection: # Use a fresh transaction for each batch
-                        for batch_index, batch_row in current_batch:
-                            try:
-                                with connection.begin_nested():  # create savepoint
-                                    #print("inside iterate row --->")
-                                    # Convert NaN values to None for SQL NULL
-                                    row_data = {col: None if pd.isna(value) or value =="" else value for col, value in batch_row.items()}
-                                    #row_data = row.to_dict()
-                                    #print(row_data)
-                                    result = connection.execute(insert_query, row_data)
-                                    total_success_count += 1
-                            except Exception as e:
-                                failed_id = batch_row[primary_key_column]
-                                failed_ids.add(failed_id)   # <-- collect failed ID
-                                #connection.commit()
-                                ea_util.add_error_audit(primary_key_column, failed_id, str(e), db_config,batch_id)
-                                app_logger.error(
-                                    f"Error UPSERTing row with index {batch_index} and {primary_key_column} = {batch_row[primary_key_column]}: {e}")    
-                                row_data = batch_row.to_dict()
-                                print("The data involved with error: ", row_data)
-                                total_error_record += 1
+                # If the batch is full or it's the last row, process the batch in a transaction
+                if len(current_batch) >= batch_size or index == len(df) - 1:
+                    try:
+                        # Start a new transaction for this batch
+                        with connection.begin():  # Use a fresh transaction for each batch
+                            for batch_index, batch_row in current_batch:
+                                try:
+                                    with connection.begin_nested():  # create savepoint
+                                        #print("inside iterate row --->")
+                                        # Convert NaN values to None for SQL NULL
+                                        row_data = {col: None if pd.isna(value) or value =="" else value for col, value in batch_row.items()}
+                                        #row_data = row.to_dict()
+                                        #print(row_data)
+                                        result = connection.execute(insert_query, row_data)
+                                        total_success_count += 1
+                                except Exception as e:
+                                    failed_id = batch_row[primary_key_column]
+                                    failed_ids.add(failed_id)   # <-- collect failed ID
+                                    #connection.commit()
+                                    ea_util.add_error_audit(primary_key_column, failed_id, str(e), db_config,batch_id)
+                                    app_logger.error(
+                                        f"Error UPSERTing row with index {batch_index} and {primary_key_column} = {batch_row[primary_key_column]}: {e}")    
+                                    row_data = batch_row.to_dict()
+                                    print("The data involved with error: ", row_data)
+                                    total_error_record += 1
 
-                except Exception as batch_e:
+                    except Exception as batch_e:
                     # This 'except' would catch issues with the entire batch transaction (e.g., network error)
-                    app_logger.error(f"Critical error processing batch starting at index {current_batch[0][0]}: {batch_e}")
+                        app_logger.error(f"Critical error processing batch starting at index {current_batch[0][0]}: {batch_e}")
                     # If a batch transaction fails, it's already rolled back by the context manager.
                     # You might want to log all IDs in this failed batch to failed_ids or retry the whole batch.
 
