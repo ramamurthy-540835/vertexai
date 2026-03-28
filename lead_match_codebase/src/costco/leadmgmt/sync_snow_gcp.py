@@ -178,7 +178,7 @@ def upsert_using_primary_key(df, table_name, primary_key_column, db_config: Data
                         """
         )
         print(f"inside  upsert_using_primary_key ### - {insert_query}")
- 
+        failed_ids = set()
         for index, row in df.iterrows(): 
             # update_column = 'batch_id'
             # Store rows (or their processed data) in a temporary batch
@@ -201,15 +201,11 @@ def upsert_using_primary_key(df, table_name, primary_key_column, db_config: Data
                                     total_success_count += 1
                             except Exception as e:
                                 failed_id = batch_row[primary_key_column]
-                                failed_ids = set()
                                 failed_ids.add(failed_id)   # <-- collect failed ID
                                 #connection.commit()
                                 ea_util.add_error_audit(primary_key_column, failed_id, str(e), db_config,batch_id)
                                 app_logger.error(
-                                    f"Error UPSERTing row with index {batch_index} and {primary_key_column} = {batch_row[primary_key_column]}: {e}")
-                                print("exception occurred during pos insert ###########")
-                                print(e)
-
+                                    f"Error UPSERTing row with index {batch_index} and {primary_key_column} = {batch_row[primary_key_column]}: {e}")    
                                 row_data = batch_row.to_dict()
                                 print("The data involved with error: ", row_data)
                                 total_error_record += 1
