@@ -179,7 +179,7 @@ def upsert_using_primary_key(df, table_name, primary_key_column, db_config: Data
         )
         print(f"inside  upsert_using_primary_key ### - {insert_query}")
  
-        for index, row in df.iterrows():
+        for index, row in df.iterrows(): 
             # update_column = 'batch_id'
             # Store rows (or their processed data) in a temporary batch
             current_batch.append((index, row))
