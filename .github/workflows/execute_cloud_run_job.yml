@@ -61,7 +61,7 @@ jobs:
       #   run: |
       #     unset CLOUDSDK_CORE_PROJECT
       #     gcloud config set project p-601-np-bcleadsmgmt-qat
-      #     gcloud run jobs executions cancel snow-sync-job-xgtgn --region us-central1 --project p-601-np-bcleadsmgmt-qat --quiet
+      #     gcloud run jobs executions cancel snow-sync-job-qdw8j --region us-central1 --project p-601-np-bcleadsmgmt-qat --quiet
 
       # - name: "Run cloud run job in qat"
       #   run: | 
@@ -73,35 +73,34 @@ jobs:
 
       - name: "Run cloud run job through workflows"
         run: | 
-           unset CLOUDSDK_CORE_PROJECT
-           gcloud config set project $PROJECT_ID
-           # Construct the JSON data string using GitHub event inputs
-           # Note: We're using github.event.inputs.<input_name> to get the values
+          unset CLOUDSDK_CORE_PROJECT
+          gcloud config set project $PROJECT_ID
 
-           # Initialize an empty JSON object
-           JSON_DATA='{}'
+          # Assign inputs to variables
+          RESUME_BATCH_ID="${{ github.event.inputs.resume_batch_id }}"
+          START_STAGE="${{ github.event.inputs.start_stage }}"
 
-           # Conditionally add resume_batch_id if provided
-           if [ -n "${{ github.event.inputs.resume_batch_id }}" ]; then
-            JSON_DATA=$(echo "$JSON_DATA" | jq --arg id "${{ github.event.inputs.resume_batch_id }}" '.resume_batch_id = $id')
-           fi
+          echo "Resume Batch ID: $RESUME_BATCH_ID"
+          echo "Start Stage: $START_STAGE"
 
-           # Conditionally add start_at_step if provided and not empty
-           if [ -n "${{ github.event.inputs.start_at_step }}" ]; then
-             JSON_DATA=$(echo "$JSON_DATA" | jq --arg step "${{ github.event.inputs.start_at_step }}" '.start_at = $step')
-           fi
+          JSON_DATA='{}'
 
-           # Ensure the JSON_DATA is not just "{}" if no inputs were provided,
-           # or provide a default structure expected by your workflow.
-           # For this example, we assume the workflow can handle an empty JSON object.
+          # Add resume_batch_id
+          if [ -n "$RESUME_BATCH_ID" ]; then
+            JSON_DATA=$(echo "$JSON_DATA" | jq --arg id "$RESUME_BATCH_ID" '.resume_batch_id = $id')
+          fi
 
-           echo "Constructed JSON data: $JSON_DATA"
+          # Add start_stage
+          if [ -n "$START_STAGE" ]; then
+            JSON_DATA=$(echo "$JSON_DATA" | jq --arg step "$START_STAGE" '.start_at = $step')
+          fi
 
-           gcloud workflows execute snow_sync_workflow \
+          echo "Constructed JSON data: $JSON_DATA"
+
+          gcloud workflows execute snow_sync_workflow \
             --location=us-central1 \
             --project=$PROJECT_ID \
-            --data="$JSON_DATA" # Pass the constructed JSON data
-
+            --data="$JSON_DATA"
            #gcloud workflows execute snow_sync_workflow --location=us-central1 \
            #--data='{"batch_id":"7bd759e8-cde4-44a1-9c4b-3689d199ada3","start_at":"leads_to_db"}'
 
