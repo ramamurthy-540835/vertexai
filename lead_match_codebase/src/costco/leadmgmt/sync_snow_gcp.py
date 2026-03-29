@@ -64,7 +64,7 @@ def split_lead_bo(lead_df, contact_df, batch_id, transform_config: TransformConf
                     db_config=database_config,
                     batch_id=batch_id
                 )
-                app_logger.info(f"{len(missing_account_df)} rows logged into error_audit")
+            app_logger.info(f"{len(missing_account_df)} rows logged into error_audit")
 
 
         # Keep only rows where account_id is present
@@ -148,7 +148,7 @@ def upsert_using_business_key(df, table_name, unique_key_columns, primary_key_co
         app_logger.error(e)
         raise
 
-
+_engine_cache = {}
 def upsert_using_primary_key(df, table_name, primary_key_column, db_config: DatabaseDetail,batch_id):
     print( "inside  upsert_using_primary_key ###")
     log_limit = 1000
@@ -157,7 +157,7 @@ def upsert_using_primary_key(df, table_name, primary_key_column, db_config: Data
     max_error_limit = -1
     batch_size = 1000  # Define your batch size for commits
     current_batch = [] # To accumulate rows for a single transaction
-    _engine_cache = {}
+   
 
     failed_ids = []   # <-- keep track of failed primary keys
     if df is None:
@@ -224,11 +224,11 @@ def upsert_using_primary_key(df, table_name, primary_key_column, db_config: Data
 
                 # Clear the batch after processing
                 current_batch = []
-            if index != 0 and index % log_limit == 0:
-                app_logger.debug(f"processed {index} records ")
+                if index != 0 and index % log_limit == 0:
+                    app_logger.debug(f"processed {index} records ")
             #     #connection.commit()
-            if max_error_limit != -1 and total_error_record > max_error_limit:
-                raise Exception(f"Number of records failure reached max limit {max_error_limit} ")
+                if max_error_limit != -1 and total_error_record > max_error_limit:
+                    raise Exception(f"Number of records failure reached max limit {max_error_limit} ")
             #app_logger.debug(f"Total records processed successfully :{total_success_count}")
     except Exception as e:
         app_logger.error(f"Error occurred while insert/update records to table {table_name} ")
