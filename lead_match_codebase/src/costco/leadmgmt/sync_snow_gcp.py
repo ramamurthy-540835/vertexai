@@ -157,6 +157,7 @@ def upsert_using_primary_key(df, table_name, primary_key_column, db_config: Data
     max_error_limit = -1
     batch_size = 1000  # Define your batch size for commits
     current_batch = [] # To accumulate rows for a single transaction
+    _engine_cache = {}
 
     failed_ids = []   # <-- keep track of failed primary keys
     if df is None:
