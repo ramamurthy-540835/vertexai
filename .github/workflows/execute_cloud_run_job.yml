@@ -57,11 +57,11 @@ jobs:
           create_credentials_file: true
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
           service_account: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}    
-      # - name: "Cancel an execution"
-      #   run: |
-      #     unset CLOUDSDK_CORE_PROJECT
-      #     gcloud config set project p-601-np-bcleadsmgmt-qat
-      #     gcloud run jobs executions cancel snow-sync-job-qdw8j --region us-central1 --project p-601-np-bcleadsmgmt-qat --quiet
+      - name: "Cancel an execution"
+        run: |
+          unset CLOUDSDK_CORE_PROJECT
+          gcloud config set project p-601-np-bcleadsmgmt-qat
+          gcloud run jobs executions cancel snow-sync-job-bv65h --region us-central1 --project p-601-np-bcleadsmgmt-qat --quiet
 
       # - name: "Run cloud run job in qat"
       #   run: | 
