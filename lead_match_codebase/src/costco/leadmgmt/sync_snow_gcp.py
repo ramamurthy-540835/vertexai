@@ -64,7 +64,7 @@ def split_lead_bo(lead_df, contact_df, batch_id, transform_config: TransformConf
                     db_config=database_config,
                     batch_id=batch_id
                 )
-                app_logger.info(f"{len(missing_account_df)} rows logged into error_audit")
+            app_logger.info(f"{len(missing_account_df)} rows logged into error_audit")
 
 
         # Keep only rows where account_id is present
