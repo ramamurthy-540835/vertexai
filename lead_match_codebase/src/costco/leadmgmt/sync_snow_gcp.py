@@ -159,7 +159,7 @@ def upsert_using_primary_key(df, table_name, primary_key_column, db_config: Data
     current_batch = [] # To accumulate rows for a single transaction
    
 
-    failed_ids = []   # <-- keep track of failed primary keys
+    failed_ids = set()   # <-- keep track of failed primary keys
     if df is None:
         app_logger.debug(f"No records to process. input dataframe is empty for table - {table_name}")
         return total_success_count, total_error_record,failed_ids
@@ -183,26 +183,23 @@ def upsert_using_primary_key(df, table_name, primary_key_column, db_config: Data
                         """
         )
         print(f"inside  upsert_using_primary_key ### - {insert_query}")
-        failed_ids = set()
-        with engine.connect() as connection:
-            with connection.begin():  # Use a fresh transaction for each batch
-                for index, row in df.iterrows(): 
-                    # update_column = 'batch_id'
-                    # Store rows (or their processed data) in a temporary batch
-                    current_batch.append((index, row))
+       
+        with engine.connect() as connection:   
+            for index, row in df.iterrows(): 
+                # update_column = 'batch_id'
+                # Store rows (or their processed data) in a temporary batch
+                current_batch.append((index, row))
 
-                    # If the batch is full or it's the last row, process the batch in a transaction
-                    if len(current_batch) >= batch_size or index == len(df) - 1:
-                        try:
-                            # Start a new transaction for this batch        
+                # If the batch is full or it's the last row, process the batch in a transaction
+                if len(current_batch) >= batch_size or index == len(df) - 1:
+                    try:
+                        with connection.begin():  # Use a fresh transaction for each batch
+                        # Start a new transaction for this batch        
                             for batch_index, batch_row in current_batch:
                                 try:
                                     with connection.begin_nested():  # create savepoint
-                                        #print("inside iterate row --->")
                                         # Convert NaN values to None for SQL NULL
                                         row_data = {col: None if pd.isna(value) or value =="" else value for col, value in batch_row.items()}
-                                        #row_data = row.to_dict()
-                                        #print(row_data)
                                         result = connection.execute(insert_query, row_data)
                                         total_success_count += 1
                                 except Exception as e:
@@ -216,19 +213,20 @@ def upsert_using_primary_key(df, table_name, primary_key_column, db_config: Data
                                     print("The data involved with error: ", row_data)
                                     total_error_record += 1
 
-                        except Exception as batch_e:
-                        # This 'except' would catch issues with the entire batch transaction (e.g., network error)
-                            app_logger.error(f"Critical error processing batch starting at index {current_batch[0][0]}: {batch_e}")
-                        # If a batch transaction fails, it's already rolled back by the context manager.
-                        # You might want to log all IDs in this failed batch to failed_ids or retry the whole batch.
+                    except Exception as batch_e:
+                    # This 'except' would catch issues with the entire batch transaction (e.g., network error)
+                        app_logger.error(f"Critical error processing batch starting at index {current_batch[0][0]}: {batch_e}")
+                    # If a batch transaction fails, it's already rolled back by the context manager.
+                    # You might want to log all IDs in this failed batch to failed_ids or retry the whole batch.
 
-                        # Clear the batch after processing
+                    # Clear the batch after processing
+                    finally:
                         current_batch = []
                         if index != 0 and index % log_limit == 0:
                             app_logger.debug(f"processed {index} records ")
                     #     #connection.commit()
-                        if max_error_limit != -1 and total_error_record > max_error_limit:
-                            raise Exception(f"Number of records failure reached max limit {max_error_limit} ")
+                    if max_error_limit != -1 and total_error_record > max_error_limit:
+                        raise Exception(f"Number of records failure reached max limit {max_error_limit} ")
                 #app_logger.debug(f"Total records processed successfully :{total_success_count}")
     except Exception as e:
         app_logger.error(f"Error occurred while insert/update records to table {table_name} ")

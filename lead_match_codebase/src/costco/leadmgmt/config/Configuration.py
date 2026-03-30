@@ -156,7 +156,13 @@ class DatabaseDetail:
         return conn
 
     def get_engine(self):
-        engine = sqlalchemy.create_engine("postgresql+pg8000://", creator=self.get_conn, )
+        engine = sqlalchemy.create_engine("postgresql+pg8000://", 
+                creator=self.get_conn,
+                 pool_size=5,
+                 max_overflow=2,
+                 pool_timeout=30, 
+                 pool_recycle=1800, 
+                 pool_pre_ping=True)
         return engine
 
 
