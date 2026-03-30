@@ -6,6 +6,9 @@ import os
 from dataclasses import dataclass
 from costco.leadmgmt.util import apputil
 
+ # module level in the same file as DatabaseDetail
+_engine_cache = {}
+_connector = None
 
 @dataclass
 class MatchQuery:
@@ -136,7 +139,10 @@ class DatabaseDetail:
 
     def get_conn(self):
         # initialize Connector object
-        connector = Connector()
+        global _connector
+        if _connector is None:
+            _connector = Connector()
+
         print("inside get connection")
 
         print(f"  instance_connection_name = {self.instance_connection_name}")
@@ -144,7 +150,7 @@ class DatabaseDetail:
         print(f"  db_name                  = {self.db_name}")
         print(f"  ip_type                  = {self.ip_type}")
 
-        conn = connector.connect(
+        conn = _connector.connect(
             self.instance_connection_name,
             "pg8000",
             user=self.db_user,
@@ -156,14 +162,31 @@ class DatabaseDetail:
         return conn
 
     def get_engine(self):
-        engine = sqlalchemy.create_engine("postgresql+pg8000://", 
+        global _engine_cache
+        cache_key = f"{self.instance_connection_name}/{self.db_name}/{self.db_user}"
+        if cache_key not in _engine_cache:
+            _engine_cache[cache_key] = sqlalchemy.create_engine(
+                "postgresql+pg8000://",
                 creator=self.get_conn,
-                 pool_size=5,
-                 max_overflow=2,
-                 pool_timeout=30, 
-                 pool_recycle=1800, 
-                 pool_pre_ping=True)
-        return engine
+                pool_size=5,
+                max_overflow=2,
+                pool_timeout=30,
+                pool_recycle=1800,
+                pool_pre_ping=True
+            )
+        return _engine_cache[cache_key] 
+
+   
+
+    # def get_engine(self):
+    #     engine = sqlalchemy.create_engine("postgresql+pg8000://", 
+    #             creator=self.get_conn,
+    #              pool_size=5,
+    #              max_overflow=2,
+    #              pool_timeout=30, 
+    #              pool_recycle=1800, 
+    #              pool_pre_ping=True)
+    #     return engine
 
 
 @dataclass
