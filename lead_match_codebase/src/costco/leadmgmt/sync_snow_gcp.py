@@ -626,8 +626,8 @@ def write_lead_data_to_db(batch_id, job_config, chunk_size=1000):
                                                             transform_config,job_config)
             #app_logger.debug("upsert account data")
             #upsert_using_primary_key(account_df, f"{schema}.account", "account_id", database_config,batch_id)
-            app_logger.debug("upsert lead data")
-            lead_success, lead_failure, failed_ids = upsert_using_primary_key(lead_df, f"{schema}.lead", "lead_id", database_config,batch_id)
+            # app_logger.debug("upsert lead data")
+            # lead_success, lead_failure, failed_ids = upsert_using_primary_key(lead_df, f"{schema}.lead", "lead_id", database_config,batch_id)
             app_logger.debug("upsert contact data")
             upsert_using_primary_key(contact_df, f"{schema}.contact", "contact_id", database_config,batch_id)
 
