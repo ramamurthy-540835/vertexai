@@ -12,3 +12,6 @@ Alter table "$SCHEMA_NAME".account
 ALTER COLUMN business_name TYPE VARCHAR(150);
 
 GRANT INSERT ON ALL TABLES IN SCHEMA "$SCHEMA_NAME" TO "postgres";
+
+Alter table "$SCHEMA_NAME".contact 
+ALTER COLUMN phone TYPE VARCHAR(100);
