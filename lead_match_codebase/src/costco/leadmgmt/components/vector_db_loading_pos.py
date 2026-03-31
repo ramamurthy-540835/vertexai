@@ -138,21 +138,25 @@ def embedding_generation(file_pos: str, config_file_path: str):
     transaction_insert_df = data_extraction(transaction_df, pos_insert_id)
 
     if not transaction_insert_df.empty:
+        chunk_size = 20000
         # Assign embeddings to respective columns in the dataframe
-        transaction_insert_df['combined_embedding'] = process_in_batch(transaction_insert_df, 'combined_embedding',
-                                                                       'combined_field')  # column name to  be changed
-        transaction_insert_df['address_embedding'] = process_in_batch(transaction_insert_df, 'address_embedding',
-                                                                      'full_address')  # column name to  be changed
-        transaction_insert_df['name_embedding'] = process_in_batch(transaction_insert_df, 'name_embedding',
-                                                                   'business_name')  # column name to  be changed
+        for i in range(0, len(transaction_insert_df), chunk_size):
 
-        transaction_insert_df['load_date'] = pd.to_datetime(datetime.now())
+            chunk_df = transaction_insert_df.iloc[i:i+chunk_size].copy()
+            chunk_df['combined_embedding'] = process_in_batch(chunk_df, 'combined_embedding',
+                                                                        'combined_field')  # column name to  be changed
+            chunk_df['address_embedding'] = process_in_batch(chunk_df, 'address_embedding',
+                                                                        'full_address')  # column name to  be changed
+            chunk_df['name_embedding'] = process_in_batch(chunk_df, 'name_embedding',
+                                                                    'business_name')  # column name to  be changed
 
-        transaction_insert_df = transaction_insert_df.rename(
-            columns={"full_address": "business_address", "fiscal_year_transaction": "fiscal_year",
-                     "fiscal_period_transaction": "fiscal_period"})
+            chunk_df['load_date'] = pd.to_datetime(datetime.now())
 
-        insert_operation_transaction(engine, insert_pos_table_name, schema_name, transaction_insert_df)
+            chunk_df = chunk_df.rename(
+                columns={"full_address": "business_address", "fiscal_year_transaction": "fiscal_year",
+                        "fiscal_period_transaction": "fiscal_period"})
+
+            insert_operation_transaction(engine, insert_pos_table_name, schema_name, chunk_df)
 
 
 
