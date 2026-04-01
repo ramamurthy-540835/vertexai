@@ -4,6 +4,7 @@ import pandas as pd
 from datetime import datetime
 from pgvector.sqlalchemy import Vector
 import sqlalchemy
+import vertexai
 from vertexai.preview.language_models import TextEmbeddingModel, TextEmbeddingInput
 from sqlalchemy.dialects.postgresql import TIMESTAMP
 from sqlalchemy import Column, Integer, Text, DateTime
@@ -18,6 +19,13 @@ from costco.leadmgmt.util.fiscal_year import get_costco_fiscal_info
 # Get the base image from environment variables
 BASE_IMAGE = os.environ.get("KFP_CUSTOM_IMAGE")
 MAX_WORKERS = os.environ.get("MAX_WORKERS")
+PROJECT_ID = os.environ.get("PROJECT_ID")
+
+#set global endpoint
+vertexai.init(
+    project=PROJECT_ID,
+    location="global"   
+)
 
 model = TextEmbeddingModel.from_pretrained("text-embedding-005")
 Base = declarative_base()
@@ -80,7 +88,7 @@ def process_in_batch(df, embedding_column_name, column_name):
     df[column_name] = df[column_name].fillna('')
     df_to_embed = df[df[column_name].str.strip() != ''].copy()
 
-    batch_size = 200
+    batch_size = 250
     batches = [
         df_to_embed[column_name].iloc[i:i + batch_size].tolist()
         for i in range(0, len(df_to_embed), batch_size)
