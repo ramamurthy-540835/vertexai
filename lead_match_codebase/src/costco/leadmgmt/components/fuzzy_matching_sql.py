@@ -185,6 +185,41 @@ def fuzzy_matching(file_classified_path: str, config_file_path: str) -> str:
     merged_df.loc[merged_df['confidence_level'] == 'Low', 'lead_status'] = 'review'
     merged_df.loc[merged_df['confidence_level'] == 'No Match', 'lead_status'] = 'open'
 
+    #  Apply business rule:
+    # 1. If HIGH exists → remove Medium/Low for that lead
+    # 2. If multiple HIGH → keep earliest interaction
+
+
+    # Step 1: Sort EARLIEST first
+    merged_df = merged_df.sort_values(
+        by=['lead_id', 'fiscal_year', 'fiscal_period', 'week'],
+        ascending=[True, True, True, True]  
+    )
+
+    # Step 2: Assign rank per lead (earliest = rank 1)
+    merged_df['rank'] = merged_df.groupby('lead_id').cumcount() + 1
+
+    # Step 3: Filter HIGH confidence
+    high_conf_df = merged_df[merged_df['confidence_level'] == 'High']
+
+    # Step 4: Keep only earliest HIGH per lead
+    high_conf_latest = high_conf_df[high_conf_df['rank'] == 1]
+
+    # Step 5: Get leads that have HIGH
+    high_conf_leads = high_conf_latest['lead_id'].unique()
+
+    # Step 6: Keep non-high only for leads WITHOUT high
+    non_high_df = merged_df[
+        (~merged_df['lead_id'].isin(high_conf_leads))
+    ]
+
+
+    # Step 7: Combine
+    merged_df = pd.concat([high_conf_latest, non_high_df], ignore_index=True)
+
+    # Cleanup
+    merged_df.drop(columns=['rank'], inplace=True)
+
     # Step 3: Drop unnecessary columns and final dataframe preparation
     classified_df_updated = merged_df[
         ['lead_status', 'confidence_level', 'pos_id', 'lead_id','account_number', 'match_type', 'similarity_score']]
