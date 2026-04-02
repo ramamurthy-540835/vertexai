@@ -5,7 +5,6 @@ from datetime import datetime
 from pgvector.sqlalchemy import Vector
 import sqlalchemy
 from vertexai.preview.language_models import TextEmbeddingModel, TextEmbeddingInput
-import vertexai
 from sqlalchemy.dialects.postgresql import TIMESTAMP
 from sqlalchemy import Column, Integer, Text, DateTime
 import numpy as np
@@ -22,10 +21,6 @@ MAX_WORKERS = os.environ.get("MAX_WORKERS")
 PROJECT_ID = os.environ.get("PROJECT_ID")
 
 
-vertexai.init(
-    project=PROJECT_ID,
-    location="global"   
-)
 model = TextEmbeddingModel.from_pretrained("text-embedding-005")
 
 
@@ -42,19 +37,36 @@ def data_extraction(transaction_df, pos_insert_id):
     return transaction_insert_df
 
 
-def batch_embedding(text_list):
+def batch_embedding(text_list,max_retries=5, base_delay=1.0, max_delay=60.0):
     """Generate embeddings for a batch of texts"""
-    try:
+    for attempt in range(max_retries):
+        try:
 
-        embedding = []
-        text_list = [TextEmbeddingInput(text, 'SEMANTIC_SIMILARITY') for text in text_list]
-        embeddings = model.get_embeddings(text_list)
-        for i in range(0, len(embeddings)):
-            embedding.append(embeddings[i].values)
-        # return [embedding.values for embedding in embeddings]
-        return embedding
-    except Exception as e:
-        print(f"Batch Error occurred: {str(e)}")
+            embedding = []
+            text_list = [TextEmbeddingInput(text, 'SEMANTIC_SIMILARITY') for text in text_list]
+            embeddings = model.get_embeddings(text_list)
+            for i in range(0, len(embeddings)):
+                embedding.append(embeddings[i].values)
+            # return [embedding.values for embedding in embeddings]
+            return embedding
+        except Exception as e:
+            error_str = str(e).lower()
+            is_rate_limit = (
+                "429" in error_str or
+                "resource exhausted" in error_str or
+                "quota" in error_str or
+                "rate limit" in error_str
+            )    
+        if is_rate_limit and attempt < max_retries - 1:
+                # Exponential backoff: 1s, 2s, 4s, 8s, 16s ... + jitter
+                delay = min(base_delay * (2 ** attempt) + random.uniform(0, 1), max_delay)
+                print(f"Rate limit hit (attempt {attempt + 1}/{max_retries}). Retrying in {delay:.2f}s...")
+                time.sleep(delay)
+        else:
+                print(f"Batch failed after {attempt + 1} attempt(s): {str(e)}")
+                return None  # Caller handles fallback
+
+    return None
 
 
 def process_in_batch(df, embedding_column_name, column_name):
@@ -79,7 +91,11 @@ def process_in_batch(df, embedding_column_name, column_name):
             idx = future_to_batch[future]
             try:
                 embeddings = future.result()
-                results[idx] = embeddings
+                if embeddings is None:
+                    print(f"Batch {idx} exhausted retries — using zero fallback")
+                    results[idx] = [[0] * 768] * len(batches[idx])
+                else:      
+                    results[idx] = embeddings
             except Exception as exc:
                 print(f'Batch {idx} generated an exception: {exc}')
                 results[idx] = [[0] * 768] * len(batches[idx])  # default fallback

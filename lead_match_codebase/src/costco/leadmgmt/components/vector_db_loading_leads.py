@@ -4,7 +4,7 @@ import pandas as pd
 from datetime import datetime
 from pgvector.sqlalchemy import Vector
 import sqlalchemy
-import vertexai
+#import vertexai
 from vertexai.preview.language_models import TextEmbeddingModel, TextEmbeddingInput
 from sqlalchemy.dialects.postgresql import TIMESTAMP
 from sqlalchemy import Column, Integer, Text, DateTime
@@ -22,10 +22,10 @@ MAX_WORKERS = os.environ.get("MAX_WORKERS")
 PROJECT_ID = os.environ.get("PROJECT_ID")
 
 #set global endpoint
-vertexai.init(
-    project=PROJECT_ID,
-    location="global"   
-)
+# vertexai.init(
+#     project=PROJECT_ID,
+#     location="global"   
+# )
 
 model = TextEmbeddingModel.from_pretrained("text-embedding-005")
 Base = declarative_base()
