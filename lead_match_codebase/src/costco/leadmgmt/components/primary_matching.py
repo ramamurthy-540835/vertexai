@@ -24,7 +24,7 @@ def format_df(df):
              'fiscal_year_lead','fiscal_period_lead','business_name' ,'address_line_one' ,
              'address_line_two' ,'city' ,'state' ,'zip_code' ,'phone' ,'first_name' ,
              'last_name' ,'email' ,'COMBINED_FIELD' ,'FULL_ADDRESS' ,'CUSTOMER_NAME' ,
-             'pos_id','account_number','fiscal_year_transaction','fiscal_period_transaction']]
+             'pos_id','account_number','fiscal_year_transaction','fiscal_period_transaction','week']]
     return df
 
 
