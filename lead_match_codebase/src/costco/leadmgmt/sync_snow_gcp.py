@@ -303,6 +303,8 @@ def archive_gcs_files(
 
         app_logger.debug(f"Moved {source_path} to {destination_path}")
 
+        time.sleep(2)
+
 
 def write_to_gcs(data, folder_path, file_name, bucket_name, chunk_number, service_account_path=None, file_type="json"):
     if service_account_path:
