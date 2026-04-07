@@ -184,7 +184,8 @@ def upsert_using_primary_key(df, table_name, primary_key_column, db_config: Data
         )
         print(f"inside  upsert_using_primary_key ### - {insert_query}")
        
-        with engine.connect() as connection:   
+        with engine.connect() as connection: 
+            row_count = 0  
             for index, row in df.iterrows(): 
                 # update_column = 'batch_id'
                 # Store rows (or their processed data) in a temporary batch
@@ -222,7 +223,7 @@ def upsert_using_primary_key(df, table_name, primary_key_column, db_config: Data
                     # Clear the batch after processing
                     finally:
                         current_batch = []
-                        if index != 0 and index % log_limit == 0:
+                        if row_count != 0 and row_count % log_limit == 0:
                             app_logger.debug(f"processed {index} records ")
                     #     #connection.commit()
                     if max_error_limit != -1 and total_error_record > max_error_limit:
