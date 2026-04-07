@@ -66,19 +66,36 @@ def data_extraction(leads_df, leads_insert_id, leads_update_id):
     return leads_insert_df, leads_update_df
 
 
-def batch_embedding(text_list):
+def batch_embedding(text_list,max_retries=5, base_delay=1.0, max_delay=60.0):
     """Generate embeddings for a batch of texts"""
-    try:
+    for attempt in range(max_retries):
+        try:
 
-        embedding = []
-        text_list = [TextEmbeddingInput(text, 'SEMANTIC_SIMILARITY') for text in text_list]
-        embeddings = model.get_embeddings(text_list)
-        for i in range(0, len(embeddings)):
-            embedding.append(embeddings[i].values)
-        # return [embedding.values for embedding in embeddings]
-        return embedding
-    except Exception as e:
-        print(f"Batch Error occurred: {str(e)}")
+            embedding = []
+            text_list = [TextEmbeddingInput(text, 'SEMANTIC_SIMILARITY') for text in text_list]
+            embeddings = model.get_embeddings(text_list)
+            for i in range(0, len(embeddings)):
+                embedding.append(embeddings[i].values)
+            # return [embedding.values for embedding in embeddings]
+            return embedding
+        except Exception as e:
+            error_str = str(e).lower()
+            is_rate_limit = (
+                "429" in error_str or
+                "resource exhausted" in error_str or
+                "quota" in error_str or
+                "rate limit" in error_str
+            )    
+        if is_rate_limit and attempt < max_retries - 1:
+                # Exponential backoff: 1s, 2s, 4s, 8s, 16s ... + jitter
+                delay = min(base_delay * (2 ** attempt) + random.uniform(0, 1), max_delay)
+                print(f"Rate limit hit (attempt {attempt + 1}/{max_retries}). Retrying in {delay:.2f}s...")
+                time.sleep(delay)
+        else:
+                print(f"Batch failed after {attempt + 1} attempt(s): {str(e)}")
+                return None  # Caller handles fallback
+
+    return None
 
 
 def process_in_batch(df, embedding_column_name, column_name):
@@ -103,7 +120,11 @@ def process_in_batch(df, embedding_column_name, column_name):
             idx = future_to_batch[future]
             try:
                 embeddings = future.result()
-                results[idx] = embeddings
+                if embeddings is None:
+                    print(f"Batch {idx} exhausted retries — using zero fallback")
+                    results[idx] = [[0] * 768] * len(batches[idx])
+                else:      
+                    results[idx] = embeddings
             except Exception as exc:
                 print(f'Batch {idx} generated an exception: {exc}')
                 results[idx] = [[0] * 768] * len(batches[idx])  # default fallback
@@ -195,63 +216,67 @@ def embedding_generation(file_leads: str, config_file_path: str):
 
     # Check if dataframes are not empty before proceeding
     if not leads_insert_df.empty:
-        # Assign embeddings to respective columns in the dataframe
-        print("Rows in leads_insert_df:", len(leads_insert_df))
-        problem_rows = leads_insert_df[
-        leads_insert_df['combined_field'].isna() |
-        (leads_insert_df['combined_field'].astype(str).str.strip() == '')
-    ]
+        chunk_size = 20000
+        for i in range(0, len(leads_insert_df), chunk_size):
+            # Assign embeddings to respective columns in the dataframe
+            print("Rows in leads_insert_df:", len(leads_insert_df))
+            problem_rows = leads_insert_df[
+            leads_insert_df['combined_field'].isna() |
+            (leads_insert_df['combined_field'].astype(str).str.strip() == '')
+        ]
 
-        print("Rows with empty combined_field:", len(problem_rows))
-        print(problem_rows[['lead_id', 'combined_field']].head(20))
-        embeddings = process_in_batch(leads_insert_df, 'combined_embedding',
-                                                                 'combined_field')  # column name to  be changed
-        print("Embeddings generated:", len(embeddings))
-        leads_insert_df['combined_embedding'] = embeddings                                                         
-        leads_insert_df['address_embedding'] = process_in_batch(leads_insert_df, 'address_embedding',
-                                                                'full_address')  # column name to  be changed
-        leads_insert_df['name_embedding'] = process_in_batch(leads_insert_df, 'name_embedding',
-                                                             'business_name')  # column name to  be changed
+            print("Rows with empty combined_field:", len(problem_rows))
+            print(problem_rows[['lead_id', 'combined_field']].head(20))
+            embeddings = process_in_batch(leads_insert_df, 'combined_embedding',
+                                                                    'combined_field')  # column name to  be changed
+            print("Embeddings generated:", len(embeddings))
+            leads_insert_df['combined_embedding'] = embeddings                                                         
+            leads_insert_df['address_embedding'] = process_in_batch(leads_insert_df, 'address_embedding',
+                                                                    'full_address')  # column name to  be changed
+            leads_insert_df['name_embedding'] = process_in_batch(leads_insert_df, 'name_embedding',
+                                                                'business_name')  # column name to  be changed
 
-        # Select columns to be inserted into the database, including embeddings for each field
-        leads_insert_df = leads_insert_df.rename(
-            columns={"full_address": "business_address", "fiscal_year_lead": "fiscal_year",
-                     "fiscal_period_lead": "fiscal_period"})
+            # Select columns to be inserted into the database, including embeddings for each field
+            leads_insert_df = leads_insert_df.rename(
+                columns={"full_address": "business_address", "fiscal_year_lead": "fiscal_year",
+                        "fiscal_period_lead": "fiscal_period"})
 
-        leads_insert_df['updated_date'] = pd.to_datetime(datetime.now())
+            leads_insert_df['updated_date'] = pd.to_datetime(datetime.now())
 
-        leads_insert_df = leads_insert_df[['warehouse_number', 'lead_id', 'updated_date',
-                                           'combined_field', 'business_address', 'business_name',
-                                           'combined_embedding', 'address_embedding',
-                                           'name_embedding', 'fiscal_year', 'fiscal_period']]
+            leads_insert_df = leads_insert_df[['warehouse_number', 'lead_id', 'updated_date',
+                                            'combined_field', 'business_address', 'business_name',
+                                            'combined_embedding', 'address_embedding',
+                                            'name_embedding', 'fiscal_year', 'fiscal_period']]
 
-        # Insert the data into the target table
-        insert_operation_leads(engine, insert_lead_table_name, schema_name, leads_insert_df)
+            # Insert the data into the target table
+            insert_operation_leads(engine, insert_lead_table_name, schema_name, leads_insert_df)
 
     if not leads_update_df.empty:
         # Assign embeddings to respective columns in the dataframe
-        leads_update_df['combined_embedding'] = process_in_batch(leads_update_df, 'combined_embedding',
-                                                                 'combined_field')  # column name to  be changed
-        leads_update_df['address_embedding'] = process_in_batch(leads_update_df, 'address_embedding',
-                                                                'full_address')  # column name to  be changed
-        leads_update_df['name_embedding'] = process_in_batch(leads_update_df, 'name_embedding',
-                                                             'business_name')  # column name to  be changed
+        chunk_size = 20000
+        for i in range(0, len(leads_update_df), chunk_size):
+            leads_update_df['combined_embedding'] = process_in_batch(leads_update_df, 'combined_embedding',
+                                                                    'combined_field')  # column name to  be changed
+            leads_update_df['address_embedding'] = process_in_batch(leads_update_df, 'address_embedding',
+                                                                    'full_address')  # column name to  be changed
+            leads_update_df['name_embedding'] = process_in_batch(leads_update_df, 'name_embedding',
+                                                                'business_name')  # column name to  be changed
 
-        # Select columns to be inserted into the database, including embeddings for each field
-        leads_update_df = leads_update_df.rename(
-            columns={"full_address": "business_address", "fiscal_year_lead": "fiscal_year",
-                     "fiscal_period_lead": "fiscal_period"})
+            # Select columns to be inserted into the database, including embeddings for each field
+            leads_update_df = leads_update_df.rename(
+                columns={"full_address": "business_address", "fiscal_year_lead": "fiscal_year",
+                        "fiscal_period_lead": "fiscal_period"})
 
-        leads_update_df['updated_date'] = pd.to_datetime(datetime.now())
+            leads_update_df['updated_date'] = pd.to_datetime(datetime.now())
 
-        leads_update_df = leads_update_df[['warehouse_number', 'lead_id', 'updated_date',
-                                           'combined_field', 'business_address', 'business_name',
-                                           'combined_embedding', 'address_embedding',
-                                           'name_embedding', 'fiscal_year', 'fiscal_period']]
+            leads_update_df = leads_update_df[['warehouse_number', 'lead_id', 'updated_date',
+                                            'combined_field', 'business_address', 'business_name',
+                                            'combined_embedding', 'address_embedding',
+                                            'name_embedding', 'fiscal_year', 'fiscal_period']]
 
-        Lead = get_lead_class(insert_lead_table_name, schema_name)
+            Lead = get_lead_class(insert_lead_table_name, schema_name)
 
-        update_operation_leads(engine, leads_update_df, Lead)
+            update_operation_leads(engine, leads_update_df, Lead)
 
 
 
