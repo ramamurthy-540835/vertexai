@@ -144,12 +144,12 @@ def my_pipeline(
         task_5.set_caching_options(False).set_cpu_limit(CPU_LIMIT).set_memory_limit(MEMORY_LIMIT)
         # task_5.set_caching_options(False)
 
-        task_6 = update_servicenow(
-            config_file_path=config_file_path,
-            file_path=task_4.output
-        ).after(task_4)
+        # task_6 = update_servicenow(
+        #     config_file_path=config_file_path,
+        #     file_path=task_4.output
+        # ).after(task_4)
 
-        task_6.set_caching_options(False).set_cpu_limit(CPU_LIMIT).set_memory_limit(MEMORY_LIMIT)
+        # task_6.set_caching_options(False).set_cpu_limit(CPU_LIMIT).set_memory_limit(MEMORY_LIMIT)
 
         # Step 7: Cleanup the temporary files
         task_7 = delete_temp_files_from_gcs(
@@ -168,7 +168,7 @@ def my_pipeline(
         task_3.set_display_name("Embedding and PoS Vector database Loading")
         task_4.set_display_name("Similarity Search")
         task_5.set_display_name("Update matching results to cloud sql")
-        task_6.set_display_name("Update the matched results to ServiceNow")
+        #task_6.set_display_name("Update the matched results to ServiceNow")
         task_7.set_display_name("Cleanup Temporary Files")
 
 
