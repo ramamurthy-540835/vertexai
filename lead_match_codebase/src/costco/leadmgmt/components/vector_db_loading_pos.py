@@ -83,14 +83,23 @@ def process_in_batch(df, embedding_column_name, column_name):
     ]
 
     all_embeddings = []
+    overall_start = time.time()
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-        future_to_batch = {executor.submit(batch_embedding, batch): idx for idx, batch in enumerate(batches)}
+        future_to_batch = {
+    executor.submit(batch_embedding, batch): (idx, time.time())
+    for idx, batch in enumerate(batches)
+}
         results = [None] * len(batches)
 
         for future in as_completed(future_to_batch):
-            idx = future_to_batch[future]
+            idx, start_time = future_to_batch[future]
+            
             try:
                 embeddings = future.result()
+                end_time = time.time()  # ⏱ batch end
+                duration = end_time - start_time
+
+                print(f"Batch {idx} took {duration:.2f} seconds")
                 if embeddings is None:
                     print(f"Batch {idx} exhausted retries — using zero fallback")
                     results[idx] = [[0] * 768] * len(batches[idx])
@@ -99,6 +108,8 @@ def process_in_batch(df, embedding_column_name, column_name):
             except Exception as exc:
                 print(f'Batch {idx} generated an exception: {exc}')
                 results[idx] = [[0] * 768] * len(batches[idx])  # default fallback
+    overall_end = time.time()
+    print(f"\nTotal processing time: {overall_end - overall_start:.2f} seconds")
 
     # Flatten and assign
     all_embeddings = [emb for batch in results if batch for emb in batch]
