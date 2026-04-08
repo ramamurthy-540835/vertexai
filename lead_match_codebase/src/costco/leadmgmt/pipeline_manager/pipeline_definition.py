@@ -155,7 +155,8 @@ def my_pipeline(
         task_7 = delete_temp_files_from_gcs(
             match_id=match_id,
             file_path=task_4.output,
-            config_file_path=config_file_path).after(task_5, task_6)
+            config_file_path=config_file_path).after(task_5)
+            # config_file_path=config_file_path).after(task_5, task_6)
 
         task_7.set_caching_options(False).set_cpu_limit(CPU_LIMIT).set_memory_limit(MEMORY_LIMIT)
         # task_7.set_caching_options(False)
