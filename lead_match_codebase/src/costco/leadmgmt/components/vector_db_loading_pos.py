@@ -2,6 +2,7 @@ import os
 import concurrent.futures
 import pandas as pd
 from datetime import datetime
+import time
 from pgvector.sqlalchemy import Vector
 import sqlalchemy
 from vertexai.preview.language_models import TextEmbeddingModel, TextEmbeddingInput
