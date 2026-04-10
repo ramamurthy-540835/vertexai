@@ -18,3 +18,5 @@ ALTER COLUMN phone TYPE VARCHAR(100);
 
 Alter table "$SCHEMA_NAME".pos_embeddings
 ADD COLUMN week int;
+
+GRANT UPDATE ON ALL TABLES IN SCHEMA "$SCHEMA_NAME" TO "postgres";
