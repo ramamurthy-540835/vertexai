@@ -141,8 +141,7 @@ def update_cloud_sql(config_file_path: str,file_path: str = ""):
     # Drop duplicates, keeping the first (i.e., highest match_score)
     leads_dataframe = leads_dataframe.drop_duplicates(subset='lead_id', keep='first').reset_index(drop=True)
     leads_dataframe = leads_dataframe[
-        ['lead_id','account_number', 'lead_status', 'confidence_level', 'updated_date', 'updated_by', 'closed_fiscal_period',
-         'closed_fiscal_year']]
+        ['lead_id','account_number',  'confidence_level', 'updated_date', 'updated_by']]
     leads_dataframe['account_number'] = leads_dataframe['account_number'].astype(int)
     print('lead table dataframe: ', len(leads_dataframe))
 
