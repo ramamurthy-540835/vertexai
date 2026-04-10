@@ -19,4 +19,5 @@
 -- Alter table "$SCHEMA_NAME".pos_embeddings
 -- ADD COLUMN week int;
 
-GRANT UPDATE ON ALL TABLES IN SCHEMA "$SCHEMA_NAME" TO "postgres";
+GRANT UPDATE ON ALL TABLES IN SCHEMA "$SCHEMA_NAME".lead TO "postgres";
+GRANT UPDATE ON ALL TABLES IN SCHEMA "$SCHEMA_NAME".transaction TO "postgres";
