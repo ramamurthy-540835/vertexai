@@ -118,7 +118,7 @@ def update_cloud_sql(config_file_path: str,file_path: str = ""):
 
     # preprocessing pos_dataframe
     # pos_dataframe = final_df[final_df['pos_id'] != '']
-    pos_dataframe = final_df[final_df['confidence_level'].isin(['High', 'Medium', 'Low'])]
+    pos_dataframe = final_df[final_df['match_result'].isin(['Complete','Potential'])]
     pos_dataframe = pos_dataframe[['pos_id', 'lead_id', 'match_type', 'match_score', 'updated_by', 'updated_date']]
     # Sort by match_score descending so the highest score comes first
     pos_dataframe = pos_dataframe.sort_values(by='match_score', ascending=False)
@@ -128,20 +128,20 @@ def update_cloud_sql(config_file_path: str,file_path: str = ""):
 
     # preprocessing leads_dataframe
     # Assign 'closed_fiscal_period' and 'closed_fiscal_year' for 'High' confidence level
-    leads_dataframe = final_df[final_df['confidence_level'].isin(['High', 'Medium', 'Low'])]
-    leads_dataframe.loc[:, 'closed_fiscal_period'] = np.nan
-    leads_dataframe.loc[:, 'closed_fiscal_year'] = np.nan
-    high_confidence = leads_dataframe[leads_dataframe['confidence_level'] == 'High']
+    leads_dataframe = final_df[final_df['confidmatch_resultence_level'].isin(['Complete','Potential'])]
+    # leads_dataframe.loc[:, 'closed_fiscal_period'] = np.nan
+    # leads_dataframe.loc[:, 'closed_fiscal_year'] = np.nan
+    # high_confidence = leads_dataframe[leads_dataframe['confidence_level'] == 'High']
 
-    leads_dataframe.loc[high_confidence.index, 'closed_fiscal_period'] = 8
-    leads_dataframe.loc[high_confidence.index, 'closed_fiscal_year'] = 2025
+    # leads_dataframe.loc[high_confidence.index, 'closed_fiscal_period'] = 8
+    # leads_dataframe.loc[high_confidence.index, 'closed_fiscal_year'] = 2025
 
     # Sort by match_score descending so the highest score comes first
     leads_dataframe = leads_dataframe.sort_values(by='match_score', ascending=False)
     # Drop duplicates, keeping the first (i.e., highest match_score)
     leads_dataframe = leads_dataframe.drop_duplicates(subset='lead_id', keep='first').reset_index(drop=True)
     leads_dataframe = leads_dataframe[
-        ['lead_id','account_number',  'confidence_level', 'updated_date', 'updated_by']]
+        ['lead_id','account_number',  'match_result', 'updated_date', 'updated_by']]
     leads_dataframe['account_number'] = leads_dataframe['account_number'].astype(int)
     print('lead table dataframe: ', len(leads_dataframe))
 

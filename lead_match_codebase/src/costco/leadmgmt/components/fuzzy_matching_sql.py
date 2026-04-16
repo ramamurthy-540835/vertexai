@@ -21,7 +21,7 @@ def get_confidence_level(similarity_score, match_configuration_df):
         # Loop through the rows in the confidence table to find the matching level
         for _, row in match_configuration_df.iterrows():
             if row['min_score'] <= similarity_score <= row['max_score']:
-                return row['confidence_level']
+                return row['match_result']
         return 'No Match'  # Default if no match is found
     return 'No Match'
 
@@ -55,11 +55,11 @@ def fuzzy_matching(file_classified_path: str, config_file_path: str) -> str:
 
     classified_df['warehouse_number'] = pd.to_numeric(classified_df['warehouse_number'], errors='coerce').astype('Int64')
 
-    null_wh_leads = (
-        classified_df[classified_df['warehouse_number'].isna()]['lead_id']
-        .drop_duplicates()
-        .tolist()
-    )
+    # null_wh_leads = (
+    #     classified_df[classified_df['warehouse_number'].isna()]['lead_id']
+    #     .drop_duplicates()
+    #     .tolist()
+    # )
 
     non_empty_wh_leads = (
         classified_df[classified_df['warehouse_number'].notna()]['lead_id']
@@ -70,7 +70,7 @@ def fuzzy_matching(file_classified_path: str, config_file_path: str) -> str:
 
     batch_size = 10000
 
-    master_df_1 = pd.DataFrame()
+    master_df = pd.DataFrame()
 
     # Loop through lead id list in chunks of 10,000
     for i in range(0, len(non_empty_wh_leads), batch_size):
@@ -96,36 +96,36 @@ def fuzzy_matching(file_classified_path: str, config_file_path: str) -> str:
         df_batch_result = execute_select_query(engine, query, params)
 
         # Append the result to the master DataFrame
-        master_df_1 = pd.concat([master_df_1, df_batch_result], ignore_index=True)
+        master_df = pd.concat([master_df, df_batch_result], ignore_index=True)
 
-    master_df_2 = pd.DataFrame()
+    #master_df_2 = pd.DataFrame()
 
     # Loop through lead id list in chunks of 10,000
-    for i in range(0, len(null_wh_leads), batch_size):
-        # Create the current batch of lead IDs
-        leads_id_batch = null_wh_leads[i:(i + batch_size)]
+    # for i in range(0, len(null_wh_leads), batch_size):
+    #     # Create the current batch of lead IDs
+    #     leads_id_batch = null_wh_leads[i:(i + batch_size)]
 
-        # Skip empty batch (sometimes tuple of one can cause SQL issues)
-        if not leads_id_batch:
-            continue
+    #     # Skip empty batch (sometimes tuple of one can cause SQL issues)
+    #     if not leads_id_batch:
+    #         continue
 
-        params = {
-            "fiscal_year_sales": fiscal_info["fiscal_year"],
-            "leads_id_batch": leads_id_batch
-        }
+    #     params = {
+    #         "fiscal_year_sales": fiscal_info["fiscal_year"],
+    #         "leads_id_batch": leads_id_batch
+    #     }
 
-        query = text(query_fuzzy_null_wh).bindparams(
-            bindparam("leads_id_batch", expanding=True)  # necessary for list expansion
-        )
-        # print(query)
+    #     query = text(query_fuzzy_null_wh).bindparams(
+    #         bindparam("leads_id_batch", expanding=True)  # necessary for list expansion
+    #     )
+    #     # print(query)
 
-        # Execute the query with the updated query and parameters
-        df_batch_result = execute_select_query(engine, query, params)
+    #     # Execute the query with the updated query and parameters
+    #     df_batch_result = execute_select_query(engine, query, params)
 
-        # Append the result to the master DataFrame
-        master_df_2 = pd.concat([master_df_2, df_batch_result], ignore_index=True)
+    #     # Append the result to the master DataFrame
+    #     master_df_2 = pd.concat([master_df_2, df_batch_result], ignore_index=True)
 
-    master_df = pd.concat([master_df_1, master_df_2], ignore_index=True)
+    # master_df = pd.concat([master_df_1, master_df_2], ignore_index=True)
 
 
     master_df['similarity_score'] = ((master_df['combined_field_score'] + 4 * master_df['full_address_score'] +
@@ -174,16 +174,9 @@ def fuzzy_matching(file_classified_path: str, config_file_path: str) -> str:
     match_configuration_df = execute_select_query(engine, query_match_configuration)
 
     # Apply the function to your merged_df['confidence_level']
-    # merged_df['confidence_level'] = merged_df['similarity_score'].apply(get_confidence_level)
-    merged_df['confidence_level'] = merged_df['similarity_score'].apply(
+    merged_df['match_result'] = merged_df['similarity_score'].apply(
         lambda x: get_confidence_level(x, match_configuration_df)
     )
-
-    merged_df['lead_status'] = ''
-    merged_df.loc[merged_df['confidence_level'] == 'High', 'lead_status'] = 'closed - match'
-    merged_df.loc[merged_df['confidence_level'] == 'Medium', 'lead_status'] = 'review'
-    merged_df.loc[merged_df['confidence_level'] == 'Low', 'lead_status'] = 'review'
-    merged_df.loc[merged_df['confidence_level'] == 'No Match', 'lead_status'] = 'open'
 
     #  Apply business rule:
     # 1. If HIGH exists → remove Medium/Low for that lead
@@ -200,7 +193,7 @@ def fuzzy_matching(file_classified_path: str, config_file_path: str) -> str:
     merged_df['rank'] = merged_df.groupby('lead_id').cumcount() + 1
 
     # Step 3: Filter HIGH confidence
-    high_conf_df = merged_df[merged_df['confidence_level'] == 'High']
+    high_conf_df = merged_df[merged_df['match_result'] == 'Complete']
 
     # Step 4: Keep only earliest HIGH per lead
     high_conf_latest = high_conf_df[high_conf_df['rank'] == 1]
@@ -222,12 +215,12 @@ def fuzzy_matching(file_classified_path: str, config_file_path: str) -> str:
 
     # Step 3: Drop unnecessary columns and final dataframe preparation
     classified_df_updated = merged_df[
-        ['lead_status', 'confidence_level', 'pos_id', 'lead_id','account_number', 'match_type', 'similarity_score']]
+        ['lead_status', 'match_result', 'pos_id', 'lead_id','account_number', 'match_type', 'similarity_score']]
 
     classified_df_updated['updated_date'] = pd.to_datetime(datetime.now())
 
     # Handle pos_id and account_number
-    classified_df_updated.loc[classified_df_updated['confidence_level'] == 'No Match', 'pos_id'] = ''
+    classified_df_updated.loc[classified_df_updated['match_result'] == 'No Match', 'pos_id'] = ''
     classified_df_updated['account_number'].fillna(0, inplace=True)
 
     classified_df_updated = classified_df_updated.drop_duplicates(subset=['lead_id', 'pos_id'])
@@ -237,16 +230,6 @@ def fuzzy_matching(file_classified_path: str, config_file_path: str) -> str:
 
     # Check the DataFrame columns
     print(classified_df_updated.columns)
-
-    # Assign 'closed_fiscal_period' and 'closed_fiscal_year' for 'High' confidence level
-    classified_df_updated['closed_fiscal_period'] = None
-    classified_df_updated['closed_fiscal_year'] = None
-
-    high_confidence = classified_df_updated[classified_df_updated['confidence_level'] == 'High']
-
-    # Ensure that fiscal_info has valid column names for fiscal_period and fiscal_year
-    classified_df_updated.loc[high_confidence.index, 'closed_fiscal_period'] = fiscal_info['fiscal_period']
-    classified_df_updated.loc[high_confidence.index, 'closed_fiscal_year'] = fiscal_info['fiscal_year']
 
     counter = 0
 

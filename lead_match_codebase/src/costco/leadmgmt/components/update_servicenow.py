@@ -13,9 +13,10 @@ def generate_post_json(df):
     # Normalize types
     df['lead_id'] = df['lead_id'].astype(str)
     df['pos_id'] = df['pos_id'].astype(str)
-    df['confidence_level'] = df['confidence_level'].astype(str)
+    df['match_result'] = df['confidence_level'].astype(str)
     df['account_number'] = df['account_number'].astype(int)
     df['similarity_score'] = pd.to_numeric(df['similarity_score'], errors='coerce')
+    df['matched_by'] = 'System'
 
     unique_count_lead = df['lead_id'].nunique()
     print("Number of unique lead IDs:", unique_count_lead)
@@ -28,7 +29,7 @@ def generate_post_json(df):
 
     # Step 2: Drop duplicates to keep only the row with max similarity_score per lead_id
     top_rows = df_sorted.drop_duplicates(subset='lead_id', keep='first')[
-        ['lead_id', 'confidence_level', 'account_number']
+        ['lead_id', 'match_result', 'account_number']
     ]
 
     # Step 3: Get list of all pos_ids per lead_id
@@ -39,7 +40,6 @@ def generate_post_json(df):
 
     # Step 5: Rename columns to match required JSON
     merged = merged.rename(columns={
-        'confidence_level': 'confidence',
         'pos_id': 'pos_ids'
     })
 
@@ -134,7 +134,7 @@ def update_servicenow(config_file_path: str,file_path: str = ""):
 
     final_df = load_file_from_gcs(file_path)
 
-    final_df = final_df[final_df['confidence_level'].isin(['High', 'Medium', 'Low'])]
-    final_df = final_df[['lead_id', 'pos_id', 'confidence_level', 'account_number', 'similarity_score']]
+    final_df = final_df[final_df['match_result'].isin(['Complete','Potential'])]
+    final_df = final_df[['lead_id', 'pos_id', 'match_result', 'account_number', 'similarity_score']]
     json_data = generate_post_json(final_df)
     process_batches(json_data, BATCH_SIZE, url, MAX_RETRIES, RETRY_DELAY,username,password)
