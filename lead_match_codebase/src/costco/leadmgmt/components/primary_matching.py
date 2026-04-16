@@ -29,196 +29,117 @@ def format_df(df):
 
 
 def classify_matches(file_leads, file_sales):
-    # Step 1: High Confidence Match (Exclude records where business_name or FULL_ADDRESS are empty or NaN)
-    high_confidence_leads = filter_for_merge(file_leads, ["business_name", "FULL_ADDRESS"])
-    high_confidence_sales = filter_for_merge(file_sales, ["business_name", "FULL_ADDRESS"])
 
-    # Create index on required fields for sales and leads datasets
-    high_confidence_leads.set_index(["business_name", "FULL_ADDRESS"], inplace=True)
-    high_confidence_sales.set_index(["business_name", "FULL_ADDRESS"], inplace=True)
+    SCORE_CONFIG = {
+        "business_name": 40,
+        "address_line_one":  40,
+        "state" : 5,
+        "city" : 5,
+        "zip_code" : 10,
+        "email":         30,
+        "phone":         20,
+    }
 
-    high_confidence_df = high_confidence_leads.merge(high_confidence_sales,
-                                                     on=["business_name", "FULL_ADDRESS"],
-                                                     suffixes=('_leads', '_sales'),
-                                                     how='inner').reset_index()
+    MINIMUM_SCORE = 80
 
-    high_confidence_df = high_confidence_df[(high_confidence_df['warehouse_number_leads'].isna()) |
-                                            (high_confidence_df['warehouse_number_leads']
-                                             == high_confidence_df['warehouse_number_sales'])].reset_index()
+    # --- 1. Drop rows where warehouse is null in either dataset ---
+    leads = file_leads.dropna(subset=["warehouse_number"]).copy()
+    sales = file_sales.dropna(subset=["warehouse_number"]).copy()
 
-    high_confidence_df = format_df(high_confidence_df)
+    leads["warehouse_number"] = leads["warehouse_number"].astype(str).str.strip()
+    sales["warehouse_number"] = sales["warehouse_number"].astype(str).str.strip()
 
-    del high_confidence_leads,high_confidence_sales
-    gc.collect()
+    leads = leads[leads["warehouse_number"] != ""]
+    sales = sales[sales["warehouse_number"] != ""]
 
-    # Exclude already matched leads
-    matched_leads = set(high_confidence_df['lead_id'])
+    # --- 2. For each scoring field, merge on (warehouse_number + field) ---
+    scored_pairs = []
 
-    # **********End of high match****************
+    for field, score in SCORE_CONFIG.items():
+        leads_f = filter_for_merge(leads.copy(), [field])
+        sales_f = filter_for_merge(sales.copy(), [field])
 
-    # Medium confidence1
+        if leads_f.empty or sales_f.empty:
+            continue
 
-    # Filter out leads that are not in high_confidence_df
-    filtered_file_leads_1 = file_leads[~file_leads['lead_id'].isin(matched_leads)]
+        merged = leads_f[["lead_id", "warehouse_number", field]].merge(
+            sales_f[["pos_id", "warehouse_number", field]],
+            on=["warehouse_number", field],
+            how="inner"
+        )
 
-    # Step 3: Medium Confidence Match 1 (Exclude records where FULL_ADDRESS is empty or NaN)
-    medium_confidence_leads_1 = filter_for_merge(filtered_file_leads_1, ["FULL_ADDRESS"])
-    medium_confidence_sales_1 = filter_for_merge(file_sales, ["FULL_ADDRESS"])
+        merged = merged[["lead_id", "pos_id"]].drop_duplicates()
+        merged["score_contribution"] = score
+        scored_pairs.append(merged)
 
-    medium_confidence_leads_1.set_index(["FULL_ADDRESS"], inplace=True)
-    medium_confidence_sales_1.set_index(["FULL_ADDRESS"], inplace=True)
+        del leads_f, sales_f, merged
+        gc.collect()
 
-    medium_confidence_df_1 = medium_confidence_leads_1.merge(medium_confidence_sales_1,
-                                                             on=["FULL_ADDRESS"],
-                                                             suffixes=('_leads', '_sales'),
-                                                             how='inner').reset_index()
+    if not scored_pairs:
+        no_match_df = file_leads.copy()
+        no_match_df["match_result"] = "No Match"
+        no_match_df["similarity_score"] = 0
+        no_match_df["pos_id"] = "NA"
+        no_match_df["match_type"] = "Exact"
+        return no_match_df
 
-    medium_confidence_df_1 = medium_confidence_df_1[(medium_confidence_df_1['warehouse_number_leads'].isna()) |
-                                                    (medium_confidence_df_1['warehouse_number_leads']
-                                                     == medium_confidence_df_1[
-                                                         'warehouse_number_sales'])].reset_index()
-
-    medium_confidence_df_1 = format_df(medium_confidence_df_1)
-
-    matched_leads.update(medium_confidence_df_1['lead_id'])
-
-    # ******* medium_confidence_2******** #
-
-    filtered_file_leads_2 = file_leads[~file_leads['lead_id'].isin(matched_leads)]
-
-    medium_confidence_leads_2 = filter_for_merge(filtered_file_leads_2, ["phone"])
-    medium_confidence_sales_2 = filter_for_merge(file_sales, ["phone"])
-
-    medium_confidence_leads_2.set_index(["phone"], inplace=True)
-    medium_confidence_sales_2.set_index(["phone"], inplace=True)
-
-    medium_confidence_df_2 = medium_confidence_leads_2.merge(medium_confidence_sales_2,
-                                                             on=["phone"],
-                                                             suffixes=('_leads', '_sales'),
-                                                             how='inner').reset_index()
-
-    medium_confidence_df_2 = medium_confidence_df_2[(medium_confidence_df_2['warehouse_number_leads'].isna()) |
-                                                    (medium_confidence_df_2['warehouse_number_leads']
-                                                     == medium_confidence_df_2[
-                                                         'warehouse_number_sales'])].reset_index()
-
-    medium_confidence_df_2 = format_df(medium_confidence_df_2)
-
-    # Combine the two medium confidence dataframes
-    medium_confidence_df = pd.concat([medium_confidence_df_1, medium_confidence_df_2],
-                                     ignore_index=True).drop_duplicates(subset='lead_id')
-
-    matched_leads.update(medium_confidence_df_2['lead_id'])
-
-    del medium_confidence_df_1, medium_confidence_sales_1, medium_confidence_leads_1, medium_confidence_df_2, medium_confidence_sales_2, medium_confidence_leads_2
-    gc.collect()
-
-    # **********End of medium match****************
-
-    # Step 5: Filter out leads that are not in high_confidence_df or medium_confidence_df
-    filtered_file_leads_3 = file_leads[~file_leads['lead_id'].isin(matched_leads)]
-
-    # Low Confidence Match 1 (Exclude records where membership_number is empty or NaN)
-    low_confidence_leads_1 = filter_for_merge(filtered_file_leads_3, ["membership_number"])
-    low_confidence_sales_1 = filter_for_merge(file_sales, ["membership_number"])
-
-    low_confidence_leads_1.set_index(["membership_number"], inplace=True)
-    low_confidence_sales_1.set_index(["membership_number"], inplace=True)
-
-    low_confidence_df_1 = low_confidence_leads_1.merge(low_confidence_sales_1,
-                                                       on=["membership_number"],
-                                                       suffixes=('_leads', '_sales'),
-                                                       how='inner').reset_index()
-
-    low_confidence_df_1 = low_confidence_df_1[(low_confidence_df_1['warehouse_number_leads'].isna()) |
-                                              (low_confidence_df_1['warehouse_number_leads']
-                                               == low_confidence_df_1['warehouse_number_sales'])].reset_index()
-
-    low_confidence_df_1 = format_df(low_confidence_df_1)
-
-    matched_leads.update(low_confidence_df_1['lead_id'])
-
-    filtered_file_leads_4 = file_leads[~file_leads['lead_id'].isin(matched_leads)]
-
-    # Low Confidence Match 2 (Exclude records where membership_number is empty or NaN)
-    low_confidence_leads_2 = filter_for_merge(filtered_file_leads_4, ["business_name"])
-    low_confidence_sales_2 = filter_for_merge(file_sales, ["business_name"])
-
-    low_confidence_leads_2.set_index(["business_name"], inplace=True)
-    low_confidence_sales_2.set_index(["business_name"], inplace=True)
-
-    low_confidence_df_2 = low_confidence_leads_2.merge(low_confidence_sales_2,
-                                                       on=["business_name"],
-                                                       suffixes=('_leads', '_sales'),
-                                                       how='inner').reset_index()
-
-    low_confidence_df_2 = low_confidence_df_2[(low_confidence_df_2['warehouse_number_leads'].isna()) |
-                                              (low_confidence_df_2['warehouse_number_leads']
-                                               == low_confidence_df_2['warehouse_number_sales'])].reset_index()
-
-    low_confidence_df_2 = format_df(low_confidence_df_2)
-
-    matched_leads.update(low_confidence_df_2['lead_id'])
-
-    # Combine the two low confidence dataframes
-    low_confidence_df = pd.concat([low_confidence_df_1, low_confidence_df_2], ignore_index=True).drop_duplicates(
-        subset='lead_id')
-
-    del low_confidence_df_1, low_confidence_sales_1, low_confidence_leads_1, low_confidence_df_2, low_confidence_sales_2, low_confidence_leads_2
-    gc.collect()
-
-    # Fiscal year and period comparison
-
-    high_confidence_df = high_confidence_df[
-    (high_confidence_df['fiscal_year_lead'] < high_confidence_df['fiscal_year_transaction']) |
-    (
-        (high_confidence_df['fiscal_year_lead'] == high_confidence_df['fiscal_year_transaction']) &
-        (high_confidence_df['fiscal_period_lead'] <= high_confidence_df['fiscal_period_transaction'])
+    # --- 3. Aggregate scores per (lead_id, pos_id) pair ---
+    all_pairs = pd.concat(scored_pairs, ignore_index=True)
+    pair_scores = (
+        all_pairs
+        .groupby(["lead_id", "pos_id"], as_index=False)["score_contribution"]
+        .sum()
+        .rename(columns={"score_contribution": "similarity_score"})
     )
+
+    del all_pairs, scored_pairs
+    gc.collect()
+
+    # --- 4. Keep all pairs with similarity score >= 80 ---
+    qualified_matches = pair_scores[pair_scores["similarity_score"] >= MINIMUM_SCORE]
+
+    # --- 5. Join qualified matches back to full lead + sales data ---
+    matched_df = qualified_matches.merge(
+        leads,
+        on="lead_id",
+        how="inner"
+    ).merge(
+        sales.add_suffix("_sales").rename(columns={"pos_id_sales": "pos_id"}),
+        on="pos_id",
+        how="inner"
+    )
+
+    # --- 6. Apply fiscal year/period filter ---
+    matched_df = matched_df[
+        (matched_df["fiscal_year_lead"] < matched_df["fiscal_year_transaction"]) |
+        (
+            (matched_df["fiscal_year_lead"] == matched_df["fiscal_year_transaction"]) &
+            (matched_df["fiscal_period_lead"] <= matched_df["fiscal_period_transaction"])
+        )
     ]
-    medium_confidence_df = medium_confidence_df[
-        (medium_confidence_df['fiscal_year_lead'] < medium_confidence_df['fiscal_year_transaction']) |
-        (
-                (medium_confidence_df['fiscal_year_lead'] == medium_confidence_df['fiscal_year_transaction']) &
-                (medium_confidence_df['fiscal_period_lead'] <= medium_confidence_df['fiscal_period_transaction'])
-        )
-        ]
 
-    low_confidence_df = low_confidence_df[
-        (low_confidence_df['fiscal_year_lead'] < low_confidence_df['fiscal_year_transaction']) |
-        (
-                (low_confidence_df['fiscal_year_lead'] == low_confidence_df['fiscal_year_transaction']) &
-                (low_confidence_df['fiscal_period_lead'] <= low_confidence_df['fiscal_period_transaction'])
-        )
-        ]
-    # Step 8: Filter out leads that are not in high, medium, or low confidence DataFrames
-    no_match_df = file_leads[~file_leads['lead_id'].isin(matched_leads)].reset_index()
+    # --- 7. Assign confidence level based on score ---
+    def assign_confidence(score):
+        if score >= 100:
+            return "Complete"
+        elif score >= 80:
+            return "Potential"
+        else:
+            return "No Match"
 
-    # Step 9: Assign Match Confidence and Similarity Score to each DataFrame
-    high_confidence_df['confidence_level'] = 'High'
-    high_confidence_df['similarity_score'] = 100
+    matched_df["match_result"] = matched_df["similarity_score"].apply(assign_confidence)
+    matched_df["match_type"] = "Exact"
 
-    medium_confidence_df['confidence_level'] = 'Medium'
-    medium_confidence_df['similarity_score'] = 85
+    # --- 8. No-match: leads that had zero pairs scoring >= 80 ---
+    matched_lead_ids = set(qualified_matches["lead_id"])
+    no_match_df = file_leads[~file_leads["lead_id"].isin(matched_lead_ids)].copy()
+    no_match_df["confidence_level"] = "No Match"
+    no_match_df["similarity_score"] = 0
+    no_match_df["pos_id"] = "NA"
+    no_match_df["match_type"] = "Exact"
 
-    low_confidence_df['confidence_level'] = 'Low'
-    low_confidence_df['similarity_score'] = 80
-
-    no_match_df['confidence_level'] = 'No Match'
-    no_match_df['pos_id'] = 'NA'
-    no_match_df['similarity_score'] = 0
-    all_dataframe = [high_confidence_df, medium_confidence_df, low_confidence_df, no_match_df]
-    valid_dataframe = []
-
-    for df in all_dataframe:
-        if len(df) > 0:
-            valid_dataframe.append(df)
-
-    # Step 10: Combine all the DataFrames (High, Medium, Low, and No Match)
-    final_df = pd.concat(valid_dataframe)
-    final_df['match_type'] = 'Exact'
-
-    # Return the final combined DataFrame
+    # --- 9. Combine and return ---
+    final_df = pd.concat([matched_df, no_match_df], ignore_index=True)
     return final_df
 
 
@@ -230,10 +151,9 @@ def primary_classification(file_a_path: str, file_b_path: str,match_id: str,conf
     Steps:
     1. Downloads input CSV files from Google Cloud Storage (GCS).
     2. Applies exact matching rules:
-    - High: Matches on business name and full address.(with warehouse optionally)
-    - Medium: Matches on address or phone.(with warehouse optionally)
-    - Low: Matches on membership number or business name.(with warehouse optionally)
-    - No Match: Remaining unmatched records.(with warehouse optionally)
+    - Score-based matching using warehouse-scoped field merges.
+        Points: business_name=40, address fields=60, email=30, phone=20
+        Warehouse match is mandatory. No null warehouse rows considered.
     3. Assigns confidence levels and similarity scores to each match.
     4. Filters out matches where the lead load date is after the order date.
     5. Writes match audit in cloudsql database

@@ -19,5 +19,18 @@
 -- Alter table "$SCHEMA_NAME".pos_embeddings
 -- ADD COLUMN week int;
 
-GRANT UPDATE ON  TABLE  "$SCHEMA_NAME"."lead" TO "postgres";
-GRANT UPDATE ON  TABLE  "$SCHEMA_NAME"."transaction" TO "postgres";
+-- GRANT UPDATE ON  TABLE  "$SCHEMA_NAME"."lead" TO "postgres";
+-- GRANT UPDATE ON  TABLE  "$SCHEMA_NAME"."transaction" TO "postgres";
+
+Alter table "$SCHEMA_NAME".match_configuration 
+ADD COLUMN match_result VARCHAR(10);
+
+UPDATE "$SCHEMA_NAME".match_configuration
+SET match_result =
+    CASE WHEN confidence_level = 'High' THEN 'Complete'
+         ELSE 'Potential'
+    END;
+
+ALTER TABLE "$SCHEMA_NAME".lead
+ADD COLUMN match_result VARCHAR(10);
+
