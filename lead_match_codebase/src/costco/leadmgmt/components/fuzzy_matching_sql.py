@@ -54,6 +54,7 @@ def fuzzy_matching(file_classified_path: str, config_file_path: str) -> str:
     classified_df = load_file_from_gcs(file_classified_path)
 
     classified_df['warehouse_number'] = pd.to_numeric(classified_df['warehouse_number'], errors='coerce').astype('Int64')
+    classified_df['pos_id'] = classified_df['pos_id'].astype(str)
 
     # null_wh_leads = (
     #     classified_df[classified_df['warehouse_number'].isna()]['lead_id']
@@ -188,7 +189,7 @@ def fuzzy_matching(file_classified_path: str, config_file_path: str) -> str:
         by=['lead_id', 'fiscal_year_transaction', 'fiscal_period_transaction', 'week'],
         ascending=[True, True, True, True]  
     )
-    merged_df['nmi_flag'] = False
+    merged_df['primary_transaction'] = False
 
     # Step 2: Assign rank per lead (earliest = rank 1)
     merged_df['rank'] = merged_df.groupby('lead_id').cumcount() + 1
@@ -198,7 +199,7 @@ def fuzzy_matching(file_classified_path: str, config_file_path: str) -> str:
 
     # Step 4: Assign NMI flag for high confidence matches
     #high_conf_latest = high_conf_df[high_conf_df['rank'] == 1]
-    high_conf_df['nmi_flag'] = (high_conf_df['rank'] == 1) 
+    high_conf_df['primary_transaction'] = (high_conf_df['rank'] == 1) 
 
     # Step 5: Get leads that have HIGH
     high_conf_leads = high_conf_df['lead_id'].unique()
@@ -216,7 +217,7 @@ def fuzzy_matching(file_classified_path: str, config_file_path: str) -> str:
 
     # Step 3: Drop unnecessary columns and final dataframe preparation
     classified_df_updated = merged_df[
-        ['lead_status', 'match_result', 'pos_id', 'lead_id','account_number', 'match_type', 'similarity_score','nmi_flag']]
+        ['lead_status', 'match_result', 'pos_id', 'lead_id','account_number', 'match_type', 'similarity_score','primary_transaction']]
 
     classified_df_updated['updated_date'] = pd.to_datetime(datetime.now())
 

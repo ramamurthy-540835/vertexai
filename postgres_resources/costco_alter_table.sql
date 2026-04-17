@@ -33,9 +33,9 @@
 
 -- ALTER TABLE "$SCHEMA_NAME".lead
 -- ADD COLUMN match_result VARCHAR(10);
-UPDATE "$SCHEMA_NAME".match_configuration 
-set match_result = 'No Match' where confidence_level = 'No Match';
+-- UPDATE "$SCHEMA_NAME".match_configuration 
+-- set match_result = 'No Match' where confidence_level = 'No Match';
 
 Alter table  "$SCHEMA_NAME".transaction
-add column nmi_flag BOOLEAN;
+rename column nmi_flag to primary_transaction;
 
