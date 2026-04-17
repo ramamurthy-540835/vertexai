@@ -4,7 +4,8 @@ import pandas as pd
 from datetime import datetime
 from pgvector.sqlalchemy import Vector
 import sqlalchemy
-#import vertexai
+import time
+import random
 from vertexai.preview.language_models import TextEmbeddingModel, TextEmbeddingInput
 from sqlalchemy.dialects.postgresql import TIMESTAMP
 from sqlalchemy import Column, Integer, Text, DateTime
@@ -219,64 +220,58 @@ def embedding_generation(file_leads: str, config_file_path: str):
         chunk_size = 20000
         for i in range(0, len(leads_insert_df), chunk_size):
             # Assign embeddings to respective columns in the dataframe
-            print("Rows in leads_insert_df:", len(leads_insert_df))
-            problem_rows = leads_insert_df[
-            leads_insert_df['combined_field'].isna() |
-            (leads_insert_df['combined_field'].astype(str).str.strip() == '')
-        ]
-
-            print("Rows with empty combined_field:", len(problem_rows))
-            print(problem_rows[['lead_id', 'combined_field']].head(20))
-            embeddings = process_in_batch(leads_insert_df, 'combined_embedding',
+            chunk_df = leads_insert_df.iloc[i:i+chunk_size].copy()
+            
+            chunk_df['combined_embedding'] = process_in_batch(chunk_df, 'combined_embedding',
                                                                     'combined_field')  # column name to  be changed
-            print("Embeddings generated:", len(embeddings))
-            leads_insert_df['combined_embedding'] = embeddings                                                         
-            leads_insert_df['address_embedding'] = process_in_batch(leads_insert_df, 'address_embedding',
+            print("Embeddings generated:", len(embeddings))                                                        
+            chunk_df['address_embedding'] = process_in_batch(chunk_df, 'address_embedding',
                                                                     'full_address')  # column name to  be changed
-            leads_insert_df['name_embedding'] = process_in_batch(leads_insert_df, 'name_embedding',
+            chunk_df['name_embedding'] = process_in_batch(chunk_df, 'name_embedding',
                                                                 'business_name')  # column name to  be changed
 
             # Select columns to be inserted into the database, including embeddings for each field
-            leads_insert_df = leads_insert_df.rename(
+            chunk_df = chunk_df.rename(
                 columns={"full_address": "business_address", "fiscal_year_lead": "fiscal_year",
                         "fiscal_period_lead": "fiscal_period"})
 
-            leads_insert_df['updated_date'] = pd.to_datetime(datetime.now())
+            chunk_df['updated_date'] = pd.to_datetime(datetime.now())
 
-            leads_insert_df = leads_insert_df[['warehouse_number', 'lead_id', 'updated_date',
+            chunk_df = chunk_df[['warehouse_number', 'lead_id', 'updated_date',
                                             'combined_field', 'business_address', 'business_name',
                                             'combined_embedding', 'address_embedding',
                                             'name_embedding', 'fiscal_year', 'fiscal_period']]
 
             # Insert the data into the target table
-            insert_operation_leads(engine, insert_lead_table_name, schema_name, leads_insert_df)
+            insert_operation_leads(engine, insert_lead_table_name, schema_name, chunk_df)
 
     if not leads_update_df.empty:
         # Assign embeddings to respective columns in the dataframe
         chunk_size = 20000
         for i in range(0, len(leads_update_df), chunk_size):
-            leads_update_df['combined_embedding'] = process_in_batch(leads_update_df, 'combined_embedding',
+            chunk_df = leads_update_df.iloc[i:i+chunk_size].copy()
+            chunk_df['combined_embedding'] = process_in_batch(chunk_df, 'combined_embedding',
                                                                     'combined_field')  # column name to  be changed
-            leads_update_df['address_embedding'] = process_in_batch(leads_update_df, 'address_embedding',
+            chunk_df['address_embedding'] = process_in_batch(chunk_df, 'address_embedding',
                                                                     'full_address')  # column name to  be changed
-            leads_update_df['name_embedding'] = process_in_batch(leads_update_df, 'name_embedding',
+            chunk_df['name_embedding'] = process_in_batch(chunk_df, 'name_embedding',
                                                                 'business_name')  # column name to  be changed
 
             # Select columns to be inserted into the database, including embeddings for each field
-            leads_update_df = leads_update_df.rename(
+            chunk_df = chunk_df.rename(
                 columns={"full_address": "business_address", "fiscal_year_lead": "fiscal_year",
                         "fiscal_period_lead": "fiscal_period"})
 
-            leads_update_df['updated_date'] = pd.to_datetime(datetime.now())
+            chunk_df['updated_date'] = pd.to_datetime(datetime.now())
 
-            leads_update_df = leads_update_df[['warehouse_number', 'lead_id', 'updated_date',
+            chunk_df = chunk_df[['warehouse_number', 'lead_id', 'updated_date',
                                             'combined_field', 'business_address', 'business_name',
                                             'combined_embedding', 'address_embedding',
                                             'name_embedding', 'fiscal_year', 'fiscal_period']]
 
             Lead = get_lead_class(insert_lead_table_name, schema_name)
 
-            update_operation_leads(engine, leads_update_df, Lead)
+            update_operation_leads(engine, chunk_df, Lead)
 
 
 
