@@ -119,7 +119,7 @@ def update_cloud_sql(config_file_path: str,file_path: str = ""):
     # preprocessing pos_dataframe
     # pos_dataframe = final_df[final_df['pos_id'] != '']
     pos_dataframe = final_df[final_df['match_result'].isin(['Complete','Potential'])]
-    pos_dataframe = pos_dataframe[['pos_id', 'lead_id', 'match_type', 'match_score', 'updated_by', 'updated_date']]
+    pos_dataframe = pos_dataframe[['pos_id', 'lead_id', 'match_type', 'match_score', 'updated_by', 'updated_date','nmi_flag']]
     # Sort by match_score descending so the highest score comes first
     pos_dataframe = pos_dataframe.sort_values(by='match_score', ascending=False)
     # Drop duplicates, keeping the first (i.e., highest match_score)
@@ -128,7 +128,7 @@ def update_cloud_sql(config_file_path: str,file_path: str = ""):
 
     # preprocessing leads_dataframe
     # Assign 'closed_fiscal_period' and 'closed_fiscal_year' for 'High' confidence level
-    leads_dataframe = final_df[final_df['confidmatch_resultence_level'].isin(['Complete','Potential'])]
+    leads_dataframe = final_df[final_df['match_result'].isin(['Complete','Potential'])]
     # leads_dataframe.loc[:, 'closed_fiscal_period'] = np.nan
     # leads_dataframe.loc[:, 'closed_fiscal_year'] = np.nan
     # high_confidence = leads_dataframe[leads_dataframe['confidence_level'] == 'High']

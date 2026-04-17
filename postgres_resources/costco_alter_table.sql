@@ -36,3 +36,6 @@
 UPDATE "$SCHEMA_NAME".match_configuration 
 set match_result = 'No Match' where confidence_level = 'No Match';
 
+Alter table  "$SCHEMA_NAME".transaction
+add column nmi_flag BOOLEAN;
+
