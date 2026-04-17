@@ -22,15 +22,20 @@
 -- GRANT UPDATE ON  TABLE  "$SCHEMA_NAME"."lead" TO "postgres";
 -- GRANT UPDATE ON  TABLE  "$SCHEMA_NAME"."transaction" TO "postgres";
 
-Alter table "$SCHEMA_NAME".match_configuration 
-ADD COLUMN match_result VARCHAR(10);
+-- Alter table "$SCHEMA_NAME".match_configuration 
+-- ADD COLUMN match_result VARCHAR(10);
 
-UPDATE "$SCHEMA_NAME".match_configuration
-SET match_result =
-    CASE WHEN confidence_level = 'High' THEN 'Complete'
-         ELSE 'Potential'
-    END;
+-- UPDATE "$SCHEMA_NAME".match_configuration
+-- SET match_result =
+--     CASE WHEN confidence_level = 'High' THEN 'Complete'
+--          ELSE 'Potential'
+--     END;
 
-ALTER TABLE "$SCHEMA_NAME".lead
-ADD COLUMN match_result VARCHAR(10);
+-- ALTER TABLE "$SCHEMA_NAME".lead
+-- ADD COLUMN match_result VARCHAR(10);
+UPDATE "$SCHEMA_NAME".match_configuration 
+set match_result = 'No Match' where confidence_level = 'No Match';
+
+Alter table  "$SCHEMA_NAME".transaction
+add column nmi_flag BOOLEAN;
 

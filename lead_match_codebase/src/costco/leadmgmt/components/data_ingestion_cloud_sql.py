@@ -101,15 +101,15 @@ def load_and_preprocess_data_cloud_sql(base_name: str, config_file_path:str) -> 
     query_input = None
     if base_name == "pos":
         #query
-        #query_input = f'''{query_config.query_pos} = {fiscal_info["fiscal_year"]}'''
-        query_input = f'''{query_config.query_pos} = 2026'''
+        query_input = f'''{query_config.query_pos} = {fiscal_info["fiscal_year"]}'''
+        #query_input = f'''{query_config.query_pos} = 2026'''
         # storage
         source_folder_input = storage_config.source_folder_input_pos
         destination_folder_input = storage_config.destination_folder_input_pos
     elif base_name == "leads":
         #query
-        #query_input = f'''{query_config.query_leads} >= {fiscal_info["fiscal_year"] - 1}'''
-        query_input = f'''{query_config.query_leads} = 2026'''
+        query_input = f'''{query_config.query_leads} >= {fiscal_info["fiscal_year"] - 1}'''
+        #query_input = f'''{query_config.query_leads} = 2026'''
         # storage
         source_folder_input = storage_config.source_folder_input_leads
         destination_folder_input = storage_config.destination_folder_input_leads
