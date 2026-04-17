@@ -32,50 +32,81 @@ def classify_matches(file_leads, file_sales):
 
     SCORE_CONFIG = {
         "business_name": 40,
-        "address_line_one":  40,
-        "state" : 5,
-        "city" : 5,
-        "zip_code" : 10,
-        "email":         30,
-        "phone":         20,
+        "address_line_one": 40,
+        "state": 5,
+        "city": 5,
+        "zip_code": 10,
+        "email": 30,
+        "phone": 20,
     }
 
     MINIMUM_SCORE = 80
 
-    # --- 1. Drop rows where warehouse is null in either dataset ---
-    leads = file_leads.dropna(subset=["warehouse_number"]).copy()
-    sales = file_sales.dropna(subset=["warehouse_number"]).copy()
+    # -------------------------------
+    # 1. Basic cleaning (once only)
+    # -------------------------------
+    fields = list(SCORE_CONFIG.keys())
 
-    leads["warehouse_number"] = leads["warehouse_number"].astype(str).str.strip()
-    sales["warehouse_number"] = sales["warehouse_number"].astype(str).str.strip()
+    def preprocess(df):
+        df = df.copy()
+        df = df.dropna(subset=["warehouse_number"])
+        df["warehouse_number"] = df["warehouse_number"].astype(str).str.strip()
+        df = df[df["warehouse_number"] != ""]
 
-    leads = leads[leads["warehouse_number"] != ""]
-    sales = sales[sales["warehouse_number"] != ""]
+        for col in fields:
+            df[col] = df[col].astype(str).str.strip()
+            df[col] = df[col].replace({'nan': pd.NA, '': pd.NA})
 
-    # --- 2. For each scoring field, merge on (warehouse_number + field) ---
-    scored_pairs = []
+        return df
+
+    leads = preprocess(file_leads)
+    sales = preprocess(file_sales)
+
+    # Reduce columns early (memory optimization)
+    leads_small = leads[["lead_id", "warehouse_number"] + fields]
+    sales_small = sales[["pos_id", "warehouse_number"] + fields]
+
+    # -------------------------------
+    # 2. Scoring using mapping (FAST)
+    # -------------------------------
+    score_frames = []
 
     for field, score in SCORE_CONFIG.items():
-        leads_f = filter_for_merge(leads.copy(), [field])
-        sales_f = filter_for_merge(sales.copy(), [field])
 
-        if leads_f.empty or sales_f.empty:
+        sales_valid = sales_small.dropna(subset=[field])
+        leads_valid = leads_small.dropna(subset=[field])
+
+        if sales_valid.empty or leads_valid.empty:
             continue
 
-        merged = leads_f[["lead_id", "warehouse_number", field]].merge(
-            sales_f[["pos_id", "warehouse_number", field]],
-            on=["warehouse_number", field],
-            how="inner"
+        # Create lookup: (warehouse, field) -> list of pos_ids
+        sales_grouped = (
+            sales_valid
+            .groupby(["warehouse_number", field])["pos_id"]
+            .apply(list)
         )
 
-        merged = merged[["lead_id", "pos_id"]].drop_duplicates()
-        merged["score_contribution"] = score
-        scored_pairs.append(merged)
+        # Map leads to matching pos_ids
+        leads_valid["key"] = list(zip(leads_valid["warehouse_number"], leads_valid[field]))
 
-        del leads_f, sales_f, merged
-        gc.collect()
+        matched = leads_valid["key"].map(sales_grouped)
 
-    if not scored_pairs:
+        temp = pd.DataFrame({
+            "lead_id": leads_valid["lead_id"],
+            "pos_id_list": matched
+        }).dropna()
+
+        # explode (handle multiple matches)
+        temp = temp.explode("pos_id_list")
+        temp.rename(columns={"pos_id_list": "pos_id"}, inplace=True)
+
+        temp["score"] = score
+        score_frames.append(temp)
+
+    # -------------------------------
+    # 3. Handle no matches early
+    # -------------------------------
+    if not score_frames:
         no_match_df = file_leads.copy()
         no_match_df["match_result"] = "No Match"
         no_match_df["similarity_score"] = 0
@@ -83,33 +114,41 @@ def classify_matches(file_leads, file_sales):
         no_match_df["match_type"] = "Exact"
         return no_match_df
 
-    # --- 3. Aggregate scores per (lead_id, pos_id) pair ---
-    all_pairs = pd.concat(scored_pairs, ignore_index=True)
+    # -------------------------------
+    # 4. Aggregate scores
+    # -------------------------------
+    all_scores = pd.concat(score_frames, ignore_index=True)
+
     pair_scores = (
-        all_pairs
-        .groupby(["lead_id", "pos_id"], as_index=False)["score_contribution"]
+        all_scores
+        .groupby(["lead_id", "pos_id"], as_index=False)["score"]
         .sum()
-        .rename(columns={"score_contribution": "similarity_score"})
+        .rename(columns={"score": "similarity_score"})
     )
 
-    del all_pairs, scored_pairs
-    gc.collect()
+    # -------------------------------
+    # 5. Filter qualified matches
+    # -------------------------------
+    qualified = pair_scores[pair_scores["similarity_score"] >= MINIMUM_SCORE]
 
-    # --- 4. Keep all pairs with similarity score >= 80 ---
-    qualified_matches = pair_scores[pair_scores["similarity_score"] >= MINIMUM_SCORE]
+    # -------------------------------
+    # 6. Join back full data
+    # -------------------------------
+    sales_subset = sales[[
+        "pos_id",
+        "fiscal_year_transaction",
+        "fiscal_period_transaction"
+    ]]
 
-    # --- 5. Join qualified matches back to full lead + sales data ---
-    matched_df = qualified_matches.merge(
-        leads,
-        on="lead_id",
-        how="inner"
-    ).merge(
-        sales.add_suffix("_sales").rename(columns={"pos_id_sales": "pos_id"}),
-        on="pos_id",
-        how="inner"
+    matched_df = (
+        qualified
+        .merge(leads, on="lead_id", how="inner")
+        .merge(sales_subset, on="pos_id", how="inner")
     )
 
-    # --- 6. Apply fiscal year/period filter ---
+    # -------------------------------
+    # 7. Apply fiscal filter
+    # -------------------------------
     matched_df = matched_df[
         (matched_df["fiscal_year_lead"] < matched_df["fiscal_year_transaction"]) |
         (
@@ -118,7 +157,9 @@ def classify_matches(file_leads, file_sales):
         )
     ]
 
-    # --- 7. Assign confidence level based on score ---
+    # -------------------------------
+    # 8. Assign match result
+    # -------------------------------
     def assign_confidence(score):
         if score >= 100:
             return "Complete"
@@ -130,16 +171,22 @@ def classify_matches(file_leads, file_sales):
     matched_df["match_result"] = matched_df["similarity_score"].apply(assign_confidence)
     matched_df["match_type"] = "Exact"
 
-    # --- 8. No-match: leads that had zero pairs scoring >= 80 ---
-    matched_lead_ids = set(qualified_matches["lead_id"])
-    no_match_df = file_leads[~file_leads["lead_id"].isin(matched_lead_ids)].copy()
-    no_match_df["confidence_level"] = "No Match"
+    # -------------------------------
+    # 9. No match records
+    # -------------------------------
+    matched_ids = set(qualified["lead_id"])
+
+    no_match_df = file_leads[~file_leads["lead_id"].isin(matched_ids)].copy()
+    no_match_df["match_result"] = "No Match"
     no_match_df["similarity_score"] = 0
     no_match_df["pos_id"] = "NA"
     no_match_df["match_type"] = "Exact"
 
-    # --- 9. Combine and return ---
+    # -------------------------------
+    # 10. Final output
+    # -------------------------------
     final_df = pd.concat([matched_df, no_match_df], ignore_index=True)
+
     return final_df
 
 
