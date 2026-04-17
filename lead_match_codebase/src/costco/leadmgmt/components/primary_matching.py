@@ -174,7 +174,7 @@ def classify_matches(file_leads, file_sales):
     # -------------------------------
     # Join back full data
     # -------------------------------
-    sales_subset = sales[["pos_id", "fiscal_year_transaction", "fiscal_period_transaction"]]
+    sales_subset = sales[["pos_id", "fiscal_year_transaction", "fiscal_period_transaction","week","account_number"]]
 
     matched_df = (
         qualified
