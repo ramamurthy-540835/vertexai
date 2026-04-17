@@ -30,81 +30,78 @@ def format_df(df):
 
 def classify_matches(file_leads, file_sales):
 
-    SCORE_CONFIG = {
+    KEY_FIELDS = {
         "business_name": 40,
         "address_line_one": 40,
-        "state": 5,
-        "city": 5,
-        "zip_code": 10,
         "email": 30,
         "phone": 20,
     }
 
+    SUPPLEMENTARY_FIELDS = {
+        "state": 5,
+        "city": 5,
+        "zip_code": 10,
+    }
+
     MINIMUM_SCORE = 80
 
-    # -------------------------------
-    # 1. Basic cleaning (once only)
-    # -------------------------------
-    fields = list(SCORE_CONFIG.keys())
+    all_fields = list(KEY_FIELDS.keys()) + list(SUPPLEMENTARY_FIELDS.keys())
 
     def preprocess(df):
         df = df.copy()
         df = df.dropna(subset=["warehouse_number"])
-        df["warehouse_number"] = df["warehouse_number"].astype(str).str.strip()
+        df["warehouse_number"] = (
+            pd.to_numeric(df["warehouse_number"], errors="coerce")
+            .astype("Int64")
+            .astype(str)
+        )
         df = df[df["warehouse_number"] != ""]
-
-        for col in fields:
-            df[col] = df[col].astype(str).str.strip()
-            df[col] = df[col].replace({'nan': pd.NA, '': pd.NA})
-
+        for col in all_fields:
+            df[col] = df[col].astype(str).str.strip().replace({'nan': pd.NA, '': pd.NA})
         return df
 
     leads = preprocess(file_leads)
     sales = preprocess(file_sales)
 
-    # Reduce columns early (memory optimization)
-    leads_small = leads[["lead_id", "warehouse_number"] + fields]
-    sales_small = sales[["pos_id", "warehouse_number"] + fields]
+    leads_small = leads[["lead_id", "warehouse_number"] + all_fields]
+    sales_small = sales[["pos_id", "warehouse_number"] + all_fields]
 
     # -------------------------------
-    # 2. Scoring using mapping (FAST)
+    # PHASE 1: Key fields only
     # -------------------------------
     score_frames = []
 
-    for field, score in SCORE_CONFIG.items():
-
+    for field, score in KEY_FIELDS.items():
         sales_valid = sales_small.dropna(subset=[field])
         leads_valid = leads_small.dropna(subset=[field])
 
         if sales_valid.empty or leads_valid.empty:
             continue
 
-        # Create lookup: (warehouse, field) -> list of pos_ids
         sales_grouped = (
             sales_valid
             .groupby(["warehouse_number", field])["pos_id"]
             .apply(list)
+            .to_dict()
         )
 
-        # Map leads to matching pos_ids
-        leads_valid["key"] = list(zip(leads_valid["warehouse_number"], leads_valid[field]))
+        matches = []
+        for _, row in leads_valid.iterrows():
+            key = (row["warehouse_number"], row[field])
+            if key in sales_grouped:
+                for pos_id in sales_grouped[key]:
+                    matches.append((row["lead_id"], pos_id))
 
-        matched = leads_valid["key"].map(sales_grouped)
+        if not matches:
+            continue
 
-        temp = pd.DataFrame({
-            "lead_id": leads_valid["lead_id"],
-            "pos_id_list": matched
-        }).dropna()
-
-        # explode (handle multiple matches)
-        temp = temp.explode("pos_id_list")
-        temp.rename(columns={"pos_id_list": "pos_id"}, inplace=True)
-
-        temp["score"] = score
-        score_frames.append(temp)
+        merged = pd.DataFrame(matches, columns=["lead_id", "pos_id"]).drop_duplicates()
+        merged["score"] = score
+        print(f"{field}: {len(merged)} matches")
+        score_frames.append(merged)
 
     # -------------------------------
-    # 3. Handle no matches early
+    # Handle no matches early
     # -------------------------------
     if not score_frames:
         no_match_df = file_leads.copy()
@@ -114,8 +111,49 @@ def classify_matches(file_leads, file_sales):
         no_match_df["match_type"] = "Exact"
         return no_match_df
 
+    # Get candidate pairs from Phase 1
+    candidate_pairs = (
+        pd.concat(score_frames, ignore_index=True)
+        [["lead_id", "pos_id"]]
+        .drop_duplicates()
+    )
+
+    print(f"Total candidate pairs: {len(candidate_pairs)}")
+
     # -------------------------------
-    # 4. Aggregate scores
+    # PHASE 2: Supplementary fields
+    # only on candidate pairs
+    # -------------------------------
+    leads_supp = leads[["lead_id"] + list(SUPPLEMENTARY_FIELDS.keys())]
+    sales_supp = sales[["pos_id"] + list(SUPPLEMENTARY_FIELDS.keys())]
+
+    leads_supp = leads[["lead_id"] + list(SUPPLEMENTARY_FIELDS.keys())].drop_duplicates(subset=["lead_id"])
+    sales_supp = sales[["pos_id"] + list(SUPPLEMENTARY_FIELDS.keys())].drop_duplicates(subset=["pos_id"])
+
+    candidates_with_data = (
+        candidate_pairs
+        .merge(leads_supp, on="lead_id", how="left")
+        .merge(sales_supp, on="pos_id", how="left", suffixes=("_lead", "_sale"))
+    )
+
+    for field, score in SUPPLEMENTARY_FIELDS.items():
+        lead_col = f"{field}_lead"
+        sale_col = f"{field}_sale"
+
+        mask = (
+            candidates_with_data[lead_col].notna() &
+            candidates_with_data[sale_col].notna() &
+            (candidates_with_data[lead_col] == candidates_with_data[sale_col])
+        )
+
+        if mask.any():
+            supp_frame = candidates_with_data.loc[mask, ["lead_id", "pos_id"]].copy()
+            supp_frame["score"] = score
+            print(f"{field}: {mask.sum()} supplementary matches")
+            score_frames.append(supp_frame)
+
+    # -------------------------------
+    # Aggregate scores
     # -------------------------------
     all_scores = pd.concat(score_frames, ignore_index=True)
 
@@ -124,21 +162,19 @@ def classify_matches(file_leads, file_sales):
         .groupby(["lead_id", "pos_id"], as_index=False)["score"]
         .sum()
         .rename(columns={"score": "similarity_score"})
+        .sort_values("similarity_score", ascending=False)
+        .drop_duplicates(subset=["pos_id"])
     )
 
     # -------------------------------
-    # 5. Filter qualified matches
+    # Filter qualified matches
     # -------------------------------
     qualified = pair_scores[pair_scores["similarity_score"] >= MINIMUM_SCORE]
 
     # -------------------------------
-    # 6. Join back full data
+    # Join back full data
     # -------------------------------
-    sales_subset = sales[[
-        "pos_id",
-        "fiscal_year_transaction",
-        "fiscal_period_transaction"
-    ]]
+    sales_subset = sales[["pos_id", "fiscal_year_transaction", "fiscal_period_transaction"]]
 
     matched_df = (
         qualified
@@ -147,7 +183,7 @@ def classify_matches(file_leads, file_sales):
     )
 
     # -------------------------------
-    # 7. Apply fiscal filter
+    # Apply fiscal filter
     # -------------------------------
     matched_df = matched_df[
         (matched_df["fiscal_year_lead"] < matched_df["fiscal_year_transaction"]) |
@@ -158,7 +194,7 @@ def classify_matches(file_leads, file_sales):
     ]
 
     # -------------------------------
-    # 8. Assign match result
+    # Assign match result
     # -------------------------------
     def assign_confidence(score):
         if score >= 100:
@@ -172,10 +208,9 @@ def classify_matches(file_leads, file_sales):
     matched_df["match_type"] = "Exact"
 
     # -------------------------------
-    # 9. No match records
+    # No match records
     # -------------------------------
     matched_ids = set(qualified["lead_id"])
-
     no_match_df = file_leads[~file_leads["lead_id"].isin(matched_ids)].copy()
     no_match_df["match_result"] = "No Match"
     no_match_df["similarity_score"] = 0
@@ -183,11 +218,9 @@ def classify_matches(file_leads, file_sales):
     no_match_df["match_type"] = "Exact"
 
     # -------------------------------
-    # 10. Final output
+    # Final output
     # -------------------------------
-    final_df = pd.concat([matched_df, no_match_df], ignore_index=True)
-
-    return final_df
+    return pd.concat([matched_df, no_match_df], ignore_index=True)
 
 
 def primary_classification(file_a_path: str, file_b_path: str,match_id: str,config_file_path:str)-> str:

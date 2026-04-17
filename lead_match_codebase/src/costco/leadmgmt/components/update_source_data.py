@@ -119,7 +119,7 @@ def update_cloud_sql(config_file_path: str,file_path: str = ""):
     # preprocessing pos_dataframe
     # pos_dataframe = final_df[final_df['pos_id'] != '']
     pos_dataframe = final_df[final_df['match_result'].isin(['Complete','Potential'])]
-    pos_dataframe = pos_dataframe[['pos_id', 'lead_id', 'match_type', 'match_score', 'updated_by', 'updated_date','nmi_flag']]
+    pos_dataframe = pos_dataframe[['pos_id', 'lead_id', 'match_type', 'match_score', 'updated_by', 'updated_date','primary_transaction']]
     # Sort by match_score descending so the highest score comes first
     pos_dataframe = pos_dataframe.sort_values(by='match_score', ascending=False)
     # Drop duplicates, keeping the first (i.e., highest match_score)
