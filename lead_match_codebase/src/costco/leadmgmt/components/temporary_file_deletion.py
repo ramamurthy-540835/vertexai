@@ -28,22 +28,22 @@ def delete_temp_files_from_gcs(match_id: str, file_path: str, config_file_path: 
     final_df = load_file_from_gcs(file_path)
 
     # Filter rows with High, Medium, or Low confidence level
-    high_medium_low_df = final_df[final_df['confidence_level'].isin(['High', 'Medium', 'Low'])]
+    high_medium_low_df = final_df[final_df['match_result'].isin(['Complete','Potential'])]
     # Filter rows with No Match confidence level
-    no_match_df = final_df[final_df['confidence_level'] == 'No Match']
+    no_match_df = final_df[final_df['match_result'] == 'No Match']
     # Remove duplicates based on lead_id between the two dataframes
     no_match_df_unique = no_match_df[~no_match_df['lead_id'].isin(high_medium_low_df['lead_id'])]
     # Concatenate the two dataframes
     final_df = pd.concat([high_medium_low_df, no_match_df_unique], ignore_index=True)
 
-    match_count = final_df[final_df['confidence_level'] != 'No Match']['lead_id'].nunique()
-    no_match_count = final_df[final_df['confidence_level'] == 'No Match']['lead_id'].nunique()
-    high_match_count = final_df[final_df['confidence_level'] == 'High']['lead_id'].nunique()
-    medium_match_count = final_df[final_df['confidence_level'] == 'Medium']['lead_id'].nunique()
-    low_match_count = final_df[final_df['confidence_level'] == 'Low']['lead_id'].nunique()
+    match_count = final_df[final_df['match_result'] != 'No Match']['lead_id'].nunique()
+    no_match_count = final_df[final_df['match_result'] == 'No Match']['lead_id'].nunique()
+    high_match_count = final_df[final_df['match_result'] == 'Complete']['lead_id'].nunique()
+    medium_match_count = final_df[final_df['match_result'] == 'Potential']['lead_id'].nunique()
+    # low_match_count = final_df[final_df['match_result'] == 'Low']['lead_id'].nunique()
     end_date = datetime.now()
 
-    stats = f"High: {high_match_count}, Medium: {medium_match_count}, Low: {low_match_count}"
+    stats = f"Complete: {high_match_count}, Potential: {medium_match_count}"
 
     with engine.connect() as connection:
         with connection.begin():  # Automatically commits the transaction
