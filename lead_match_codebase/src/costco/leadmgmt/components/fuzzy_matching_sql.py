@@ -217,7 +217,7 @@ def fuzzy_matching(file_classified_path: str, config_file_path: str) -> str:
 
     # Step 3: Drop unnecessary columns and final dataframe preparation
     classified_df_updated = merged_df[
-        ['lead_status', 'match_result', 'pos_id', 'lead_id','account_number', 'match_type', 'similarity_score','primary_transaction']]
+        ['match_result', 'pos_id', 'lead_id','account_number', 'match_type', 'similarity_score','primary_transaction']]
 
     classified_df_updated['updated_date'] = pd.to_datetime(datetime.now())
 
