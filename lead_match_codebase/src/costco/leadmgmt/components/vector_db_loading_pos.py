@@ -3,6 +3,7 @@ import concurrent.futures
 import pandas as pd
 from datetime import datetime
 import time
+import random
 from pgvector.sqlalchemy import Vector
 import sqlalchemy
 from vertexai.preview.language_models import TextEmbeddingModel, TextEmbeddingInput
@@ -18,7 +19,7 @@ from costco.leadmgmt.util.fiscal_year import get_costco_fiscal_info
 
 # Get the base image from environment variables
 BASE_IMAGE = os.environ.get("KFP_CUSTOM_IMAGE")
-MAX_WORKERS = os.environ.get("MAX_WORKERS")
+MAX_WORKERS = int(os.environ.get("MAX_WORKERS"))
 PROJECT_ID = os.environ.get("PROJECT_ID")
 
 
@@ -58,11 +59,11 @@ def batch_embedding(text_list,max_retries=5, base_delay=1.0, max_delay=60.0):
                 "quota" in error_str or
                 "rate limit" in error_str
             )    
-        if is_rate_limit and attempt < max_retries - 1:
-                # Exponential backoff: 1s, 2s, 4s, 8s, 16s ... + jitter
-                delay = min(base_delay * (2 ** attempt) + random.uniform(0, 1), max_delay)
-                print(f"Rate limit hit (attempt {attempt + 1}/{max_retries}). Retrying in {delay:.2f}s...")
-                time.sleep(delay)
+            if is_rate_limit and attempt < max_retries - 1:
+                    # Exponential backoff: 1s, 2s, 4s, 8s, 16s ... + jitter
+                    delay = min(base_delay * (2 ** attempt) + random.uniform(0, 1), max_delay)
+                    print(f"Rate limit hit (attempt {attempt + 1}/{max_retries}). Retrying in {delay:.2f}s...")
+                    time.sleep(delay)
         else:
                 print(f"Batch failed after {attempt + 1} attempt(s): {str(e)}")
                 return None  # Caller handles fallback
@@ -114,9 +115,11 @@ def process_in_batch(df, embedding_column_name, column_name):
 
     # Flatten and assign
     all_embeddings = [emb for batch in results if batch for emb in batch]
-    df_to_embed[embedding_column_name] = all_embeddings
+    # df_to_embed[embedding_column_name] = all_embeddings
 
-    df.update(df_to_embed)
+    # df.update(df_to_embed)
+    df.loc[df_to_embed.index, embedding_column_name] = all_embeddings
+
     df[embedding_column_name] = df[embedding_column_name].apply(
         lambda x: x if isinstance(x, list) and len(x) == 768 else [0] * 768
     )
@@ -129,6 +132,19 @@ def insert_operation_transaction(engine, table_name, schema_name, data_frame):
                       chunksize=1000, dtype={"combined_embedding": Vector(768), "address_embedding": Vector(768),
                                              "name_embedding": Vector(768), "load_date": TIMESTAMP})
 
+
+def embed_chunk(chunk_df):
+    """Run all 3 embedding columns in parallel instead of sequentially."""
+    with ThreadPoolExecutor(max_workers=3) as executor:  # 3 = one per column
+        f_combined = executor.submit(process_in_batch, chunk_df.copy(), 'combined_embedding', 'combined_field')
+        f_address  = executor.submit(process_in_batch, chunk_df.copy(), 'address_embedding', 'full_address')
+        f_name     = executor.submit(process_in_batch, chunk_df.copy(), 'name_embedding', 'business_name')
+
+        chunk_df['combined_embedding'] = f_combined.result()
+        chunk_df['address_embedding']  = f_address.result()
+        chunk_df['name_embedding']     = f_name.result()
+
+    return chunk_df
 
 def embedding_generation(file_pos: str, config_file_path: str):
     # Initialization
@@ -178,12 +194,13 @@ def embedding_generation(file_pos: str, config_file_path: str):
         for i in range(0, len(transaction_insert_df), chunk_size):
 
             chunk_df = transaction_insert_df.iloc[i:i+chunk_size].copy()
-            chunk_df['combined_embedding'] = process_in_batch(chunk_df, 'combined_embedding',
-                                                                        'combined_field')  # column name to  be changed
-            chunk_df['address_embedding'] = process_in_batch(chunk_df, 'address_embedding',
-                                                                        'full_address')  # column name to  be changed
-            chunk_df['name_embedding'] = process_in_batch(chunk_df, 'name_embedding',
-                                                                    'business_name')  # column name to  be changed
+            chunk_df = embed_chunk(chunk_df)
+            # chunk_df['combined_embedding'] = process_in_batch(chunk_df, 'combined_embedding',
+            #                                                             'combined_field')  # column name to  be changed
+            # chunk_df['address_embedding'] = process_in_batch(chunk_df, 'address_embedding',
+            #                                                             'full_address')  # column name to  be changed
+            # chunk_df['name_embedding'] = process_in_batch(chunk_df, 'name_embedding',
+            #                                                         'business_name')  # column name to  be changed
 
             chunk_df['load_date'] = pd.to_datetime(datetime.now())
 
