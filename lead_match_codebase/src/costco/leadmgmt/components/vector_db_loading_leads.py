@@ -22,7 +22,7 @@ BASE_IMAGE = os.environ.get("KFP_CUSTOM_IMAGE")
 MAX_WORKERS = os.environ.get("MAX_WORKERS")
 PROJECT_ID = os.environ.get("PROJECT_ID")
 
-#set global endpoint
+#set global endpoint vertex ai
 # vertexai.init(
 #     project=PROJECT_ID,
 #     location="global"   
