@@ -132,10 +132,9 @@ def process_in_batch(df, embedding_column_name, column_name):
 
     # Flatten and assign
     all_embeddings = [emb for batch in results if batch for emb in batch]
-    # df_to_embed[embedding_column_name] = all_embeddings
+    df_to_embed[embedding_column_name] = all_embeddings
 
-    # df.update(df_to_embed)
-    df.loc[df_to_embed.index, embedding_column_name] = all_embeddings
+    df.update(df_to_embed)
 
     df[embedding_column_name] = df[embedding_column_name].apply(
         lambda x: x if isinstance(x, list) and len(x) == 768 else [0] * 768
