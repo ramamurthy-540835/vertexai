@@ -224,8 +224,7 @@ def embedding_generation(file_leads: str, config_file_path: str):
             chunk_df = leads_insert_df.iloc[i:i+chunk_size].copy()
             
             chunk_df['combined_embedding'] = process_in_batch(chunk_df, 'combined_embedding',
-                                                                    'combined_field')  # column name to  be changed
-            print("Embeddings generated:", len(embeddings))                                                        
+                                                                    'combined_field')  # column name to  be changed                                                      
             chunk_df['address_embedding'] = process_in_batch(chunk_df, 'address_embedding',
                                                                     'full_address')  # column name to  be changed
             chunk_df['name_embedding'] = process_in_batch(chunk_df, 'name_embedding',
