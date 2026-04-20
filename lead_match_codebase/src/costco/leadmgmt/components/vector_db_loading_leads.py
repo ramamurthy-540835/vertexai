@@ -19,7 +19,7 @@ from costco.leadmgmt.util.fiscal_year import get_costco_fiscal_info
 
 # Get the base image from environment variables
 BASE_IMAGE = os.environ.get("KFP_CUSTOM_IMAGE")
-MAX_WORKERS = os.environ.get("MAX_WORKERS")
+MAX_WORKERS = int(os.environ.get("MAX_WORKERS"))
 PROJECT_ID = os.environ.get("PROJECT_ID")
 
 #set global endpoint
@@ -87,11 +87,11 @@ def batch_embedding(text_list,max_retries=5, base_delay=1.0, max_delay=60.0):
                 "quota" in error_str or
                 "rate limit" in error_str
             )    
-        if is_rate_limit and attempt < max_retries - 1:
-                # Exponential backoff: 1s, 2s, 4s, 8s, 16s ... + jitter
-                delay = min(base_delay * (2 ** attempt) + random.uniform(0, 1), max_delay)
-                print(f"Rate limit hit (attempt {attempt + 1}/{max_retries}). Retrying in {delay:.2f}s...")
-                time.sleep(delay)
+            if is_rate_limit and attempt < max_retries - 1:
+                    # Exponential backoff: 1s, 2s, 4s, 8s, 16s ... + jitter
+                    delay = min(base_delay * (2 ** attempt) + random.uniform(0, 1), max_delay)
+                    print(f"Rate limit hit (attempt {attempt + 1}/{max_retries}). Retrying in {delay:.2f}s...")
+                    time.sleep(delay)
         else:
                 print(f"Batch failed after {attempt + 1} attempt(s): {str(e)}")
                 return None  # Caller handles fallback
@@ -132,9 +132,11 @@ def process_in_batch(df, embedding_column_name, column_name):
 
     # Flatten and assign
     all_embeddings = [emb for batch in results if batch for emb in batch]
-    df_to_embed[embedding_column_name] = all_embeddings
+    # df_to_embed[embedding_column_name] = all_embeddings
 
-    df.update(df_to_embed)
+    # df.update(df_to_embed)
+    df.loc[df_to_embed.index, embedding_column_name] = all_embeddings
+    
     df[embedding_column_name] = df[embedding_column_name].apply(
         lambda x: x if isinstance(x, list) and len(x) == 768 else [0] * 768
     )
