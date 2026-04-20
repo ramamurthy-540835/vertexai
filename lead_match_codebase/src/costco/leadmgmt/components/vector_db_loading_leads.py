@@ -22,7 +22,7 @@ BASE_IMAGE = os.environ.get("KFP_CUSTOM_IMAGE")
 MAX_WORKERS = os.environ.get("MAX_WORKERS")
 PROJECT_ID = os.environ.get("PROJECT_ID")
 
-#set global endpoint
+#set global endpoint vertex ai 
 # vertexai.init(
 #     project=PROJECT_ID,
 #     location="global"   
@@ -224,8 +224,7 @@ def embedding_generation(file_leads: str, config_file_path: str):
             chunk_df = leads_insert_df.iloc[i:i+chunk_size].copy()
             
             chunk_df['combined_embedding'] = process_in_batch(chunk_df, 'combined_embedding',
-                                                                    'combined_field')  # column name to  be changed
-            print("Embeddings generated:", len(embeddings))                                                        
+                                                                    'combined_field')  # column name to  be changed                                                      
             chunk_df['address_embedding'] = process_in_batch(chunk_df, 'address_embedding',
                                                                     'full_address')  # column name to  be changed
             chunk_df['name_embedding'] = process_in_batch(chunk_df, 'name_embedding',
