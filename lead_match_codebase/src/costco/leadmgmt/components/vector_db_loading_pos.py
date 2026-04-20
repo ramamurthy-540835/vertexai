@@ -134,15 +134,13 @@ def insert_operation_transaction(engine, table_name, schema_name, data_frame):
 
 
 def embed_chunk(chunk_df):
-    """Run all 3 embedding columns in parallel instead of sequentially."""
-    with ThreadPoolExecutor(max_workers=3) as executor:  # 3 = one per column
-        f_combined = executor.submit(process_in_batch, chunk_df.copy(), 'combined_embedding', 'combined_field')
-        f_address  = executor.submit(process_in_batch, chunk_df.copy(), 'address_embedding', 'full_address')
-        f_name     = executor.submit(process_in_batch, chunk_df.copy(), 'name_embedding', 'business_name')
 
-        chunk_df['combined_embedding'] = f_combined.result()
-        chunk_df['address_embedding']  = f_address.result()
-        chunk_df['name_embedding']     = f_name.result()
+    chunk_df['combined_embedding'] = process_in_batch(chunk_df, 'combined_embedding',
+                                                                        'combined_field')  # column name to  be changed
+    chunk_df['address_embedding'] = process_in_batch(chunk_df, 'address_embedding',
+                                                                        'full_address')  # column name to  be changed
+    chunk_df['name_embedding'] = process_in_batch(chunk_df, 'name_embedding',
+                                                                    'business_name')  # column name to  be changed
 
     return chunk_df
 
@@ -195,13 +193,6 @@ def embedding_generation(file_pos: str, config_file_path: str):
 
             chunk_df = transaction_insert_df.iloc[i:i+chunk_size].copy()
             chunk_df = embed_chunk(chunk_df)
-            # chunk_df['combined_embedding'] = process_in_batch(chunk_df, 'combined_embedding',
-            #                                                             'combined_field')  # column name to  be changed
-            # chunk_df['address_embedding'] = process_in_batch(chunk_df, 'address_embedding',
-            #                                                             'full_address')  # column name to  be changed
-            # chunk_df['name_embedding'] = process_in_batch(chunk_df, 'name_embedding',
-            #                                                         'business_name')  # column name to  be changed
-
             chunk_df['load_date'] = pd.to_datetime(datetime.now())
 
             chunk_df = chunk_df.rename(
