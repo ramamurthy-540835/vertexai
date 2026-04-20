@@ -19,7 +19,7 @@ from costco.leadmgmt.util.fiscal_year import get_costco_fiscal_info
 
 # Get the base image from environment variables
 BASE_IMAGE = os.environ.get("KFP_CUSTOM_IMAGE")
-MAX_WORKERS = int(os.environ.get("MAX_WORKERS"))
+MAX_WORKERS = os.environ.get("MAX_WORKERS")
 PROJECT_ID = os.environ.get("PROJECT_ID")
 
 #set global endpoint
@@ -136,7 +136,7 @@ def process_in_batch(df, embedding_column_name, column_name):
 
     # df.update(df_to_embed)
     df.loc[df_to_embed.index, embedding_column_name] = all_embeddings
-    
+
     df[embedding_column_name] = df[embedding_column_name].apply(
         lambda x: x if isinstance(x, list) and len(x) == 768 else [0] * 768
     )
