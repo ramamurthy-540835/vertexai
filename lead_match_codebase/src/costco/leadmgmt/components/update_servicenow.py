@@ -17,11 +17,11 @@ def generate_post_json(df):
     df['business_name'] = df['business_name_transaction'].astype(str)
     df['match_value'] = pd.to_numeric(df['similarity_score'], errors='coerce')
     df['matched_by'] = 'System'
-    df['fiscal_year'] = df['fiscal_year_transaction'].astype(Int64)
-    df['fiscal_period'] = df['fiscal_period_transaction'].astype(Int64)
-    df['week'] = df['week'].astype(Int64)
-    df['warehouse_number'] = df['warehouse_number'].astype(Int64)
-    df['primary_transaction'] = df['primary_transaction'].astype(Int64)
+    df['fiscal_year'] = df['fiscal_year_transaction'].astype('Int64')
+    df['fiscal_period'] = df['fiscal_period_transaction'].astype('Int64')
+    df['week'] = df['week'].astype('Int64')
+    df['warehouse_number'] = df['warehouse_number'].astype('Int64')
+    df['primary_transaction'] = df['primary_transaction'].astype('Int64')
 
     unique_count_lead = df['lead_id'].nunique()
     print("Number of unique lead IDs:", unique_count_lead)
