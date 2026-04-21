@@ -19,12 +19,14 @@ def filter_for_merge(df, columns):
 
 def format_df(df):
     df.columns = df.columns.str.replace(r'_leads$', '', regex=True)
+    df = df.rename(columns={"business_name_sales":"business_name_transaction"})
     df = df[[col for col in df.columns if not col.endswith('_sales')]]
     df = df[['lead_id','membership_number' ,'warehouse_number' ,'updated_date' ,
              'fiscal_year_lead','fiscal_period_lead','business_name' ,'address_line_one' ,
              'address_line_two' ,'city' ,'state' ,'zip_code' ,'phone' ,'first_name' ,
              'last_name' ,'email' ,'COMBINED_FIELD' ,'FULL_ADDRESS' ,'CUSTOMER_NAME' ,
-             'pos_id','account_number','fiscal_year_transaction','fiscal_period_transaction','week']]
+             'pos_id','account_number','fiscal_year_transaction','fiscal_period_transaction','week',
+             'business_name_transaction']]
     return df
 
 
