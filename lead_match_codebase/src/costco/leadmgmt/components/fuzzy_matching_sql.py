@@ -202,7 +202,7 @@ def fuzzy_matching(file_classified_path: str, config_file_path: str) -> str:
 
     # Step 1: Sort EARLIEST first
     merged_df = merged_df.sort_values(
-        by=['lead_id', 'fiscal_year_transaction', 'fiscal_period_transaction', 'week_primary'],
+        by=['lead_id', 'fiscal_year_transaction', 'fiscal_period_transaction', 'week'],
         ascending=[True, True, True, True]  
     )
     merged_df['primary_transaction'] = False
