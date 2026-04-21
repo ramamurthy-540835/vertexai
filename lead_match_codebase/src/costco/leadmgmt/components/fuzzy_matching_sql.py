@@ -56,11 +56,6 @@ def fuzzy_matching(file_classified_path: str, config_file_path: str) -> str:
     classified_df['warehouse_number'] = pd.to_numeric(classified_df['warehouse_number'], errors='coerce').astype('Int64')
     classified_df['pos_id'] = classified_df['pos_id'].astype(str)
 
-    # null_wh_leads = (
-    #     classified_df[classified_df['warehouse_number'].isna()]['lead_id']
-    #     .drop_duplicates()
-    #     .tolist()
-    # )
 
     non_empty_wh_leads = (
         classified_df[classified_df['warehouse_number'].notna()]['lead_id']
@@ -91,7 +86,6 @@ def fuzzy_matching(file_classified_path: str, config_file_path: str) -> str:
         query = text(query_fuzzy_wh).bindparams(
             bindparam("leads_id_batch", expanding=True)  # necessary for list expansion
         )
-        # print(query)
 
         # Execute the query with the updated query and parameters
         df_batch_result = execute_select_query(engine, query, params)
@@ -99,35 +93,7 @@ def fuzzy_matching(file_classified_path: str, config_file_path: str) -> str:
         # Append the result to the master DataFrame
         master_df = pd.concat([master_df, df_batch_result], ignore_index=True)
 
-    #master_df_2 = pd.DataFrame()
-
-    # Loop through lead id list in chunks of 10,000
-    # for i in range(0, len(null_wh_leads), batch_size):
-    #     # Create the current batch of lead IDs
-    #     leads_id_batch = null_wh_leads[i:(i + batch_size)]
-
-    #     # Skip empty batch (sometimes tuple of one can cause SQL issues)
-    #     if not leads_id_batch:
-    #         continue
-
-    #     params = {
-    #         "fiscal_year_sales": fiscal_info["fiscal_year"],
-    #         "leads_id_batch": leads_id_batch
-    #     }
-
-    #     query = text(query_fuzzy_null_wh).bindparams(
-    #         bindparam("leads_id_batch", expanding=True)  # necessary for list expansion
-    #     )
-    #     # print(query)
-
-    #     # Execute the query with the updated query and parameters
-    #     df_batch_result = execute_select_query(engine, query, params)
-
-    #     # Append the result to the master DataFrame
-    #     master_df_2 = pd.concat([master_df_2, df_batch_result], ignore_index=True)
-
-    # master_df = pd.concat([master_df_1, master_df_2], ignore_index=True)
-
+    # Compute similarity score
 
     master_df['similarity_score'] = ((master_df['combined_field_score'] + 4 * master_df['full_address_score'] +
                                       3 * master_df['business_name_score']) / 8)
@@ -139,47 +105,27 @@ def fuzzy_matching(file_classified_path: str, config_file_path: str) -> str:
     merged_df = pd.merge(classified_df, df_fuzzy_result, how='left', on='lead_id', suffixes=('_primary', '_fuzzy'))
 
     # Step 2: Update 'pos_id' and 'similarity_score' in classified_df based on similarity_score
-    merged_df.loc[(merged_df['similarity_score_primary'] < merged_df['similarity_score_fuzzy']) & pd.notna(
-        merged_df['pos_id_fuzzy']),
-    'pos_id_primary'] = merged_df['pos_id_fuzzy']
 
-  
-    merged_df.loc[(merged_df['similarity_score_primary'] < merged_df['similarity_score_fuzzy']) & pd.notna(
-        merged_df['pos_id_fuzzy']),
-    'account_number_primary'] = merged_df['account_number_fuzzy'].astype('float64')
-
-    
-    merged_df.loc[(merged_df['similarity_score_primary'] < merged_df['similarity_score_fuzzy']) & pd.notna(
-        merged_df['pos_id_fuzzy']),
-    'match_type'] = "Fuzzy"
-
+    # Define the mask ONCE before any updates
     merged_df['similarity_score_primary'] = merged_df['similarity_score_primary'].astype('float64')
     merged_df['similarity_score_fuzzy'] = merged_df['similarity_score_fuzzy'].astype('float64')
 
+    update_mask = (
+        (merged_df['similarity_score_primary'] < merged_df['similarity_score_fuzzy']) &
+        pd.notna(merged_df['pos_id_fuzzy']) &
+        pd.notna(merged_df['similarity_score_fuzzy'])
+    )
 
-    merged_df.loc[(merged_df['similarity_score_primary'] < merged_df['similarity_score_fuzzy']) & pd.notna(
-        merged_df['pos_id_fuzzy']) & pd.notna(merged_df['similarity_score_fuzzy']),
-    'similarity_score_primary'] = merged_df['similarity_score_fuzzy']
-
-    merged_df.loc[(merged_df['similarity_score_primary'] < merged_df['similarity_score_fuzzy']) & pd.notna(
-        merged_df['pos_id_fuzzy']) & pd.notna(merged_df['similarity_score_fuzzy']),
-    'fiscal_year_transaction'] = merged_df['fiscal_year']
-
-    merged_df.loc[(merged_df['similarity_score_primary'] < merged_df['similarity_score_fuzzy']) & pd.notna(
-        merged_df['pos_id_fuzzy']) & pd.notna(merged_df['similarity_score_fuzzy']),
-    'fiscal_period_transaction'] = merged_df['fiscal_period']
-
-    merged_df.loc[(merged_df['similarity_score_primary'] < merged_df['similarity_score_fuzzy']) & pd.notna(
-        merged_df['pos_id_fuzzy']) & pd.notna(merged_df['similarity_score_fuzzy']),
-    'business_name_transaction'] = merged_df['business_name_fuzzy']
-
-    merged_df.loc[(merged_df['similarity_score_primary'] < merged_df['similarity_score_fuzzy']) & pd.notna(
-        merged_df['pos_id_fuzzy']) & pd.notna(merged_df['similarity_score_fuzzy']),
-    'week_primary'] = merged_df['week_fuzzy']
-
-    merged_df.loc[(merged_df['similarity_score_primary'] < merged_df['similarity_score_fuzzy']) & pd.notna(
-        merged_df['pos_id_fuzzy']) & pd.notna(merged_df['similarity_score_fuzzy']),
-    'warehouse_number_primary'] = merged_df['warehouse_number_fuzzy']
+    # Now apply all updates using the same pre-computed mask
+    merged_df.loc[update_mask, 'pos_id_primary']               = merged_df['pos_id_fuzzy']
+    merged_df.loc[update_mask, 'account_number_primary']       = merged_df['account_number_fuzzy'].astype('float64')
+    merged_df.loc[update_mask, 'match_type']                   = "Fuzzy"
+    merged_df.loc[update_mask, 'similarity_score_primary']     = merged_df['similarity_score_fuzzy']
+    merged_df.loc[update_mask, 'fiscal_year_transaction']      = merged_df['fiscal_year']
+    merged_df.loc[update_mask, 'fiscal_period_transaction']    = merged_df['fiscal_period']
+    merged_df.loc[update_mask, 'business_name_transaction']    = merged_df['business_name_fuzzy']  
+    merged_df.loc[update_mask, 'week_primary']                 = merged_df['week_fuzzy']
+    merged_df.loc[update_mask, 'warehouse_number_primary']     = merged_df['warehouse_number_fuzzy']
 
 
     # Step 3: Drop the result columns if you don't need them anymore
