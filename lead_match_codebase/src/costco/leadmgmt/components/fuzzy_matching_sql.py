@@ -121,11 +121,11 @@ def fuzzy_matching(file_classified_path: str, config_file_path: str) -> str:
     merged_df.loc[update_mask, 'account_number_primary']       = merged_df['account_number_fuzzy'].astype('float64')
     merged_df.loc[update_mask, 'match_type']                   = "Fuzzy"
     merged_df.loc[update_mask, 'similarity_score_primary']     = merged_df['similarity_score_fuzzy']
-    merged_df.loc[update_mask, 'fiscal_year_transaction']      = merged_df['fiscal_year']
-    merged_df.loc[update_mask, 'fiscal_period_transaction']    = merged_df['fiscal_period']
+    merged_df.loc[update_mask, 'fiscal_year_transaction']      = merged_df['fiscal_year'].astype('float64')
+    merged_df.loc[update_mask, 'fiscal_period_transaction']    = merged_df['fiscal_period'].astype('float64')
     merged_df.loc[update_mask, 'business_name_transaction']    = merged_df['business_name_fuzzy']  
-    merged_df.loc[update_mask, 'week_primary']                 = merged_df['week_fuzzy']
-    merged_df.loc[update_mask, 'warehouse_number_primary']     = merged_df['warehouse_number_fuzzy']
+    merged_df.loc[update_mask, 'week_primary']                 = merged_df['week_fuzzy'].astype('float64')
+    merged_df.loc[update_mask, 'warehouse_number_primary']     = merged_df['warehouse_number_fuzzy'].astype('float64')
 
 
     # Step 3: Drop the result columns if you don't need them anymore
