@@ -176,7 +176,9 @@ def classify_matches(file_leads, file_sales):
     # -------------------------------
     # Join back full data
     # -------------------------------
-    sales_subset = sales[["pos_id", "fiscal_year_transaction", "fiscal_period_transaction","week","account_number"]]
+    sales = sales.rename(columns={"business_name":"business_name_transaction"})
+    sales_subset = sales[["pos_id", "fiscal_year_transaction", "fiscal_period_transaction","week",
+    "account_number","business_name_transaction"]]
 
     matched_df = (
         qualified
