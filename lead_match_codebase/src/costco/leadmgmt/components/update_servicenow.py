@@ -42,7 +42,7 @@ def generate_post_json(df):
             "week":             row['week'],
             "match_value":      row['match_value'],
             "matched_by":       row['matched_by'],
-            "match_percentage": row['match_value'],   # map similarity_score → match_percentage
+            "match_percentage": None,   # map similarity_score → match_percentage
             "match_result":     row['match_result'],
             "primary_transaction": row['primary_transaction'],
         })
