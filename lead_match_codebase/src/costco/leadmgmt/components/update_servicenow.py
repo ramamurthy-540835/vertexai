@@ -14,7 +14,7 @@ def generate_post_json(df):
     df['lead_id'] = df['lead_id'].astype(str)
     df['pos_id'] = df['pos_id'].astype(str)
     df['match_result'] = df['match_result'].astype(str)
-    df['business_name'] = df['business_name_transaction'].astype(int)
+    df['business_name'] = df['business_name_transaction'].astype(str)
     df['match_value'] = pd.to_numeric(df['similarity_score'], errors='coerce')
     df['matched_by'] = 'System'
     df['fiscal_year'] = df['fiscal_year_transaction'].astype(int)
