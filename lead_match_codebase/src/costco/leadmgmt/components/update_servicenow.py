@@ -13,10 +13,15 @@ def generate_post_json(df):
     # Normalize types
     df['lead_id'] = df['lead_id'].astype(str)
     df['pos_id'] = df['pos_id'].astype(str)
-    df['match_result'] = df['confidence_level'].astype(str)
-    df['account_number'] = df['account_number'].astype(int)
-    df['similarity_score'] = pd.to_numeric(df['similarity_score'], errors='coerce')
+    df['match_result'] = df['match_result'].astype(str)
+    df['business_name'] = df['business_name_transaction'].astype(int)
+    df['match_value'] = pd.to_numeric(df['similarity_score'], errors='coerce')
     df['matched_by'] = 'System'
+    df['fiscal_year'] = df['fiscal_year_transaction'].astype(int)
+    df['fiscal_period'] = df['fiscal_period_transaction'].astype(int)
+    df['week'] = df['week'].astype(int)
+    df['warehouse_number'] = df['warehouse_number'].astype(int)
+    df['primary_transaction'] = df['primary_transaction'].astype(int)
 
     unique_count_lead = df['lead_id'].nunique()
     print("Number of unique lead IDs:", unique_count_lead)
@@ -24,30 +29,29 @@ def generate_post_json(df):
     unique_count_pos = df['pos_id'].nunique()
     print("Number of unique pos IDs:", unique_count_pos)
 
-    # Step 1: Sort by similarity_score in descending order
-    df_sorted = df.sort_values(by=['lead_id', 'similarity_score'], ascending=[True, False])
+    # build pos results
+    results = []
+    for _, row in df.iterrows():
+        results.append({
+            "pos_id":           row['pos_id'],
+            "lead_id":          row['lead_id'],
+            "business_name":    row['business_name'],
+            "warehouse_number": row['warehouse_number'],
+            "fiscal_period":    row['fiscal_period'],
+            "fiscal_year":      row['fiscal_year'],
+            "week":             row['week'],
+            "match_value":      row['match_value'],
+            "matched_by":       row['matched_by'],
+            "match_percentage": row['match_value'],   # map similarity_score → match_percentage
+            "match_result":     row['match_result'],
+            "primary_transaction": row['primary_transaction'],
+        })
+    total_matched = unique_count_pos  # total POS records matched
 
-    # Step 2: Drop duplicates to keep only the row with max similarity_score per lead_id
-    top_rows = df_sorted.drop_duplicates(subset='lead_id', keep='first')[
-        ['lead_id', 'match_result', 'account_number']
-    ]
-
-    # Step 3: Get list of all pos_ids per lead_id
-    pos_ids_df = df.groupby('lead_id')['pos_id'].apply(list).reset_index()
-
-    # Step 4: Merge the two
-    merged = pd.merge(top_rows, pos_ids_df, on='lead_id')
-
-    # Step 5: Rename columns to match required JSON
-    merged = merged.rename(columns={
-        'pos_id': 'pos_ids'
-    })
-
-    # Step 6: Convert to JSON list
-    return merged.to_dict(orient='records')
+    return total_matched, results
 
 
-def process_batches(data, batch_size, url, max_retries, retry_delay, username=None, password=None):
+def process_batches(total_matched, data, batch_size, url, max_retries, retry_delay, username=None, password=None):
     headers = {
         'Content-Type': 'application/json',
         'Accept': 'application/json'
@@ -60,8 +64,16 @@ def process_batches(data, batch_size, url, max_retries, retry_delay, username=No
 
     for i in range(0, len(data), batch_size):
         batch = data[i:i + batch_size]
-        payload = json.dumps(batch)
         batch_number = i // batch_size + 1
+
+        # ---- NEW wrapper structure ----
+        payload = json.dumps({
+            "result": {
+                "total_matched":   str(total_matched),
+                "returned_count":  str(len(batch)),
+                "results":         batch
+            }
+        })
 
         success = False
         last_error = None  # To store the last error message
@@ -135,6 +147,9 @@ def update_servicenow(config_file_path: str,file_path: str = ""):
     final_df = load_file_from_gcs(file_path)
 
     final_df = final_df[final_df['match_result'].isin(['Complete','Potential'])]
-    final_df = final_df[['lead_id', 'pos_id', 'match_result', 'account_number', 'similarity_score']]
-    json_data = generate_post_json(final_df)
-    process_batches(json_data, BATCH_SIZE, url, MAX_RETRIES, RETRY_DELAY,username,password)
+    final_df = final_df[['lead_id', 'pos_id', 'match_result', 'account_number',
+                          'similarity_score', 'business_name_transaction',
+                          'fiscal_year_transaction', 'fiscal_period_transaction',
+                          'week', 'warehouse_number', 'primary_transaction']]
+    total_matched,json_data = generate_post_json(final_df)
+    process_batches(total_matched,json_data, BATCH_SIZE, url, MAX_RETRIES, RETRY_DELAY,username,password)

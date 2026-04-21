@@ -153,11 +153,6 @@ def fuzzy_matching(file_classified_path: str, config_file_path: str) -> str:
         merged_df['pos_id_fuzzy']),
     'match_type'] = "Fuzzy"
 
-    ### checking results
-    merged_df.info()
-    #print(merged_df[['pos_id_primary', 'similarity_score_primary', 'pos_id_fuzzy', 'similarity_score_fuzzy']].head(5))
-    print(merged_df[['pos_id_primary', 'similarity_score_primary', 'pos_id_fuzzy', 'similarity_score_fuzzy']].tail(5))
-
     merged_df['similarity_score_primary'] = merged_df['similarity_score_primary'].astype('float64')
     merged_df['similarity_score_fuzzy'] = merged_df['similarity_score_fuzzy'].astype('float64')
 
@@ -166,9 +161,30 @@ def fuzzy_matching(file_classified_path: str, config_file_path: str) -> str:
         merged_df['pos_id_fuzzy']) & pd.notna(merged_df['similarity_score_fuzzy']),
     'similarity_score_primary'] = merged_df['similarity_score_fuzzy']
 
+    merged_df.loc[(merged_df['similarity_score_primary'] < merged_df['similarity_score_fuzzy']) & pd.notna(
+        merged_df['pos_id_fuzzy']) & pd.notna(merged_df['similarity_score_fuzzy']),
+    'fiscal_year_transaction'] = merged_df['fiscal_year']
+
+    merged_df.loc[(merged_df['similarity_score_primary'] < merged_df['similarity_score_fuzzy']) & pd.notna(
+        merged_df['pos_id_fuzzy']) & pd.notna(merged_df['similarity_score_fuzzy']),
+    'fiscal_period_transaction'] = merged_df['fiscal_period']
+
+    merged_df.loc[(merged_df['similarity_score_primary'] < merged_df['similarity_score_fuzzy']) & pd.notna(
+        merged_df['pos_id_fuzzy']) & pd.notna(merged_df['similarity_score_fuzzy']),
+    'business_name_transaction'] = merged_df['business_name']
+
+    merged_df.loc[(merged_df['similarity_score_primary'] < merged_df['similarity_score_fuzzy']) & pd.notna(
+        merged_df['pos_id_fuzzy']) & pd.notna(merged_df['similarity_score_fuzzy']),
+    'week_primary'] = merged_df['week_fuzzy']
+
+    merged_df.loc[(merged_df['similarity_score_primary'] < merged_df['similarity_score_fuzzy']) & pd.notna(
+        merged_df['pos_id_fuzzy']) & pd.notna(merged_df['similarity_score_fuzzy']),
+    'warehouse_number_primary'] = merged_df['warehouse_number_fuzzy']
+
 
     # Step 3: Drop the result columns if you don't need them anymore
-    merged_df.drop(columns=['pos_id_fuzzy', 'similarity_score_fuzzy','account_number_fuzzy'], inplace=True)
+    merged_df.drop(columns=['pos_id_fuzzy', 'similarity_score_fuzzy','account_number_fuzzy',
+    'week_fuzzy','warehouse_number_fuzzy','fiscal_year','fiscal_period'], inplace=True)
     merged_df.columns = merged_df.columns.str.replace(r'_primary$', '', regex=True)
 
     query_match_configuration = text(query_match_configuration)
@@ -186,7 +202,7 @@ def fuzzy_matching(file_classified_path: str, config_file_path: str) -> str:
 
     # Step 1: Sort EARLIEST first
     merged_df = merged_df.sort_values(
-        by=['lead_id', 'fiscal_year_transaction', 'fiscal_period_transaction', 'week'],
+        by=['lead_id', 'fiscal_year_transaction', 'fiscal_period_transaction', 'week_primary'],
         ascending=[True, True, True, True]  
     )
     merged_df['primary_transaction'] = False
@@ -217,7 +233,9 @@ def fuzzy_matching(file_classified_path: str, config_file_path: str) -> str:
 
     # Step 3: Drop unnecessary columns and final dataframe preparation
     classified_df_updated = merged_df[
-        ['match_result', 'pos_id', 'lead_id','account_number', 'match_type', 'similarity_score','primary_transaction']]
+        ['pos_id', 'lead_id','match_result','account_number','business_name_transaction',
+        'warehouse_number', 'match_type','similarity_score','primary_transaction',
+        'fiscal_year_transaction','fiscal_period_transaction','week']]
 
     classified_df_updated['updated_date'] = pd.to_datetime(datetime.now())
 
