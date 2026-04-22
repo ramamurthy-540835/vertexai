@@ -86,12 +86,33 @@ def process_in_batch(df, embedding_column_name, column_name):
 
     all_embeddings = []
     overall_start = time.time()
+
+    results = [None] * len(batches)
+
+    RAMP_STAGES = [
+        (5,  0.5),   # First 5 batches  → 0.5s gap between submits
+        (10, 0.2),   # Next 10 batches  → 0.2s gap
+        (999, 0.05), # Rest             → 0.05s gap (near full speed)
+    ]
+
+    def get_delay(batch_idx):
+        count = 0
+        for stage_size, delay in RAMP_STAGES:
+            count += stage_size
+            if batch_idx < count:
+                return delay
+        return 0.05
+
+
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-        future_to_batch = {
-    executor.submit(batch_embedding, batch): (idx, time.time())
-    for idx, batch in enumerate(batches)
-}
-        results = [None] * len(batches)
+
+        future_to_batch = {}
+
+        for idx, batch in enumerate(batches):
+            #  Stagger submission 
+            time.sleep(get_delay(idx))
+            future = executor.submit(batch_embedding, batch)
+            future_to_batch[future] = (idx, time.time())
 
         for future in as_completed(future_to_batch):
             idx, start_time = future_to_batch[future]

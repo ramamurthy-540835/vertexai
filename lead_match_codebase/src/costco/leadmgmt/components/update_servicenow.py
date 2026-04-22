@@ -17,11 +17,11 @@ def generate_post_json(df):
     df['business_name'] = df['business_name_transaction'].astype(str)
     df['match_value'] = pd.to_numeric(df['similarity_score'], errors='coerce')
     df['matched_by'] = 'System'
-    df['fiscal_year'] = df['fiscal_year_transaction'].astype('Int64')
-    df['fiscal_period'] = df['fiscal_period_transaction'].astype('Int64')
-    df['week'] = df['week'].astype('Int64')
-    df['warehouse_number'] = df['warehouse_number'].astype('Int64')
-    df['primary_transaction'] = df['primary_transaction'].astype('Int64')
+    df['fiscal_year'] = df['fiscal_year_transaction'].astype('int64')
+    df['fiscal_period'] = df['fiscal_period_transaction'].astype('int64')
+    df['week'] = df['week'].astype('int64')
+    df['warehouse_number'] = df['warehouse_number'].astype('int64')
+    df['primary_transaction'] = df['primary_transaction'].astype('int64')
 
     unique_count_lead = df['lead_id'].nunique()
     print("Number of unique lead IDs:", unique_count_lead)
@@ -56,10 +56,7 @@ def process_batches(total_matched, data, batch_size, url, max_retries, retry_del
         'Content-Type': 'application/json',
         'Accept': 'application/json'
     }
-    batch_size =  int(batch_size)
-    max_retries =  int(max_retries)
-    retry_delay =  int(retry_delay)
-
+    batch_size, max_retries, retry_delay = map(int, [batch_size, max_retries, retry_delay])  
     auth = (username, password) if username and password else None
 
     for i in range(0, len(data), batch_size):
@@ -80,7 +77,7 @@ def process_batches(total_matched, data, batch_size, url, max_retries, retry_del
 
         for attempt in range(1, max_retries + 1):
             try:
-                response = requests.post(url, headers=headers, data=payload, auth=auth)
+                response = requests.post(url, headers=headers, data=payload, auth=auth, timeout=(10, 60))
 
                 if response.status_code == 200:
                     try:
@@ -103,7 +100,7 @@ def process_batches(total_matched, data, batch_size, url, max_retries, retry_del
                     else:
                         last_error = f"Failed: {message}"
                         print(f"[Batch {batch_number}] {last_error}")
-                    success = True
+                    #success = True
                     break
 
                 elif response.status_code == 404:
