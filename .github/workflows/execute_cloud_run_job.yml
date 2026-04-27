@@ -65,11 +65,11 @@ jobs:
 
       - name: "Cancel vertex ai"
         run: |
-             unset CLOUDSDK_CORE_PROJECT
-             gcloud config set project p-601-np-bcleadsmgmt-qat
-             gcloud ai pipeline-jobs cancel ead-match-pipeline-20260427081736 \
+          unset CLOUDSDK_CORE_PROJECT
+          gcloud config set project p-601-np-bcleadsmgmt-qat
+          gcloud ai pipeline-jobs cancel lead-match-pipeline-20260427081736 \
             --project=p-601-np-bcleadsmgmt-qat \
-            --region=us-central-1
+            --region=us-central1
 
       # - name: "Run cloud run job in qat"
       #   run: | 
