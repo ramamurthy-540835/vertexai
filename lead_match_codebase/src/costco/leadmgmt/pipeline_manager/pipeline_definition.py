@@ -150,7 +150,8 @@ def my_pipeline(
         # ).after(task_4)
 
         task_6 = update_servicenow(
-            config_file_path=config_file_path
+            config_file_path=config_file_path,
+            file_path = ""
         )
 
         task_6.set_caching_options(False).set_cpu_limit(CPU_LIMIT).set_memory_limit(MEMORY_LIMIT)
