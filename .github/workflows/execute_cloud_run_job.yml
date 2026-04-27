@@ -61,15 +61,30 @@ jobs:
       #   run: |
       #     unset CLOUDSDK_CORE_PROJECT
       #     gcloud config set project p-601-np-bcleadsmgmt-qat
-      #     gcloud run jobs executions cancel snow-sync-job-bv65h --region us-central1 --project p-601-np-bcleadsmgmt-qat --quiet
+      #     gcloud run jobs executions cancel lead-match-job-q52nl --region us-central1 --project p-601-np-bcleadsmgmt-qat --quiet
 
-      - name: "Run cloud run job in qat"
+      # - name: "Cancel vertex ai"
+      #   run: |
+      #     unset CLOUDSDK_CORE_PROJECT
+      #     gcloud config set project p-601-np-bcleadsmgmt-qat
+      #     gcloud ai pipeline-jobs cancel lead-match-pipeline-20260427081736 \
+      #       --project=p-601-np-bcleadsmgmt-qat \
+      #       --region=us-central1
+
+      # - name: "Run cloud run job in qat"
+      #   run: | 
+      #      unset CLOUDSDK_CORE_PROJECT
+      #      gcloud config set project p-601-np-bcleadsmgmt-qat
+      #      gcloud run jobs execute snow-sync-job --region=us-central1 \
+      #      --project=p-601-np-bcleadsmgmt-qat \
+      #      --args="main.py,match_job"
+      - name: "Run match cloud run job in qat"
         run: | 
            unset CLOUDSDK_CORE_PROJECT
            gcloud config set project p-601-np-bcleadsmgmt-qat
-           gcloud run jobs execute snow-sync-job --region=us-central1 \
+           gcloud run jobs execute lead-match-job --region=us-central1 \
            --project=p-601-np-bcleadsmgmt-qat \
-           --args="main.py,match_job"
+           --args="run.py,update_service_now"
 
       # - name: "Run cloud run job through workflows"
       #   run: | 
