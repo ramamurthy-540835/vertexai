@@ -102,6 +102,7 @@ def process_batches(total_matched, data, batch_size, url, max_retries, retry_del
         for attempt in range(1, max_retries + 1):
             try:
                 response = requests.post(url, headers=headers, data=payload, auth=auth, timeout=(10, 60))
+                print(f"[Batch {batch_number}] Raw response: {response.text}")
 
                 if response.status_code == 200:
                     try:
@@ -120,11 +121,11 @@ def process_batches(total_matched, data, batch_size, url, max_retries, retry_del
 
                     if status == "success":
                         print(f"[Batch {batch_number}] Success: {message}, Success Count: {success_count}")
+                        success = True
 
                     else:
                         last_error = f"Failed: {message}"
                         print(f"[Batch {batch_number}] {last_error}")
-                    #success = True
                     break
 
                 elif response.status_code == 404:
