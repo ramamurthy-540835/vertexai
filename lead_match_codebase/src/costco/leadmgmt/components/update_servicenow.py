@@ -83,7 +83,10 @@ def process_batches(total_matched, data, batch_size, url, max_retries, retry_del
     batch_size, max_retries, retry_delay = map(int, [batch_size, max_retries, retry_delay])  
     auth = (username, password) if username and password else None
 
-    
+    print("URL:", url)
+    print("Auth present:", auth is not None)
+    print("Username:", username)
+    # print("Payload size:", len(payload))
 
     for i in range(0, len(data), batch_size):
         batch = data[i:i + batch_size]
@@ -98,10 +101,7 @@ def process_batches(total_matched, data, batch_size, url, max_retries, retry_del
             }
         })
 
-    print("URL:", url)
-    print("Auth present:", auth is not None)
-    print("Username:", username)
-    print("Payload size:", len(payload))
+        print("Payload size:", len(payload))
 
         success = False
         last_error = None  # To store the last error message
