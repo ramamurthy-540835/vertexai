@@ -149,7 +149,7 @@ def my_pipeline(
         #     file_path=task_4.output
         # ).after(task_4)
 
-         task_6 = update_servicenow(
+        task_6 = update_servicenow(
             config_file_path=config_file_path
         )
 
