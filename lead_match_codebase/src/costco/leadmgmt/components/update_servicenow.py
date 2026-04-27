@@ -6,7 +6,31 @@ from costco.leadmgmt.util.apputil import load_file_from_gcs
 from google.cloud import storage
 import time
 
+def get_gcs_file_path(uri: str) -> str:
+    if not uri.startswith("gs://"):
+        raise ValueError("Invalid GCS URI. Must start with 'gs://'.")
 
+    # Extract bucket and folder from URI
+    path = uri[5:]
+    parts = path.split('/', 1)
+    bucket_name = parts[0]
+    folder_path = parts[1] if len(parts) > 1 else ""
+
+    if folder_path and not folder_path.endswith('/'):
+        folder_path += '/'
+
+    # Connect to GCS
+    client = storage.Client()
+    bucket = client.bucket(bucket_name)
+
+    # List blobs under the folder
+    blobs = list(bucket.list_blobs(prefix=folder_path))
+    files = [blob.name for blob in blobs if not blob.name.endswith('/')]
+
+    if len(files) != 1:
+        raise ValueError(f"Expected exactly one file in '{uri}', found {len(files)}")
+
+    return f"gs://{bucket_name}/{files[0]}"
 
 def generate_post_json(df):
 
