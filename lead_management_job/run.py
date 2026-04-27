@@ -2,6 +2,7 @@ from google.cloud import aiplatform
 from costco.leadmgmt.pipeline_manager.compile_pipeline import compile_and_upload_pipeline
 from costco.leadmgmt.util.match_id_creation import match_id_creation
 from costco.leadmgmt.components.update_source_data import update_cloud_sql
+from costco.leadmgmt.components.update_servicenow import update_servicenow
 import sys
 import os
 
@@ -52,3 +53,5 @@ if __name__ == "__main__":
         compile_and_upload_pipeline(pipeline_name, registry_url)
     elif stage.lower() == "update_database":
         update_cloud_sql(config_file_path)
+    elif stage.lower() == "update_service_now":
+        update_servicenow(config_file_path)

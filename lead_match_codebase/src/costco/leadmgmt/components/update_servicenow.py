@@ -128,9 +128,16 @@ def process_batches(total_matched, data, batch_size, url, max_retries, retry_del
 def update_servicenow(config_file_path: str,file_path: str = ""):
     # Initialization
     job_config = JobConfig(config_file_path)
-    # in case of failure
-    # storage_config = job_config.storage_config
+
+    # service now configurayion
     servicenow_config = job_config.snow_config
+    
+    #in case of failure
+    storage_config=job_config.storage_config
+    standalone_file_path=storage_config.standalone_file_path
+
+    if file_path == "":
+        file_path = get_gcs_file_path(standalone_file_path)
 
     BATCH_SIZE = servicenow_config.batch_size
     url= servicenow_config.match_result_update_url
