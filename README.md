@@ -1,4 +1,3 @@
-# GitHub Actions Workflows Overview
 # CI/CD Pipeline Documentation: Costco Lead Management
 
 This repository uses GitHub Actions to automate infrastructure provisioning, schema updates, container builds, and job deployments for multiple GCP environments (`adt`, `qat`, `spt`).
@@ -18,6 +17,7 @@ This repository leverages GitHub Actions and Terraform to automate the infrastru
 | `provision_spt.yml`            | Provision infrastructure         | `spt`                | Git tag `tag_spt`                             | Terraform                     |
 | `snow_sync_job_deployment.yml`| Deploy Cloud Run Snow Sync Job   | `adt`, `qat`, `spt`  | Push to `main`, `feature/**`, or tag `tag_*`  | Cloud Run, Scheduler          |
 | `lead_match_job_deployment.yml`| Deploy Lead Match Cloud Run Job | `adt`, `qat`, `spt`  | Triggered by `workflow_call`                 | Cloud Run                     |
+
 The CI/CD flow follows a "Branch-to-Environment" strategy, ensuring that code is validated in development before moving to testing and staging.
 
 ### Deployment Flow
@@ -88,6 +88,7 @@ Provisions cloud infrastructure for the `adt` environment.
   - `terraform/environments/adt/infra/**`
   - `terraform/modules/**`
   - `.github/workflows/provision_adt.yml`
+
 | Workflow                        | Purpose                          | Environments         | Triggered On                                  | Tools Used                    |
 |--------------------------------|----------------------------------|----------------------|-----------------------------------------------|-------------------------------|
 | `lead_mgmt_image.yml`          | Build & push container image     | All                  | Push to `feature/**`                          | Docker, GitHub & GCP Registry |
