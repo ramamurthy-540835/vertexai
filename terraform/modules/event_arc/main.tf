@@ -3,24 +3,24 @@ resource "google_eventarc_trigger" "gcs_csv_trigger" {
   location = var.region
 
   # Event filters
-  event_filters {
+  matching_criteria {
     attribute = "type"
     value     = "google.cloud.storage.object.v1.finalized"
   }
 
-  event_filters {
+  matching_criteria {
     attribute = "bucket"
     value     = var.bucket_name
   }
 
   # Filter for folder (prefix)
-  event_filters {
+  matching_criteria {
     attribute = "objectNamePrefix"
     value     = var.path
   }
 
   # Filter for CSV files
-  event_filters {
+  matching_criteria {
     attribute = "objectNameSuffix"
     value     = ".csv"
   }
