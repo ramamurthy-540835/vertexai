@@ -146,3 +146,17 @@ module "security_monitoring" {
   notification_channels = [module.monitoring_alert.notification_channel_id]
 }
 
+module "event_arc" {
+
+source = "../../../modules/event_arc"
+
+  project_id            = var.projectId
+  trigger_name          = "pos-csv-to-workflow-trigger"
+  region                = var.region
+  bucket_name           = "gcp-gcs-${var.prefix}-${var.country}-${var.environment}"
+  path                  = "pos_raw/"   # folder prefix
+  workflow_name         = "snow_sync_workflow"
+  service_account_email = module.project_init.service_account_email
+
+}
+
