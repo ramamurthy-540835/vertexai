@@ -8,7 +8,7 @@ from costco.leadmgmt.sync_snow_gcp import get_data_from_snow, load_data_to_db, w
 if __name__ == "__main__":
     config_path = os.environ.get("CONFIG_FILE_PATH")
     job_config = JobConfig(config_path)
-    snow_config = SnowConfig.from_config(config)
+    snow_config = SnowConfig.from_config(config_path)
 
     batch_id = os.getenv('BATCH_ID')
 
