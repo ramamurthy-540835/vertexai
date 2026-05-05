@@ -8,7 +8,6 @@ from costco.leadmgmt.sync_snow_gcp import get_data_from_snow, load_data_to_db, w
 if __name__ == "__main__":
     config_path = os.environ.get("CONFIG_FILE_PATH")
     job_config = JobConfig(config_path)
-    snow_config = SnowConfig.from_config(config_path)
 
     batch_id = os.getenv('BATCH_ID')
 
@@ -36,8 +35,8 @@ if __name__ == "__main__":
         def get_token():
             token_url = "https://costcobizsvctest.service-now.com/oauth_token.do"
 
-            CLIENT_ID = snow_config.snow_client_id
-            CLIENT_SECRET = snow_config.snow_client_secret
+            CLIENT_ID = job_config.snow_config.snow_client_id
+            CLIENT_SECRET = job_config.snow_config.snow_client_secret
             
             response = requests.post(
                 token_url,
