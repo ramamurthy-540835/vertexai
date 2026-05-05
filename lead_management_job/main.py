@@ -28,51 +28,51 @@ if __name__ == "__main__":
             print(ex)
             raise ex
     elif stage.lower() == "snow_validation":
-        try:
-            import requests
-            import json
+        
+        import requests
+        import json
 
-            def get_token():
-                token_url = "https://costcobizsvctest.service-now.com/oauth_token.do"
+        def get_token():
+            token_url = "https://costcobizsvctest.service-now.com/oauth_token.do"
 
-                CLIENT_ID = SnowConfig.snow_client_id
-                CLIENT_SECRET = SnowConfig.snow_client_secret
-                
-                response = requests.post(
-                    token_url,
-                    data={
-                        "grant_type": "client_credentials",
-                        "client_id": CLIENT_ID ,
-                        "client_secret": CLIENT_SECRET 
-                    }
-                )
-    
-                return response.json()["access_token"]
-
-
-            def call_api():
-                token = get_token()
-                
-                url = "https://costcobizsvctest.service-now.com/api/sn_retail/lead_pos_data/getLead"
-                
-                payload = json.dumps({
-                    "start_index": "1",
-                    "end_index": "5",
-                    "start_date": "2025-05-05",
-                    "end_date": "2025-07-17"
-                })
-                
-                headers = {
-                    'Content-Type': 'application/json',
-                    'Accept': 'application/json',
-                    'Authorization': f'Bearer {token}'
+            CLIENT_ID = SnowConfig.snow_client_id
+            CLIENT_SECRET = SnowConfig.snow_client_secret
+            
+            response = requests.post(
+                token_url,
+                data={
+                    "grant_type": "client_credentials",
+                    "client_id": CLIENT_ID ,
+                    "client_secret": CLIENT_SECRET 
                 }
+            )
 
-                response = requests.post(url, headers=headers, data=payload)
-                
-                print(response.text)
+            return response.json()["access_token"]
 
-            call_api()
+
+        def call_api():
+            token = get_token()
+            
+            url = "https://costcobizsvctest.service-now.com/api/sn_retail/lead_pos_data/getLead"
+            
+            payload = json.dumps({
+                "start_index": "1",
+                "end_index": "5",
+                "start_date": "2025-05-05",
+                "end_date": "2025-07-17"
+            })
+            
+            headers = {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json',
+                'Authorization': f'Bearer {token}'
+            }
+
+            response = requests.post(url, headers=headers, data=payload)
+            
+            print(response.text)
+
+        call_api()
     elif stage.lower() == "db_connection":
         import sqlalchemy
         from google.cloud.sql.connector import Connector, IPTypes
