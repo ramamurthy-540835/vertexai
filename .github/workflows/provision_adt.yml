@@ -32,6 +32,13 @@ jobs:
       id-token: write
       contents: read
 
+    env:
+      TF_VAR_gcp_workload_identity_sa_email: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
+      TF_VAR_service_now_client_id: ${{ secrets.SERVICE_NOW_CLIENT_ID }}
+      TF_VAR_service_now_client_secret: ${{ secrets.SERVICE_NOW_CLIENT_SECRET }}
+      TF_VAR_service_now_username: ${{ secrets.SERVICE_NOW_USERNAME }}
+      TF_VAR_service_now_password: ${{ secrets.SERVICE_NOW_PASSWORD }}
+
     steps:
       - name: "Checkout code"
         uses: actions/checkout@v4
@@ -59,9 +66,3 @@ jobs:
       - name: "Terraform Apply"
         working-directory: ./terraform/environments/${{ matrix.env }}/infra
         run: terraform apply -input=false -lock-timeout=10m plan.tfplan
-        env: 
-            TF_VAR_gcp_workload_identity_sa_email: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
-            TF_VAR_service_now_client_id: ${{secrets.SERVICE_NOW_CLIENT_ID}}
-            TF_VAR_service_now_client_secret: ${{secrets.SERVICE_NOW_CLIENT_SECRET}}
-            TF_VAR_service_now_username: ${{secrets.SERVICE_NOW_USERNAME}}
-            TF_VAR_service_now_password: ${{secrets.SERVICE_NOW_PASSWORD}}  
