@@ -79,14 +79,28 @@ module "service_now_username" {
   source        = "../../../modules/secret_manager"
   project       = var.projectId
   secret_id     = "lead_mgmt_snow_user"
-  secret_value  = "lead.api.access"
+  secret_value  = var.service_now_username
 }
 
 module "service_now_password" {
   source        = "../../../modules/secret_manager"
   project       = var.projectId
   secret_id     = "lead_mgmt_snow_password"
-  secret_value  = "Costco@web123"
+  secret_value  = var.service_now_password
+}
+
+module "service_now_client_id" {
+  source        = "../../../modules/secret_manager"
+  project       = var.projectId
+  secret_id     = "service_now_client_id"
+  secret_value  = var.service_now_client_id
+}
+
+module "service_now_client_secret" {
+  source        = "../../../modules/secret_manager"
+  project       = var.projectId
+  secret_id     = "service_now_client_secret"
+  secret_value  = var.service_now_client_secret
 }
 
 module "cloud_sql_instance" {
@@ -146,7 +160,7 @@ module "security_monitoring" {
   notification_channels = [module.monitoring_alert.notification_channel_id]
 }
 
-module "event_arc" {
+/*module "event_arc" {
 
 source = "../../../modules/event_arc"
 
@@ -158,5 +172,5 @@ source = "../../../modules/event_arc"
   workflow_name         = "snow_sync_workflow"
   service_account_email = module.project_init.service_account_email
 
-}
+}*/
 

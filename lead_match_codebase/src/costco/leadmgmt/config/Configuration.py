@@ -262,8 +262,12 @@ class SnowConfig:
     def from_config(cls, config):
         snow_user_id = cls.get_config("SERVICENOW", "snow_user", config, None)
         snow_password_id = cls.get_config("SERVICENOW", "snow_password", config, None)
+        snow_client_id_detail = cls.get_config("SERVICENOW", "snow_client_id", config, None)
+        snow_client_secret_detail = cls.get_config("SERVICENOW", "snow_client_secret", config, None)
         project_id: str = cls.get_config("SERVICENOW", "gcp_project_id", config, None)
         snow_password: str = apputil.access_secret_version(project_id, snow_password_id, version_id="latest")
+        snow_client_secret: str = apputil.access_secret_version(project_id, snow_client_secret_detail, version_id="latest")
+        snow_client_id: str = apputil.access_secret_version(project_id, snow_client_id_detail, version_id="latest")
         snow_user: str = apputil.access_secret_version(project_id, snow_user_id, version_id="latest")
         lead_url = cls.get_config("SERVICENOW", "lead_url", config, None)
         contact_url = cls.get_config("SERVICENOW", "contact_url", config, None)

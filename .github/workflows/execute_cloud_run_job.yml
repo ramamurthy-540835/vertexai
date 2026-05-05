@@ -71,13 +71,21 @@ jobs:
       #       --project=p-601-np-bcleadsmgmt-qat \
       #       --region=us-central1
 
-      - name: "Run cloud run job in qat"
+      # - name: "Run cloud run job in qat"
+      #   run: | 
+      #      unset CLOUDSDK_CORE_PROJECT
+      #      gcloud config set project p-601-np-bcleadsmgmt-qat
+      #      gcloud run jobs execute snow-sync-job --region=us-central1 \
+      #      --project=p-601-np-bcleadsmgmt-qat \
+      #      --args="main.py,match_job"
+
+      - name: "Test service now connectivity in ADT"
         run: | 
            unset CLOUDSDK_CORE_PROJECT
-           gcloud config set project p-601-np-bcleadsmgmt-qat
+           gcloud config set project p-601-np-bcleadsmgmt-adt
            gcloud run jobs execute snow-sync-job --region=us-central1 \
-           --project=p-601-np-bcleadsmgmt-qat \
-           --args="main.py,match_job"
+           --project=p-601-np-bcleadsmgmt-adt \
+           --args="main.py,snow_validation"
       # - name: "Run match cloud run job in qat"
       #   run: | 
       #      unset CLOUDSDK_CORE_PROJECT
