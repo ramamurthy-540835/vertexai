@@ -47,7 +47,7 @@ if __name__ == "__main__":
                 }
             )
 
-            if "access_token" not in response_json:
+            if "access_token" not in response:
                 raise Exception(f"Token request failed: {response_json}")
 
             return response.json()["access_token"]
