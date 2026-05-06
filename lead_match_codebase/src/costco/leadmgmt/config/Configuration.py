@@ -193,6 +193,7 @@ class DatabaseDetail:
 class SnowConfig:
     lead_url: str
     pos_url: str
+    token_url:str
     contact_url: str
     match_result_url: str
     max_batch_size: int
@@ -209,14 +210,14 @@ class SnowConfig:
     retry_delay: int
 
     def __repr__(self):
-        return {"lead_url": self.lead_url, "pos_url": self.pos_url
+        return {"lead_url": self.lead_url, "pos_url": self.pos_url, "token_url":self.token_url
             , "match_result_url": self.match_result_url, "max_batch_size": self.max_batch_size
             , "project_id": self.project_id, "snow_user": self.snow_user, "snow_password": "*********",
                 "snow_client_id" : self.snow_client_id, "snow_client_secret" : self.snow_client_secret,
                 "default_start_date": self.default_start_date}
 
     def __str__(self):
-        return str({"lead_url": self.lead_url, "pos_url": self.pos_url
+        return str({"lead_url": self.lead_url, "pos_url": self.pos_url,"token_url":self.token_url
                        , "match_result_url": self.match_result_url, "max_batch_size": self.max_batch_size
                        , "project_id": self.project_id, "snow_user": self.snow_user, "snow_password": "*********",
                         "snow_client_id" : self.snow_client_id, "snow_client_secret" : self.snow_client_secret,
@@ -275,6 +276,7 @@ class SnowConfig:
         snow_user: str = apputil.access_secret_version(project_id, snow_user_id, version_id="latest")
         lead_url = cls.get_config("SERVICENOW", "lead_url", config, None)
         contact_url = cls.get_config("SERVICENOW", "contact_url", config, None)
+        token_url = cls.get_config("SERVICENOW", "token_url", config, None)
         match_url = cls.get_config("SERVICENOW", "match_url", config, None)
         pos_url = cls.get_config("SERVICENOW", "pos_url", config, None)
         match_result_update_url =cls.get_config("SERVICENOW", "match_result_update_url", config, None)
@@ -287,6 +289,7 @@ class SnowConfig:
             lead_url=lead_url,
             pos_url=pos_url,
             contact_url=contact_url,
+            token_url=token_url
             match_result_url=match_url,
             max_batch_size=int(cls.get_config("SERVICENOW", "max_batch_size", config, None)),
             project_id=project_id,

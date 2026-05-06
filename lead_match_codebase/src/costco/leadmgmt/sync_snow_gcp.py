@@ -788,7 +788,7 @@ def read_lead_data(batch_id, snow_config: SnowConfig, gcs_config: StorageConfig,
                 "end_index": end_index,
                 "start_date": start_date,
                 "end_date": end_date}
-            output_data = read_data_from_snow(snow_config.lead_url, snow_config.snow_user, snow_config.snow_password,
+            output_data = read_data_from_snow(snow_config.lead_url, snow_config.token_url, snow_config.snow_client_id, snow_config.snow_client_secret,
                                               payload)
 
             if int(output_data['result']['returned_count']) > 0 and len(output_data['result']['returned_count']) > 0:
