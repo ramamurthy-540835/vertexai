@@ -6,7 +6,7 @@
 -- Alter table "$SCHEMA_NAME".error_audit
 -- ADD COLUMN batch_id uuid;
 
--- GRANT DELETE ON ALL TABLES IN SCHEMA "$SCHEMA_NAME" TO "postgres";
+GRANT DELETE ON ALL TABLES IN SCHEMA "$SCHEMA_NAME" TO "postgres";
 
 -- Alter table "$SCHEMA_NAME".account 
 -- ALTER COLUMN business_name TYPE VARCHAR(150);
@@ -36,6 +36,6 @@
 -- UPDATE "$SCHEMA_NAME".match_configuration 
 -- set match_result = 'No Match' where confidence_level = 'No Match';
 
-Alter table  "$SCHEMA_NAME".transaction
-rename column nmi_flag to primary_transaction;
+-- Alter table  "$SCHEMA_NAME".transaction
+-- rename column nmi_flag to primary_transaction;
 

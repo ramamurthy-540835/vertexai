@@ -63,7 +63,17 @@ module "main_bucket" {
   location          = var.location
   labels            = var.labels
   log_bucket        = module.logging_bucket.bucket_name
-  log_object_prefix = "logs/"
+  log_object_prefix = "logs/gcp-gcs-${var.prefix}-${var.country}-${var.environment}/"
+}
+
+module "pos_bucket" {
+  source            = "../../../modules/gcs_bucket"
+  project_id        = var.projectId
+  bucket_name       = "gcp-gcs-${var.prefix}-${var.country}-${var.environment}-pos-raw"
+  location          = var.location
+  labels            = var.labels
+  log_bucket        = module.logging_bucket.bucket_name
+  log_object_prefix = "logs/gcp-gcs-${var.prefix}-${var.country}-${var.environment}-pos-raw/"
 }
 
 module "kubeflow_registry" {
