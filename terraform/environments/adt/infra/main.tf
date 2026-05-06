@@ -170,7 +170,7 @@ module "security_monitoring" {
   notification_channels = [module.monitoring_alert.notification_channel_id]
 }
 
-/*module "event_arc" {
+module "event_arc" {
 
 source = "../../../modules/event_arc"
 
@@ -182,5 +182,5 @@ source = "../../../modules/event_arc"
   workflow_name         = "snow_sync_workflow"
   service_account_email = module.project_init.service_account_email
 
-}*/
+}
 
