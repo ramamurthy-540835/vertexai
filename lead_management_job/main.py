@@ -1,7 +1,7 @@
 import sys
 import uuid
 import os
-from costco.leadmgmt.config.Configuration import JobConfig
+from costco.leadmgmt.config.Configuration import JobConfig,SnowConfig
 from costco.leadmgmt.sync_snow_gcp import get_data_from_snow, load_data_to_db, write_lead_data_to_db, \
     write_pos_data_to_db, read_lead_data, read_pos_data, get_record_snow_to_gcs, trigger_match_job
 
@@ -28,33 +28,54 @@ if __name__ == "__main__":
             print(ex)
             raise ex
     elif stage.lower() == "snow_validation":
-        try:
-            import json
-            import requests
-            url = "https://costcobizsvctest.service-now.com/api/sn_retail/lead_pos_data/getLead"
-            username = 'lead.api.access'
-            password = 'Costco@web123'
+        
+        import requests
+        import json
 
-            payload = json.dumps({
-            "start_index": "1",
-            "end_index": "5",
-            "start_date": "2025-05-05",
-            "end_date": "2025-07-17"
-            })
-            headers = {
-                    'Content-Type': 'application/json',
-                    'Accept': 'application/json'
+        def get_token():
+            token_url = "https://costcobizsvctest.service-now.com/oauth_token.do"
+
+            CLIENT_ID = job_config.snow_config.snow_client_id
+            CLIENT_SECRET = job_config.snow_config.snow_client_secret
+            
+            response = requests.post(
+                token_url,
+                data={
+                    "grant_type": "client_credentials",
+                    "client_id": CLIENT_ID ,
+                    "client_secret": CLIENT_SECRET 
                 }
-                
-            auth = (username, password) 
+            )
 
-            response = requests.request("POST", url, headers=headers, data=payload, auth=auth)
+            if "access_token" not in response:
+                raise Exception(f"Token request failed: {response}")
 
+            return response.json()["access_token"]
+
+
+        def call_api():
+            token = get_token()
+            
+            url = "https://costcobizsvctest.service-now.com/api/sn_retail/lead_pos_data/getLead"
+            
+            payload = json.dumps({
+                "start_index": "1",
+                "end_index": "5",
+                "start_date": "2025-05-05",
+                "end_date": "2025-07-17"
+            })
+            
+            headers = {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json',
+                'Authorization': f'Bearer {token}'
+            }
+
+            response = requests.post(url, headers=headers, data=payload)
+            
             print(response.text)
-            print("Snow validation successfully completed")
-        except Exception as ex:
-            print("Error happened during snow_validation process")
-            print(ex)
+
+        call_api()
     elif stage.lower() == "db_connection":
         import sqlalchemy
         from google.cloud.sql.connector import Connector, IPTypes

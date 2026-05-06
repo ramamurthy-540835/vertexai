@@ -20,7 +20,8 @@ variable "services" {
     "run.googleapis.com",
     "containerthreatdetection.googleapis.com",
     "logging.googleapis.com",
-    "aiplatform.googleapis.com"
+    "aiplatform.googleapis.com",
+    "eventarc.googleapis.com"
   ]
 }
 

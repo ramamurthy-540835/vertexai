@@ -63,7 +63,17 @@ module "main_bucket" {
   location          = var.location
   labels            = var.labels
   log_bucket        = module.logging_bucket.bucket_name
-  log_object_prefix = "logs/"
+  log_object_prefix = "logs/gcp-gcs-${var.prefix}-${var.country}-${var.environment}/"
+}
+
+module "pos_bucket" {
+  source            = "../../../modules/gcs_bucket"
+  project_id        = var.projectId
+  bucket_name       = "gcp-gcs-${var.prefix}-${var.country}-${var.environment}-pos-raw"
+  location          = var.location
+  labels            = var.labels
+  log_bucket        = module.logging_bucket.bucket_name
+  log_object_prefix = "logs/gcp-gcs-${var.prefix}-${var.country}-${var.environment}-pos-raw/"
 }
 
 module "kubeflow_registry" {
@@ -79,14 +89,28 @@ module "service_now_username" {
   source        = "../../../modules/secret_manager"
   project       = var.projectId
   secret_id     = "lead_mgmt_snow_user"
-  secret_value  = "lead.api.access"
+  secret_value  = var.service_now_username
 }
 
 module "service_now_password" {
   source        = "../../../modules/secret_manager"
   project       = var.projectId
   secret_id     = "lead_mgmt_snow_password"
-  secret_value  = "Costco@web123"
+  secret_value  = var.service_now_password
+}
+
+module "service_now_client_id" {
+  source        = "../../../modules/secret_manager"
+  project       = var.projectId
+  secret_id     = "service_now_client_id"
+  secret_value  = var.service_now_client_id
+}
+
+module "service_now_client_secret" {
+  source        = "../../../modules/secret_manager"
+  project       = var.projectId
+  secret_id     = "service_now_client_secret"
+  secret_value  = var.service_now_client_secret
 }
 
 module "cloud_sql_instance" {
@@ -144,5 +168,19 @@ module "security_monitoring" {
   source                = "../../../modules/security_monitoring"
   project_id            = var.projectId
   notification_channels = [module.monitoring_alert.notification_channel_id]
+}
+
+module "event_arc" {
+
+source = "../../../modules/event_arc"
+
+  project_id            = var.projectId
+  trigger_name          = "pos-csv-to-workflow-trigger"
+  region                = var.region
+  bucket_name           = "gcp-gcs-${var.prefix}-${var.country}-${var.environment}"
+  path                  = "pos_raw/"   # folder prefix
+  workflow_name         = "snow_sync_workflow"
+  service_account_email = module.project_init.service_account_email
+
 }
 

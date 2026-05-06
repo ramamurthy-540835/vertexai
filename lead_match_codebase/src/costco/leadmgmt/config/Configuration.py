@@ -199,6 +199,8 @@ class SnowConfig:
     project_id: str
     snow_password: str
     snow_user: str
+    snow_client_id: str
+    snow_client_secret: str
     api_urls: dict
     default_start_date: str
     match_result_update_url: str
@@ -210,12 +212,14 @@ class SnowConfig:
         return {"lead_url": self.lead_url, "pos_url": self.pos_url
             , "match_result_url": self.match_result_url, "max_batch_size": self.max_batch_size
             , "project_id": self.project_id, "snow_user": self.snow_user, "snow_password": "*********",
+                "snow_client_id" : self.snow_client_id, "snow_client_secret" : self.snow_client_secret,
                 "default_start_date": self.default_start_date}
 
     def __str__(self):
         return str({"lead_url": self.lead_url, "pos_url": self.pos_url
                        , "match_result_url": self.match_result_url, "max_batch_size": self.max_batch_size
                        , "project_id": self.project_id, "snow_user": self.snow_user, "snow_password": "*********",
+                        "snow_client_id" : self.snow_client_id, "snow_client_secret" : self.snow_client_secret,
                     "default_start_date": self.default_start_date})
 
     @staticmethod
@@ -262,8 +266,12 @@ class SnowConfig:
     def from_config(cls, config):
         snow_user_id = cls.get_config("SERVICENOW", "snow_user", config, None)
         snow_password_id = cls.get_config("SERVICENOW", "snow_password", config, None)
+        snow_client_id_detail = cls.get_config("SERVICENOW", "snow_client_id", config, None)
+        snow_client_secret_detail = cls.get_config("SERVICENOW", "snow_client_secret", config, None)
         project_id: str = cls.get_config("SERVICENOW", "gcp_project_id", config, None)
         snow_password: str = apputil.access_secret_version(project_id, snow_password_id, version_id="latest")
+        snow_client_secret: str = apputil.access_secret_version(project_id, snow_client_secret_detail, version_id="latest")
+        snow_client_id: str = apputil.access_secret_version(project_id, snow_client_id_detail, version_id="latest")
         snow_user: str = apputil.access_secret_version(project_id, snow_user_id, version_id="latest")
         lead_url = cls.get_config("SERVICENOW", "lead_url", config, None)
         contact_url = cls.get_config("SERVICENOW", "contact_url", config, None)
@@ -284,6 +292,8 @@ class SnowConfig:
             project_id=project_id,
             snow_password=snow_password,
             snow_user=snow_user,
+            snow_client_id=snow_client_id,
+            snow_client_secret=snow_client_secret,
             api_urls=urls,
             default_start_date=cls.get_config("SERVICENOW", "default_start_date", config, "2025-05-07 00:00:00"),
             match_result_update_url=match_result_update_url,

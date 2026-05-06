@@ -36,6 +36,18 @@
 -- UPDATE "$SCHEMA_NAME".match_configuration 
 -- set match_result = 'No Match' where confidence_level = 'No Match';
 
-Alter table  "$SCHEMA_NAME".transaction
-rename column nmi_flag to primary_transaction;
+-- Alter table  "$SCHEMA_NAME".transaction
+-- rename column nmi_flag to primary_transaction;
 
+
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON 
+    "$SCHEMA_NAME".lead,
+    "$SCHEMA_NAME".transaction,
+    "$SCHEMA_NAME".leads_embeddings,
+    "$SCHEMA_NAME".pos_embeddings,
+    "$SCHEMA_NAME".account,
+    "$SCHEMA_NAME".contact,
+    "$SCHEMA_NAME".error_Audit,
+    "$SCHEMA_NAME".batch_audit
+TO "postgres";
