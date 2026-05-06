@@ -238,32 +238,63 @@ def upsert_using_primary_key(df, table_name, primary_key_column, db_config: Data
     return total_success_count, total_error_record, list(failed_ids)
 
 
-def read_data_from_snow(url, username, password, payload, auth_type='Basic'):
+def _get_oauth_token(token_url, client_id, client_secret):
+    """Fetch an OAuth2 access token using client credentials flow."""
+    headers = {"Content-Type": "application/x-www-form-urlencoded"}
+    payload = {
+        "grant_type": "client_credentials",
+        "client_id": client_id,
+        "client_secret": client_secret,
+    }
+
+    response = requests.post(token_url, headers=headers, data=payload)
+
+    if response.status_code == 200:
+        return response.json().get("access_token")
+    else:
+        raise Exception(
+            f"Failed to obtain OAuth token. Status: {response.status_code}, "
+            f"Response: {response.text}"
+        )
+
+
+def read_data_from_snow(url, token_url, client_id, client_secret, payload):
     headers = {"Content-Type": "application/json", "Accept": "application/json"}
     max_retry = 3
     retry_attempt = 0
-    is_data_retrived = False
+    is_data_retrieved = False
 
-    while not is_data_retrived and retry_attempt < max_retry:
+    while not is_data_retrieved and retry_attempt < max_retry:
         try:
-            response = requests.post(url, auth=(username, password), headers=headers, data=json.dumps(payload))
+            access_token = _get_oauth_token(token_url, client_id, client_secret)
+            headers["Authorization"] = f"Bearer {access_token}"
+
+            response = requests.post(
+                url, headers=headers, data=json.dumps(payload)
+            )
 
             if response.status_code == 200:
-                res_data = response.json()
-                isDataRetrived = True
-                return res_data
+                is_data_retrieved = True
+                return response.json()
             else:
-                app_logger.debug('Status:', response.status_code, 'Headers:', response.headers, 'Error Response:', response.json())
-                app_logger.debug(f"Connecting to Service Now API failed with status code - {response.status_code}")
+                app_logger.debug(
+                    f"Status: {response.status_code} | "
+                    f"Headers: {response.headers} | "
+                    f"Error: {response.text}"
+                )
+                app_logger.debug(
+                    f"ServiceNow API call failed with status {response.status_code}"
+                )
                 retry_attempt += 1
+
         except Exception as ex:
+            app_logger.warning(f"Attempt {retry_attempt + 1} failed: {ex}")
             retry_attempt += 1
 
-    if not is_data_retrived:
-        app_logger.error("Error Occurred while getting data from ServiceNow.")
-        raise Exception("Error Occurred while getting data from ServiceNow.")
-
-
+    if not is_data_retrieved:
+        app_logger.error("Error occurred while getting data from ServiceNow.")
+        raise Exception("Error occurred while getting data from ServiceNow.")
+        
 def archive_gcs_files(
         source_bucket_name,
         source_folder,
