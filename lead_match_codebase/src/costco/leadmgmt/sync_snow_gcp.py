@@ -883,9 +883,9 @@ def get_record_snow_to_gcs(batch_id, data_type: str, job_config: JobConfig):
                 "end_index": end_index,
                 "start_date": start_date,
                 "end_date": end_date}
-            output_data = read_data_from_snow(snow_config.api_urls[data_type], snow_config.snow_user,
-                                              snow_config.snow_password,
-                                              payload)
+            output_data = read_data_from_snow(snow_config.api_urls[data_type], snow_config.token_url,
+                                  snow_config.snow_client_id, snow_config.snow_client_secret,
+                                  payload)
 
             if int(output_data['result']['returned_count']) > 0 and len(output_data['result']['returned_count']) > 0:
                 # output_data, folder_path, file_name, bucket_name, chunk_number,service_account_path=None,file_type="json"
@@ -901,7 +901,7 @@ def get_record_snow_to_gcs(batch_id, data_type: str, job_config: JobConfig):
                                 "Completed", database_config)
 
     except Exception as exc:
-        app_logger.error("Error while getting POS data from  service Now")
+        app_logger.error("Error while getting data from  service Now")
         ba_util.update_batch_id(batch_id, data_type, "staging", total_rec_count, total_rec_count,
                                 "Failed", database_config)
         raise exc
