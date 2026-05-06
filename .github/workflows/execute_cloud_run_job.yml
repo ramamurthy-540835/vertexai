@@ -79,13 +79,13 @@ jobs:
       #      --project=p-601-np-bcleadsmgmt-qat \
       #      --args="main.py,match_job"
 
-      # - name: "Test service now connectivity in ADT"
-      #   run: | 
-      #      unset CLOUDSDK_CORE_PROJECT
-      #      gcloud config set project p-601-np-bcleadsmgmt-adt
-      #      gcloud run jobs execute snow-sync-job --region=us-central1 \
-      #      --project=p-601-np-bcleadsmgmt-adt \
-      #      --args="main.py,snow_validation"
+      - name: "Test service now connectivity in ADT"
+        run: | 
+           unset CLOUDSDK_CORE_PROJECT
+           gcloud config set project p-601-np-bcleadsmgmt-adt
+           gcloud run jobs execute snow-sync-job --region=us-central1 \
+           --project=p-601-np-bcleadsmgmt-adt \
+           --args="main.py,snow_validation"
       # - name: "Run match cloud run job in qat"
       #   run: | 
       #      unset CLOUDSDK_CORE_PROJECT
@@ -94,36 +94,36 @@ jobs:
       #      --project=p-601-np-bcleadsmgmt-qat \
       #      --args="run.py,update_service_now"
 
-      - name: "Run cloud run job through workflows"
-        run: | 
-          unset CLOUDSDK_CORE_PROJECT
-          gcloud config set project $PROJECT_ID
+      # - name: "Run cloud run job through workflows"
+      #   run: | 
+      #     unset CLOUDSDK_CORE_PROJECT
+      #     gcloud config set project $PROJECT_ID
 
-          # Assign inputs to variables
-          RESUME_BATCH_ID="${{ github.event.inputs.resume_batch_id }}"
-          START_STAGE="${{ github.event.inputs.start_stage }}"
+      #     # Assign inputs to variables
+      #     RESUME_BATCH_ID="${{ github.event.inputs.resume_batch_id }}"
+      #     START_STAGE="${{ github.event.inputs.start_stage }}"
 
-          echo "Resume Batch ID: $RESUME_BATCH_ID"
-          echo "Start Stage: $START_STAGE"
+      #     echo "Resume Batch ID: $RESUME_BATCH_ID"
+      #     echo "Start Stage: $START_STAGE"
 
-          JSON_DATA='{}'
+      #     JSON_DATA='{}'
 
-          # Add resume_batch_id
-          if [ -n "$RESUME_BATCH_ID" ]; then
-            JSON_DATA=$(echo "$JSON_DATA" | jq --arg id "$RESUME_BATCH_ID" '.resume_batch_id = $id')
-          fi
+      #     # Add resume_batch_id
+      #     if [ -n "$RESUME_BATCH_ID" ]; then
+      #       JSON_DATA=$(echo "$JSON_DATA" | jq --arg id "$RESUME_BATCH_ID" '.resume_batch_id = $id')
+      #     fi
 
-          # Add start_stage
-          if [ -n "$START_STAGE" ]; then
-            JSON_DATA=$(echo "$JSON_DATA" | jq --arg step "$START_STAGE" '.start_at = $step')
-          fi
+      #     # Add start_stage
+      #     if [ -n "$START_STAGE" ]; then
+      #       JSON_DATA=$(echo "$JSON_DATA" | jq --arg step "$START_STAGE" '.start_at = $step')
+      #     fi
 
-          echo "Constructed JSON data: $JSON_DATA"
+      #     echo "Constructed JSON data: $JSON_DATA"
 
-          gcloud workflows execute snow_sync_workflow \
-            --location=us-central1 \
-            --project=$PROJECT_ID \
-            --data="$JSON_DATA"
+      #     gcloud workflows execute snow_sync_workflow \
+      #       --location=us-central1 \
+      #       --project=$PROJECT_ID \
+      #       --data="$JSON_DATA"
         #gcloud workflows execute snow_sync_workflow --location=us-central1 \
         #--data='{"batch_id":"7bd759e8-cde4-44a1-9c4b-3689d199ada3","start_at":"leads_to_db"}'
 
