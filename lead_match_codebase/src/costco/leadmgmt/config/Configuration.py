@@ -289,7 +289,7 @@ class SnowConfig:
             lead_url=lead_url,
             pos_url=pos_url,
             contact_url=contact_url,
-            token_url=token_url
+            token_url=token_url,
             match_result_url=match_url,
             max_batch_size=int(cls.get_config("SERVICENOW", "max_batch_size", config, None)),
             project_id=project_id,
