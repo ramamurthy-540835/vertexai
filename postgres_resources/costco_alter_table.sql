@@ -6,7 +6,7 @@
 -- Alter table "$SCHEMA_NAME".error_audit
 -- ADD COLUMN batch_id uuid;
 
-GRANT DELETE ON ALL TABLES IN SCHEMA "$SCHEMA_NAME" TO "postgres";
+-- GRANT DELETE ON ALL TABLES IN SCHEMA "$SCHEMA_NAME" TO "postgres";
 
 -- Alter table "$SCHEMA_NAME".account 
 -- ALTER COLUMN business_name TYPE VARCHAR(150);
@@ -39,3 +39,13 @@ GRANT DELETE ON ALL TABLES IN SCHEMA "$SCHEMA_NAME" TO "postgres";
 -- Alter table  "$SCHEMA_NAME".transaction
 -- rename column nmi_flag to primary_transaction;
 
+
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON 
+    "$SCHEMA_NAME".lead,
+    "$SCHEMA_NAME".transaction,
+    "$SCHEMA_NAME".leads_embeddings,
+    "$SCHEMA_NAME".pos_embeddings,
+    "$SCHEMA_NAME".account,
+    "$SCHEMA_NAME".contact,
+TO "postgres";
