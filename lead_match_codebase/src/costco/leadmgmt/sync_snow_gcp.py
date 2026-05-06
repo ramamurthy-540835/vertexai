@@ -5,7 +5,7 @@ import sys
 import time
 import uuid
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timezone,timedelta
 
 import pandas as pd
 import requests
@@ -19,6 +19,9 @@ from costco.leadmgmt.config.Configuration import JobConfig, StorageConfig, SnowC
 from costco.leadmgmt.database.DBUtil import DatabaseDetail, get_table_row_count
 from costco.leadmgmt.util.logger import app_logger
 
+
+# Global token cache
+_token_cache = {}
 
 def split_lead_account_bo(lead_df, batch_id, transform_config):
     ls_account_columns = transform_config.account_columns
@@ -239,8 +242,22 @@ def upsert_using_primary_key(df, table_name, primary_key_column, db_config: Data
 
 
 def _get_oauth_token(token_url, client_id, client_secret):
-    """Fetch an OAuth2 access token using client credentials flow."""
-    headers = {"Content-Type": "application/x-www-form-urlencoded"}
+
+    cache_key = f"{token_url}:{client_id}"
+
+    if cache_key in _token_cache:
+        cached = _token_cache[cache_key]
+
+        if datetime.now(timezone.utc) < cached["expires_at"]:
+            app_logger.info("Using cached OAuth token")
+            return cached["access_token"]
+
+    app_logger.info("Generating new OAuth token")
+
+    headers = {
+        "Content-Type": "application/x-www-form-urlencoded"
+    }
+
     payload = {
         "grant_type": "client_credentials",
         "client_id": client_id,
@@ -250,12 +267,27 @@ def _get_oauth_token(token_url, client_id, client_secret):
     response = requests.post(token_url, headers=headers, data=payload)
 
     if response.status_code == 200:
-        return response.json().get("access_token")
-    else:
-        raise Exception(
-            f"Failed to obtain OAuth token. Status: {response.status_code}, "
-            f"Response: {response.text}"
+        token_response = response.json()
+
+        access_token = token_response["access_token"]
+        expires_in = token_response.get("expires_in", 1799)
+
+        expires_at = datetime.now(timezone.utc) + timedelta(
+            seconds=expires_in - 120
         )
+
+        _token_cache[cache_key] = {
+            "access_token": access_token,
+            "expires_at": expires_at
+        }
+
+        return access_token
+
+    raise Exception(
+        f"Failed to obtain OAuth token. "
+        f"Status: {response.status_code}, "
+        f"Response: {response.text}"
+    )
 
 
 def read_data_from_snow(url, token_url, client_id, client_secret, payload):
