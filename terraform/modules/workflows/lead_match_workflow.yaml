@@ -47,7 +47,7 @@ main:
                   args:
                     text: "[TEST] No message field in args — not a Pub/Sub push call"
                     severity: WARNING
-              - end:
+              - return_skipped:
                   return:
                     status: "skipped"
                     raw_args: $${args}
