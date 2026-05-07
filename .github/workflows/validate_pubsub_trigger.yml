@@ -43,6 +43,9 @@ jobs:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
           service_account: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
 
+      - name: "Setup gcloud SDK"
+        uses: "google-github-actions/setup-gcloud@v2"
+
       - name: "1. Validate Pub/Sub Topic exists"
         run: |
           unset CLOUDSDK_CORE_PROJECT
@@ -149,7 +152,9 @@ jobs:
           # If gcloud storage failed, try gsutil
           if echo "$NOTIFICATIONS" | grep -q "ERROR\|error\|Invalid"; then
             echo "gcloud storage failed, trying gsutil..."
-            NOTIFICATIONS=$(gsutil notification list gs://$BUCKET_NAME 2>&1)
+            NOTIFICATIONS=$(gcloud storage buckets notifications list gs://$BUCKET_NAME \
+              --project=$PROJECT_ID \
+              --format=json 2>&1)
           fi
 
           echo "$NOTIFICATIONS"
@@ -188,7 +193,7 @@ jobs:
           TEST_FILE="pos-raw-data/e2e-trigger-test-$(date +%s).txt"
           echo "terraform e2e validation test - $(date)" > /tmp/test-trigger.txt
 
-          gsutil cp /tmp/test-trigger.txt gs://$BUCKET_NAME/$TEST_FILE
+          gcloud storage cp /tmp/test-trigger.txt gs://$BUCKET_NAME/$TEST_FILE
 
           if [ $? -eq 0 ]; then
             echo "✅ Test file uploaded: gs://$BUCKET_NAME/$TEST_FILE"
