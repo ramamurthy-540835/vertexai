@@ -198,7 +198,7 @@ module "gcs_pubsub_trigger" {
   topic_name = "gcs-file-events-adt"
 
   # ── Workflow ─────────────────────────────────────────────────────────────────
-  workflow_name             = "snow_sync_workflow"
+  workflow_name             = "lead_match_workflow"
   service_account_email = module.project_init.service_account_email  # SA with roles/workflows.invoker
 
   # ── Labels ───────────────────────────────────────────────────────────────────
