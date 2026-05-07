@@ -1,3 +1,6 @@
+  data "google_project" "project" {
+  project_id = var.project_id
+}
   # ── Pub/Sub Topic ─────────────────────────────────────────────────────────────
 
   resource "google_pubsub_topic" "this" {
