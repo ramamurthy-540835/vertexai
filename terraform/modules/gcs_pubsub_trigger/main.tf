@@ -81,5 +81,5 @@ resource "google_pubsub_subscription" "deadletter_pull" {
   labels  = var.labels
 
   ack_deadline_seconds       = 60
-  message_retention_duration = "604800s" # 7 days
+  message_retention_duration = "604800s" # 7 days 
 }
