@@ -1,0 +1,53 @@
+main:
+      params: [args]
+      steps:
+        - log_raw_input:
+            call: sys.log
+            args:
+              text: ${"[TEST] Raw args received = " + json.encode_to_string(args)}
+              severity: INFO
+
+        - check_message:
+            switch:
+              - condition: $${not("message" in args)}
+                next: log_no_message
+
+        - decode_message:
+            steps:
+              - decode:
+                  assign:
+                    - raw_data: $${args.message.data}
+                    - decoded_text: $${text.decode(base64.decode(raw_data))}
+                    - gcs_event: $${json.decode(decoded_text)}
+
+              - log_decoded:
+                  call: sys.log
+                  args:
+                    text: ${"[TEST] Decoded GCS event = " + json.encode_to_string(gcs_event)}
+                    severity: INFO
+
+              - log_file:
+                  call: sys.log
+                  args:
+                    text: ${"[TEST] File uploaded = gs://" + gcs_event.bucket + "/" + gcs_event.name}
+                    severity: INFO
+
+              - success:
+                  return:
+                    status: "success"
+                    bucket: $${gcs_event.bucket}
+                    file: $${gcs_event.name}
+                    content_type: $${default(map.get(gcs_event, "contentType"), "unknown")}
+                    raw_args: $${args}
+
+        - log_no_message:
+            steps:
+              - warn:
+                  call: sys.log
+                  args:
+                    text: "[TEST] No message field in args — not a Pub/Sub push call"
+                    severity: WARNING
+              - end:
+                  return:
+                    status: "skipped"
+                    raw_args: $${args}
