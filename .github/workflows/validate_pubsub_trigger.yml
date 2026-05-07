@@ -249,8 +249,7 @@ jobs:
           DL_SUB="${TOPIC_NAME}-deadletter-sub"
           DL_MSG=$(gcloud pubsub subscriptions pull $DL_SUB \
             --project=$PROJECT_ID \
-            --limit=5 \
-            --auto-ack=false 2>&1) || true
+            --limit=5  2>&1) || true
           echo "$DL_MSG"
 
           if echo "$DL_MSG" | grep -q "messageId\|MESSAGE_ID"; then
@@ -277,12 +276,6 @@ jobs:
             echo "✅ SA has roles/workflows.invoker"
           else
             echo "❌ SA is MISSING roles/workflows.invoker — this is why workflow is not triggering"
-          fi
-
-          if echo "$IAM_POLICY" | grep -q "pubsub.subscriber\|pubsub.editor\|pubsub.admin"; then
-            echo "✅ SA has Pub/Sub subscriber role"
-          else
-            echo "⚠️  SA may be missing roles/pubsub.subscriber (needed for push delivery)"
           fi
 
           echo ""
