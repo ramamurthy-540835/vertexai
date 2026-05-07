@@ -20,6 +20,17 @@ resource "google_pubsub_topic" "deadletter" {
   labels  = var.labels
 }
 
+data "google_storage_project_service_account" "gcs_sa" {
+  project = var.project_id
+}
+
+resource "google_pubsub_topic_iam_member" "gcs_sa_publisher" {
+  project = var.project_id
+  topic   = google_pubsub_topic.this.name
+  role    = "roles/pubsub.publisher"
+  member  = "serviceAccount:${data.google_storage_project_service_account.gcs_sa.email_address}"
+}
+
 # ── GCS Bucket Notification (folder-scoped) ───────────────────────────────────
 
 resource "google_storage_notification" "this" {
@@ -34,6 +45,8 @@ resource "google_storage_notification" "this" {
     env    = var.environment
     source = "gcs-pubsub-trigger"
   }
+
+  depends_on = [google_pubsub_topic_iam_member.gcs_sa_publisher]
 }
 
 # ── Push Subscription → Cloud Workflow ────────────────────────────────────────
