@@ -171,7 +171,7 @@ module "security_monitoring" {
 }
 
 module "gcs_pubsub_trigger" {
-  source = "../../modules/gcs_pubsub_trigger"  
+  source = "../../../modules/gcs_pubsub_trigger"  
 
   # ── Identity ────────────────────────────────────────────────────────────────
   project_id  = var.projectId
@@ -179,15 +179,15 @@ module "gcs_pubsub_trigger" {
   environment = var.environment
 
   # ── GCS ─────────────────────────────────────────────────────────────────────
-  bucket_name   = var.bucket_name
-  folder_prefix = 'gs://gcp-gcs-lead-mgmt-us-adt-pos-raw/pos-raw-data/'   
+  bucket_name   = module.pos_bucket.bucket_name
+  folder_prefix = "pos-raw-data/"  
 
   # ── Pub/Sub ──────────────────────────────────────────────────────────────────
   topic_name = "gcs-file-events-adt"
 
   # ── Workflow ─────────────────────────────────────────────────────────────────
-  workflow_name             = var.workflow_name
-  workflow_invoker_sa_email = module.project_init.service_account_email  # SA with roles/workflows.invoker
+  workflow_name             = "snow_sync_workflow"
+  service_account_email = module.project_init.service_account_email  # SA with roles/workflows.invoker
 
   # ── Labels ───────────────────────────────────────────────────────────────────
   labels = {
