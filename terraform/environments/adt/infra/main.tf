@@ -170,17 +170,62 @@ module "security_monitoring" {
   notification_channels = [module.monitoring_alert.notification_channel_id]
 }
 
-module "event_arc" {
+module "gcs_pubsub_trigger" {
+  source = "../../modules/gcs_pubsub_trigger"  
 
-source = "../../../modules/event_arc"
+  # ── Identity ────────────────────────────────────────────────────────────────
+  project_id  = var.projectId
+  region      = var.region
+  environment = var.environment
 
-  project_id            = var.projectId
-  trigger_name          = "pos-csv-to-workflow-trigger"
-  region                = var.region
-  bucket_name           = "gcp-gcs-${var.prefix}-${var.country}-${var.environment}"
-  path                  = "pos_raw/"   # folder prefix
-  workflow_name         = "snow_sync_workflow"
-  service_account_email = module.project_init.service_account_email
+  # ── GCS ─────────────────────────────────────────────────────────────────────
+  bucket_name   = var.bucket_name
+  folder_prefix = 'gs://gcp-gcs-lead-mgmt-us-adt-pos-raw/pos-raw-data/'   
 
+  # ── Pub/Sub ──────────────────────────────────────────────────────────────────
+  topic_name = "gcs-file-events-adt"
+
+  # ── Workflow ─────────────────────────────────────────────────────────────────
+  workflow_name             = var.workflow_name
+  workflow_invoker_sa_email = module.project_init.service_account_email  # SA with roles/workflows.invoker
+
+  # ── Labels ───────────────────────────────────────────────────────────────────
+  labels = {
+    managed-by  = "terraform"
+    environment = var.environment
+    team        = "membership-gcp"
+  }
+
+  # ── Optional overrides (module defaults shown) ───────────────────────────────
+  # message_retention_duration = "86600s"   # ~24 hours
+  # ack_deadline_seconds       = 60
+  # max_delivery_attempts      = 5
+  # retry_minimum_backoff      = "10s"
+  # retry_maximum_backoff      = "300s"
 }
+
+###############################################################################
+# Outputs — expose module outputs to the environment level
+###############################################################################
+
+output "topic_id" {
+  value       = module.gcs_pubsub_trigger.topic_id
+  description = "Pub/Sub topic ID"
+}
+
+output "push_subscription_id" {
+  value       = module.gcs_pubsub_trigger.push_subscription_id
+  description = "Push subscription ID"
+}
+
+output "notification_id" {
+  value       = module.gcs_pubsub_trigger.notification_id
+  description = "GCS notification ID"
+}
+
+output "watched_folder" {
+  value       = module.gcs_pubsub_trigger.watched_folder
+  description = "GCS folder prefix being watched"
+}
+
 
