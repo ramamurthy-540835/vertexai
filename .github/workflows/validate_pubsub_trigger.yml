@@ -351,17 +351,7 @@ jobs:
             --freshness=10m 2>&1
 
           echo ""
-          echo "=========================================="
-          echo "CHECK F: Workflow execution error logs"
-          echo "=========================================="
-          gcloud logging read \
-            "resource.type=workflows.googleapis.com/Workflow AND
-             resource.labels.workflow_id=$WORKFLOW_NAME AND
-             severity>=WARNING" \
-            --project=$PROJECT_ID \
-            --limit=10 \
-            --format="table(timestamp,severity,textPayload,jsonPayload.message)" \
-            --freshness=10m 2>&1
+
 
       - name: "6. Check Dead-letter backlog (should be 0)"
         run: |
