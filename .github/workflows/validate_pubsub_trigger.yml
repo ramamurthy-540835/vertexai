@@ -180,6 +180,55 @@ jobs:
             exit 1
           fi
 
+      - name: "3b. Verify GCS Service Agent has Pub/Sub publish permission"
+        run: |
+          unset CLOUDSDK_CORE_PROJECT
+          unset CLOUDSDK_PROJECT
+          unset GCLOUD_PROJECT
+          unset GCP_PROJECT
+          unset GOOGLE_CLOUD_PROJECT
+          gcloud config set project $PROJECT_ID
+
+          echo "=========================================="
+          echo "CHECK: GCS Service Agent → Pub/Sub Publisher"
+          echo "=========================================="
+
+          # Step 1: Get the GCS service agent email for this project
+          GCS_SA=$(gcloud storage service-agent --project=$PROJECT_ID 2>&1)
+          echo "GCS Service Agent: $GCS_SA"
+
+          # Step 2: Get the IAM policy on the Pub/Sub topic
+          echo ""
+          echo "--- Topic IAM Policy ---"
+          TOPIC_IAM=$(gcloud pubsub topics get-iam-policy $TOPIC_NAME \
+            --project=$PROJECT_ID \
+            --format=json 2>&1)
+          echo "$TOPIC_IAM"
+          echo "--- End IAM Policy ---"
+
+          # Step 3: Verify the GCS SA has pubsub.publisher
+          if echo "$TOPIC_IAM" | grep -q "$GCS_SA"; then
+            echo ""
+            echo "✅ GCS service agent ($GCS_SA) is bound to the topic"
+
+            if echo "$TOPIC_IAM" | grep -q "roles/pubsub.publisher"; then
+              echo "✅ Role is roles/pubsub.publisher — GCS can publish to Pub/Sub"
+            else
+              echo "⚠️  GCS SA is bound but NOT as pubsub.publisher — check the role"
+            fi
+          else
+            echo ""
+            echo "❌ GCS service agent ($GCS_SA) is NOT in the topic IAM policy"
+            echo "❌ This is why GCS notifications are silently dropped — GCS cannot publish to the topic"
+            echo ""
+            echo "FIX: Run this command or verify your Terraform google_pubsub_topic_iam_member resource:"
+            echo "  gcloud pubsub topics add-iam-policy-binding $TOPIC_NAME \\"
+            echo "    --project=$PROJECT_ID \\"
+            echo "    --member=serviceAccount:$GCS_SA \\"
+            echo "    --role=roles/pubsub.publisher"
+            exit 1
+          fi
+
       - name: "4. End-to-End Test — Upload file and verify workflow triggered"
         run: |
           unset CLOUDSDK_CORE_PROJECT
