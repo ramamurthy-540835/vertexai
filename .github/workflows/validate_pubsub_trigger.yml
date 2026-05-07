@@ -43,12 +43,13 @@ jobs:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
           service_account: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
 
-      - name: "Setup gcloud SDK"
-        uses: "google-github-actions/setup-gcloud@v2"
-
       - name: "1. Validate Pub/Sub Topic exists"
         run: |
           unset CLOUDSDK_CORE_PROJECT
+          unset CLOUDSDK_PROJECT
+          unset GCLOUD_PROJECT
+          unset GCP_PROJECT
+          unset GOOGLE_CLOUD_PROJECT
           gcloud config set project $PROJECT_ID
 
           echo "=========================================="
@@ -83,6 +84,10 @@ jobs:
       - name: "2. Validate Push Subscription exists and is configured correctly"
         run: |
           unset CLOUDSDK_CORE_PROJECT
+          unset CLOUDSDK_PROJECT
+          unset GCLOUD_PROJECT
+          unset GCP_PROJECT
+          unset GOOGLE_CLOUD_PROJECT
           gcloud config set project $PROJECT_ID
 
           SUB_NAME="${TOPIC_NAME}-push-sub"
@@ -136,26 +141,20 @@ jobs:
       - name: "3. Validate GCS Bucket Notification exists"
         run: |
           unset CLOUDSDK_CORE_PROJECT
+          unset CLOUDSDK_PROJECT
+          unset GCLOUD_PROJECT
+          unset GCP_PROJECT
+          unset GOOGLE_CLOUD_PROJECT
           gcloud config set project $PROJECT_ID
 
           echo "=========================================="
           echo "Checking GCS notification on bucket: $BUCKET_NAME"
           echo "=========================================="
 
-          # Use gcloud storage (preferred over gsutil in newer SDK)
-          # Fall back to gsutil if gcloud storage not available
           echo "--- Raw notification output ---"
           NOTIFICATIONS=$(gcloud storage buckets notifications list gs://$BUCKET_NAME \
             --project=$PROJECT_ID \
             --format=json 2>&1)
-
-          # If gcloud storage failed, try gsutil
-          if echo "$NOTIFICATIONS" | grep -q "ERROR\|error\|Invalid"; then
-            echo "gcloud storage failed, trying gsutil..."
-            NOTIFICATIONS=$(gcloud storage buckets notifications list gs://$BUCKET_NAME \
-              --project=$PROJECT_ID \
-              --format=json 2>&1)
-          fi
 
           echo "$NOTIFICATIONS"
           echo "--- End raw output ---"
@@ -184,6 +183,10 @@ jobs:
       - name: "4. End-to-End Test — Upload file and verify workflow triggered"
         run: |
           unset CLOUDSDK_CORE_PROJECT
+          unset CLOUDSDK_PROJECT
+          unset GCLOUD_PROJECT
+          unset GCP_PROJECT
+          unset GOOGLE_CLOUD_PROJECT
           gcloud config set project $PROJECT_ID
 
           echo "=========================================="
@@ -193,7 +196,9 @@ jobs:
           TEST_FILE="pos-raw-data/e2e-trigger-test-$(date +%s).txt"
           echo "terraform e2e validation test - $(date)" > /tmp/test-trigger.txt
 
-          gcloud storage cp /tmp/test-trigger.txt gs://$BUCKET_NAME/$TEST_FILE
+          # Use gcloud storage instead of gsutil — respects workload identity auth
+          gcloud storage cp /tmp/test-trigger.txt gs://$BUCKET_NAME/$TEST_FILE \
+            --project=$PROJECT_ID
 
           if [ $? -eq 0 ]; then
             echo "✅ Test file uploaded: gs://$BUCKET_NAME/$TEST_FILE"
@@ -205,39 +210,91 @@ jobs:
           echo "Waiting 15s for Pub/Sub to deliver and workflow to start..."
           sleep 15
 
-      - name: "5. Validate Workflow Execution was triggered"
+      - name: "5. Diagnose — Find where the trigger chain is breaking"
         run: |
           unset CLOUDSDK_CORE_PROJECT
+          unset CLOUDSDK_PROJECT
+          unset GCLOUD_PROJECT
+          unset GCP_PROJECT
+          unset GOOGLE_CLOUD_PROJECT
           gcloud config set project $PROJECT_ID
 
           echo "=========================================="
-          echo "Checking workflow executions: $WORKFLOW_NAME"
+          echo "CHECK A: Pub/Sub Topic — message count"
           echo "=========================================="
+          # Check if any messages were published to the topic after the upload
+          gcloud pubsub topics list-subscriptions $TOPIC_NAME \
+            --project=$PROJECT_ID
 
-          # Get the most recent execution
-          LATEST_EXECUTION=$(gcloud workflows executions list $WORKFLOW_NAME \
-            --location=$REGION \
+          echo ""
+          echo "=========================================="
+          echo "CHECK B: Push Subscription metrics"
+          echo "=========================================="
+          SUB_NAME="${TOPIC_NAME}-push-sub"
+          gcloud pubsub subscriptions describe $SUB_NAME \
             --project=$PROJECT_ID \
-            --limit=1 \
-            --format="value(name,state,startTime)" 2>&1)
+            --format="table(
+              name,
+              pushConfig.pushEndpoint,
+              pushConfig.oidcToken.serviceAccountEmail,
+              deadLetterPolicy.deadLetterTopic,
+              deadLetterPolicy.maxDeliveryAttempts
+            )"
 
-          echo "Latest execution: $LATEST_EXECUTION"
+          echo ""
+          echo "=========================================="
+          echo "CHECK C: Pull 1 message from dead-letter (no ack)"
+          echo "If messages appear here, push to workflow is failing"
+          echo "=========================================="
+          DL_SUB="${TOPIC_NAME}-deadletter-sub"
+          DL_MSG=$(gcloud pubsub subscriptions pull $DL_SUB \
+            --project=$PROJECT_ID \
+            --limit=5 \
+            --format=json \
+            --auto-ack=false 2>&1)
+          echo "$DL_MSG"
 
-          if echo "$LATEST_EXECUTION" | grep -qE "SUCCEEDED|ACTIVE|RUNNING"; then
-            echo "✅ Workflow execution triggered successfully"
+          if echo "$DL_MSG" | grep -q "messageId"; then
+            echo "⚠️  Messages found in dead-letter — push subscription is failing to deliver"
           else
-            echo "⚠️  Latest execution state may need manual review:"
-            echo "$LATEST_EXECUTION"
+            echo "✅ Dead-letter is empty"
           fi
 
-          # Show last 3 executions for context
-          echo "---"
-          echo "Last 3 executions:"
+          echo ""
+          echo "=========================================="
+          echo "CHECK D: Recent Workflow executions (last 5)"
+          echo "=========================================="
           gcloud workflows executions list $WORKFLOW_NAME \
             --location=$REGION \
             --project=$PROJECT_ID \
-            --limit=3 \
-            --format="table(name.basename(),state,startTime,endTime)"
+            --limit=5 \
+            --format="table(name.basename(),state,startTime,endTime)" 2>&1
+
+          echo ""
+          echo "=========================================="
+          echo "CHECK E: Push subscription error logs"
+          echo "=========================================="
+          gcloud logging read \
+            "resource.type=pubsub_subscription AND
+             resource.labels.subscription_id=${TOPIC_NAME}-push-sub AND
+             severity>=WARNING" \
+            --project=$PROJECT_ID \
+            --limit=10 \
+            --format="table(timestamp,severity,textPayload,jsonPayload.message)" \
+            --freshness=10m 2>&1
+
+          echo ""
+          echo "=========================================="
+          echo "CHECK F: Workflow execution error logs"
+          echo "=========================================="
+          gcloud logging read \
+            "resource.type=workflows.googleapis.com/Workflow AND
+             resource.labels.workflow_id=$WORKFLOW_NAME AND
+             severity>=WARNING" \
+            --project=$PROJECT_ID \
+            --limit=10 \
+            --format="table(timestamp,severity,textPayload,jsonPayload.message)" \
+            --freshness=10m 2>&1
 
       - name: "6. Check Dead-letter backlog (should be 0)"
         run: |
