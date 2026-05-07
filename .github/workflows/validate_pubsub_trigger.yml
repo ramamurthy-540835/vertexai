@@ -338,20 +338,6 @@ jobs:
             --format="table(name.basename(),state,startTime,endTime)" 2>&1
 
           echo ""
-          echo "=========================================="
-          echo "CHECK E: Push subscription error logs"
-          echo "=========================================="
-          gcloud logging read \
-            "resource.type=pubsub_subscription AND
-             resource.labels.subscription_id=${TOPIC_NAME}-push-sub AND
-             severity>=WARNING" \
-            --project=$PROJECT_ID \
-            --limit=10 \
-            --format="table(timestamp,severity,textPayload,jsonPayload.message)" \
-            --freshness=10m 2>&1
-
-          echo ""
-
 
       - name: "6. Check Dead-letter backlog (should be 0)"
         run: |
