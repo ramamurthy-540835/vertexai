@@ -47,10 +47,12 @@ if __name__ == "__main__":
                 }
             )
 
-            if "access_token" not in response:
-                raise Exception(f"Token request failed: {response}")
+            response_data = response.json()
 
-            return response.json()["access_token"]
+            if "access_token" not in response_data:
+                raise Exception(f"Token request failed: {response_data}")
+
+            return response_data["access_token"]
 
 
         def call_api():
