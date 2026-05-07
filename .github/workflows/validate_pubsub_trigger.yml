@@ -243,21 +243,46 @@ jobs:
 
           echo ""
           echo "=========================================="
-          echo "CHECK C: Pull 1 message from dead-letter (no ack)"
+          echo "CHECK C: Pull from dead-letter (no ack)"
           echo "If messages appear here, push to workflow is failing"
           echo "=========================================="
           DL_SUB="${TOPIC_NAME}-deadletter-sub"
           DL_MSG=$(gcloud pubsub subscriptions pull $DL_SUB \
             --project=$PROJECT_ID \
             --limit=5 \
-            --format=json \
-            --auto-ack=false 2>&1)
+            --auto-ack=false 2>&1) || true
           echo "$DL_MSG"
 
-          if echo "$DL_MSG" | grep -q "messageId"; then
+          if echo "$DL_MSG" | grep -q "messageId\|MESSAGE_ID"; then
             echo "⚠️  Messages found in dead-letter — push subscription is failing to deliver"
           else
-            echo "✅ Dead-letter is empty"
+            echo "✅ Dead-letter is empty — messages are being delivered"
+          fi
+
+          echo ""
+          echo "=========================================="
+          echo "CHECK C2: Verify SA has workflows.invoker"
+          echo "=========================================="
+          SA_EMAIL="gco-iam-svc-lead-mgmt-bc-adt@p-601-np-bcleadsmgmt-adt.iam.gserviceaccount.com"
+
+          IAM_POLICY=$(gcloud projects get-iam-policy $PROJECT_ID \
+            --flatten="bindings[].members" \
+            --filter="bindings.members:$SA_EMAIL" \
+            --format="table(bindings.role)" 2>&1)
+
+          echo "Roles granted to $SA_EMAIL:"
+          echo "$IAM_POLICY"
+
+          if echo "$IAM_POLICY" | grep -q "workflows.invoker"; then
+            echo "✅ SA has roles/workflows.invoker"
+          else
+            echo "❌ SA is MISSING roles/workflows.invoker — this is why workflow is not triggering"
+          fi
+
+          if echo "$IAM_POLICY" | grep -q "pubsub.subscriber\|pubsub.editor\|pubsub.admin"; then
+            echo "✅ SA has Pub/Sub subscriber role"
+          else
+            echo "⚠️  SA may be missing roles/pubsub.subscriber (needed for push delivery)"
           fi
 
           echo ""
