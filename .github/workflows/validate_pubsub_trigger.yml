@@ -139,13 +139,26 @@ jobs:
           echo "Checking GCS notification on bucket: $BUCKET_NAME"
           echo "=========================================="
 
-          NOTIFICATIONS=$(gsutil notification list gs://$BUCKET_NAME 2>&1)
+          # Use gcloud storage (preferred over gsutil in newer SDK)
+          # Fall back to gsutil if gcloud storage not available
+          echo "--- Raw notification output ---"
+          NOTIFICATIONS=$(gcloud storage buckets notifications list gs://$BUCKET_NAME \
+            --project=$PROJECT_ID \
+            --format=json 2>&1)
+
+          # If gcloud storage failed, try gsutil
+          if echo "$NOTIFICATIONS" | grep -q "ERROR\|error\|Invalid"; then
+            echo "gcloud storage failed, trying gsutil..."
+            NOTIFICATIONS=$(gsutil notification list gs://$BUCKET_NAME 2>&1)
+          fi
+
+          echo "$NOTIFICATIONS"
+          echo "--- End raw output ---"
 
           if echo "$NOTIFICATIONS" | grep -q "$TOPIC_NAME"; then
             echo "✅ GCS notification found pointing to topic: $TOPIC_NAME"
           else
             echo "❌ No notification found for topic: $TOPIC_NAME"
-            echo "$NOTIFICATIONS"
             exit 1
           fi
 
@@ -153,11 +166,10 @@ jobs:
             echo "✅ Notification is scoped to folder prefix: $FOLDER_PREFIX"
           else
             echo "❌ Folder prefix not found in notification config: $FOLDER_PREFIX"
-            echo "$NOTIFICATIONS"
             exit 1
           fi
 
-          if echo "$NOTIFICATIONS" | grep -q "OBJECT_FINALIZE"; then
+          if echo "$NOTIFICATIONS" | grep -qiE "OBJECT_FINALIZE|object_finalize"; then
             echo "✅ Event type is OBJECT_FINALIZE"
           else
             echo "❌ OBJECT_FINALIZE event type not set"
