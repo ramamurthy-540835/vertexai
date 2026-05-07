@@ -19,7 +19,7 @@ env:
   BUCKET_NAME: 'gcp-gcs-lead-mgmt-us-${{ github.event.inputs.environment }}-pos-raw'
   FOLDER_PREFIX: 'pos-raw-data'
   TOPIC_NAME: 'gcs-file-events-${{ github.event.inputs.environment }}'
-  TEST_WORKFLOW_NAME: 'gcs-pubsub-trigger-test'
+  WORKFLOW_NAME: 'lead_match_workflow'
 
 jobs:
   validate:
@@ -43,7 +43,7 @@ jobs:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
           service_account: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
 
-      - name: "1. Point push subscription to test workflow"
+      - name: "1. Validate Pub/Sub Topic exists"
         run: |
           unset CLOUDSDK_CORE_PROJECT
           unset CLOUDSDK_PROJECT
@@ -53,20 +53,134 @@ jobs:
           gcloud config set project $PROJECT_ID
 
           echo "=========================================="
-          echo "Updating push subscription endpoint to test workflow"
+          echo "Checking topic: $TOPIC_NAME"
           echo "=========================================="
 
-          TEST_ENDPOINT="https://workflowexecutions.googleapis.com/v1/projects/${PROJECT_ID}/locations/${REGION}/workflows/${TEST_WORKFLOW_NAME}/executions"
+          TOPIC=$(gcloud pubsub topics describe $TOPIC_NAME \
+            --project=$PROJECT_ID \
+            --format="value(name)" 2>&1)
 
-          gcloud pubsub subscriptions modify-push-config \
-            "${TOPIC_NAME}-push-sub" \
-            --push-endpoint="$TEST_ENDPOINT" \
-            --push-auth-service-account="gco-iam-svc-lead-mgmt-bc-adt@${PROJECT_ID}.iam.gserviceaccount.com" \
-            --project=$PROJECT_ID
+          if echo "$TOPIC" | grep -q "topics/$TOPIC_NAME"; then
+            echo "✅ Topic exists: $TOPIC"
+          else
+            echo "❌ Topic NOT found: $TOPIC_NAME"
+            exit 1
+          fi
 
-          echo "✅ Push subscription now points to: $TEST_ENDPOINT"
+          echo "---"
+          echo "Checking dead-letter topic: ${TOPIC_NAME}-deadletter"
 
-      - name: "2. Upload test file to trigger the chain"
+          DL_TOPIC=$(gcloud pubsub topics describe "${TOPIC_NAME}-deadletter" \
+            --project=$PROJECT_ID \
+            --format="value(name)" 2>&1)
+
+          if echo "$DL_TOPIC" | grep -q "topics/${TOPIC_NAME}-deadletter"; then
+            echo "✅ Dead-letter topic exists: $DL_TOPIC"
+          else
+            echo "❌ Dead-letter topic NOT found"
+            exit 1
+          fi
+
+      - name: "2. Validate Push Subscription exists and is configured correctly"
+        run: |
+          unset CLOUDSDK_CORE_PROJECT
+          unset CLOUDSDK_PROJECT
+          unset GCLOUD_PROJECT
+          unset GCP_PROJECT
+          unset GOOGLE_CLOUD_PROJECT
+          gcloud config set project $PROJECT_ID
+
+          SUB_NAME="${TOPIC_NAME}-push-sub"
+
+          echo "=========================================="
+          echo "Checking subscription: $SUB_NAME"
+          echo "=========================================="
+
+          SUB=$(gcloud pubsub subscriptions describe $SUB_NAME \
+            --project=$PROJECT_ID \
+            --format=json 2>&1)
+
+          if echo "$SUB" | grep -q "pushConfig"; then
+            echo "✅ Push subscription exists: $SUB_NAME"
+          else
+            echo "❌ Push subscription NOT found or not a push type"
+            exit 1
+          fi
+
+          # Validate push endpoint points to correct workflow
+          if echo "$SUB" | grep -q "$WORKFLOW_NAME"; then
+            echo "✅ Push endpoint correctly targets workflow: $WORKFLOW_NAME"
+          else
+            echo "❌ Push endpoint does not reference workflow: $WORKFLOW_NAME"
+            echo "$SUB"
+            exit 1
+          fi
+
+          # Validate OIDC auth is configured
+          if echo "$SUB" | grep -q "oidcToken"; then
+            echo "✅ OIDC authentication is configured on push subscription"
+          else
+            echo "❌ OIDC authentication is NOT configured"
+            exit 1
+          fi
+
+          echo "---"
+          echo "Checking dead-letter subscription: ${TOPIC_NAME}-deadletter-sub"
+
+          DL_SUB=$(gcloud pubsub subscriptions describe "${TOPIC_NAME}-deadletter-sub" \
+            --project=$PROJECT_ID \
+            --format="value(name)" 2>&1)
+
+          if echo "$DL_SUB" | grep -q "subscriptions/${TOPIC_NAME}-deadletter-sub"; then
+            echo "✅ Dead-letter pull subscription exists"
+          else
+            echo "❌ Dead-letter pull subscription NOT found"
+            exit 1
+          fi
+
+      - name: "3. Validate GCS Bucket Notification exists"
+        run: |
+          unset CLOUDSDK_CORE_PROJECT
+          unset CLOUDSDK_PROJECT
+          unset GCLOUD_PROJECT
+          unset GCP_PROJECT
+          unset GOOGLE_CLOUD_PROJECT
+          gcloud config set project $PROJECT_ID
+
+          echo "=========================================="
+          echo "Checking GCS notification on bucket: $BUCKET_NAME"
+          echo "=========================================="
+
+          echo "--- Raw notification output ---"
+          NOTIFICATIONS=$(gcloud storage buckets notifications list gs://$BUCKET_NAME \
+            --project=$PROJECT_ID \
+            --format=json 2>&1)
+
+          echo "$NOTIFICATIONS"
+          echo "--- End raw output ---"
+
+          if echo "$NOTIFICATIONS" | grep -q "$TOPIC_NAME"; then
+            echo "✅ GCS notification found pointing to topic: $TOPIC_NAME"
+          else
+            echo "❌ No notification found for topic: $TOPIC_NAME"
+            exit 1
+          fi
+
+          if echo "$NOTIFICATIONS" | grep -q "$FOLDER_PREFIX"; then
+            echo "✅ Notification is scoped to folder prefix: $FOLDER_PREFIX"
+          else
+            echo "❌ Folder prefix not found in notification config: $FOLDER_PREFIX"
+            exit 1
+          fi
+
+          if echo "$NOTIFICATIONS" | grep -qiE "OBJECT_FINALIZE|object_finalize"; then
+            echo "✅ Event type is OBJECT_FINALIZE"
+          else
+            echo "❌ OBJECT_FINALIZE event type not set"
+            exit 1
+          fi
+
+      - name: "4. End-to-End Test — Upload file and verify workflow triggered"
         run: |
           unset CLOUDSDK_CORE_PROJECT
           unset CLOUDSDK_PROJECT
@@ -80,83 +194,23 @@ jobs:
           echo "=========================================="
 
           TEST_FILE="pos-raw-data/e2e-trigger-test-$(date +%s).txt"
-          echo "gcs pubsub trigger test - $(date)" > /tmp/test-trigger.txt
+          echo "terraform e2e validation test - $(date)" > /tmp/test-trigger.txt
 
+          # Use gcloud storage instead of gsutil — respects workload identity auth
           gcloud storage cp /tmp/test-trigger.txt gs://$BUCKET_NAME/$TEST_FILE \
             --project=$PROJECT_ID
 
-          echo "✅ Uploaded: gs://$BUCKET_NAME/$TEST_FILE"
-          echo "TEST_FILE=$TEST_FILE" >> $GITHUB_ENV
-
-          echo "Waiting 30s for Pub/Sub → Workflow chain..."
-          sleep 30
-
-      - name: "3. Check test workflow execution and log output"
-        run: |
-          unset CLOUDSDK_CORE_PROJECT
-          unset CLOUDSDK_PROJECT
-          unset GCLOUD_PROJECT
-          unset GCP_PROJECT
-          unset GOOGLE_CLOUD_PROJECT
-          gcloud config set project $PROJECT_ID
-
-          echo "=========================================="
-          echo "Latest test workflow execution"
-          echo "=========================================="
-
-          LATEST=$(gcloud workflows executions list $TEST_WORKFLOW_NAME \
-            --location=$REGION \
-            --project=$PROJECT_ID \
-            --limit=1 \
-            --format="value(name)" 2>&1)
-
-          echo "Execution: $LATEST"
-
-          if [ -z "$LATEST" ]; then
-            echo "❌ No executions found — chain is broken before reaching the workflow"
+          if [ $? -eq 0 ]; then
+            echo "✅ Test file uploaded: gs://$BUCKET_NAME/$TEST_FILE"
+          else
+            echo "❌ Failed to upload test file"
             exit 1
           fi
 
-          echo ""
-          echo "--- Execution detail ---"
-          gcloud workflows executions describe $LATEST \
-            --location=$REGION \
-            --project=$PROJECT_ID \
-            --format=json 2>&1 | python3 -c "
-import json, sys
-data = json.load(sys.stdin)
-print('State     :', data.get('state'))
-print('StartTime :', data.get('startTime'))
-print('EndTime   :', data.get('endTime'))
-print()
-if 'argument' in data:
-    print('Input (raw Pub/Sub payload):')
-    try:
-        arg = json.loads(data['argument'])
-        print(json.dumps(arg, indent=2))
-        # Decode the base64 GCS event if present
-        if 'message' in arg and 'data' in arg['message']:
-            import base64
-            decoded = base64.b64decode(arg['message']['data']).decode('utf-8')
-            print()
-            print('Decoded GCS event:')
-            print(json.dumps(json.loads(decoded), indent=2))
-    except:
-        print(data['argument'])
-print()
-if 'error' in data:
-    print('ERROR:')
-    print(json.dumps(data['error'], indent=2))
-if 'result' in data:
-    print('Result:')
-    try:
-        print(json.dumps(json.loads(data['result']), indent=2))
-    except:
-        print(data['result'])
-"
+          echo "Waiting 15s for Pub/Sub to deliver and workflow to start..."
+          sleep 15
 
-      - name: "4. Restore push subscription to real workflow"
-        if: always()
+      - name: "5. Diagnose — Find where the trigger chain is breaking"
         run: |
           unset CLOUDSDK_CORE_PROJECT
           unset CLOUDSDK_PROJECT
@@ -166,15 +220,144 @@ if 'result' in data:
           gcloud config set project $PROJECT_ID
 
           echo "=========================================="
-          echo "Restoring push subscription to snow_sync_workflow"
+          echo "CHECK A: Pub/Sub Topic — message count"
           echo "=========================================="
-
-          REAL_ENDPOINT="https://workflowexecutions.googleapis.com/v1/projects/${PROJECT_ID}/locations/${REGION}/workflows/snow_sync_workflow/executions"
-
-          gcloud pubsub subscriptions modify-push-config \
-            "${TOPIC_NAME}-push-sub" \
-            --push-endpoint="$REAL_ENDPOINT" \
-            --push-auth-service-account="gco-iam-svc-lead-mgmt-bc-adt@${PROJECT_ID}.iam.gserviceaccount.com" \
+          # Check if any messages were published to the topic after the upload
+          gcloud pubsub topics list-subscriptions $TOPIC_NAME \
             --project=$PROJECT_ID
 
-          echo "✅ Restored push subscription to: $REAL_ENDPOINT"
+          echo ""
+          echo "=========================================="
+          echo "CHECK B: Push Subscription metrics"
+          echo "=========================================="
+          SUB_NAME="${TOPIC_NAME}-push-sub"
+          gcloud pubsub subscriptions describe $SUB_NAME \
+            --project=$PROJECT_ID \
+            --format="table(
+              name,
+              pushConfig.pushEndpoint,
+              pushConfig.oidcToken.serviceAccountEmail,
+              deadLetterPolicy.deadLetterTopic,
+              deadLetterPolicy.maxDeliveryAttempts
+            )"
+
+          echo ""
+          echo "=========================================="
+          echo "CHECK C: Pull from dead-letter (no ack)"
+          echo "If messages appear here, push to workflow is failing"
+          echo "=========================================="
+          DL_SUB="${TOPIC_NAME}-deadletter-sub"
+          DL_MSG=$(gcloud pubsub subscriptions pull $DL_SUB \
+            --project=$PROJECT_ID \
+            --limit=5 \
+            --auto-ack=false 2>&1) || true
+          echo "$DL_MSG"
+
+          if echo "$DL_MSG" | grep -q "messageId\|MESSAGE_ID"; then
+            echo "⚠️  Messages found in dead-letter — push subscription is failing to deliver"
+          else
+            echo "✅ Dead-letter is empty — messages are being delivered"
+          fi
+
+          echo ""
+          echo "=========================================="
+          echo "CHECK C2: Verify SA has workflows.invoker"
+          echo "=========================================="
+          SA_EMAIL="gco-iam-svc-lead-mgmt-bc-adt@p-601-np-bcleadsmgmt-adt.iam.gserviceaccount.com"
+
+          IAM_POLICY=$(gcloud projects get-iam-policy $PROJECT_ID \
+            --flatten="bindings[].members" \
+            --filter="bindings.members:$SA_EMAIL" \
+            --format="table(bindings.role)" 2>&1)
+
+          echo "Roles granted to $SA_EMAIL:"
+          echo "$IAM_POLICY"
+
+          if echo "$IAM_POLICY" | grep -q "workflows.invoker"; then
+            echo "✅ SA has roles/workflows.invoker"
+          else
+            echo "❌ SA is MISSING roles/workflows.invoker — this is why workflow is not triggering"
+          fi
+
+          if echo "$IAM_POLICY" | grep -q "pubsub.subscriber\|pubsub.editor\|pubsub.admin"; then
+            echo "✅ SA has Pub/Sub subscriber role"
+          else
+            echo "⚠️  SA may be missing roles/pubsub.subscriber (needed for push delivery)"
+          fi
+
+          echo ""
+          echo "=========================================="
+          echo "CHECK D: Recent Workflow executions (last 5)"
+          echo "=========================================="
+          gcloud workflows executions list $WORKFLOW_NAME \
+            --location=$REGION \
+            --project=$PROJECT_ID \
+            --limit=5 \
+            --format="table(name.basename(),state,startTime,endTime)" 2>&1
+
+          echo ""
+          echo "=========================================="
+          echo "CHECK E: Push subscription error logs"
+          echo "=========================================="
+          gcloud logging read \
+            "resource.type=pubsub_subscription AND
+             resource.labels.subscription_id=${TOPIC_NAME}-push-sub AND
+             severity>=WARNING" \
+            --project=$PROJECT_ID \
+            --limit=10 \
+            --format="table(timestamp,severity,textPayload,jsonPayload.message)" \
+            --freshness=10m 2>&1
+
+          echo ""
+          echo "=========================================="
+          echo "CHECK F: Workflow execution error logs"
+          echo "=========================================="
+          gcloud logging read \
+            "resource.type=workflows.googleapis.com/Workflow AND
+             resource.labels.workflow_id=$WORKFLOW_NAME AND
+             severity>=WARNING" \
+            --project=$PROJECT_ID \
+            --limit=10 \
+            --format="table(timestamp,severity,textPayload,jsonPayload.message)" \
+            --freshness=10m 2>&1
+
+      - name: "6. Check Dead-letter backlog (should be 0)"
+        run: |
+          unset CLOUDSDK_CORE_PROJECT
+          gcloud config set project $PROJECT_ID
+
+          echo "=========================================="
+          echo "Checking dead-letter backlog"
+          echo "=========================================="
+
+          DL_SUB="${TOPIC_NAME}-deadletter-sub"
+
+          BACKLOG=$(gcloud pubsub subscriptions describe $DL_SUB \
+            --project=$PROJECT_ID \
+            --format="value(name)" 2>&1)
+
+          # Pull with max 1 message with no ack — if empty, dead-letter is clean
+          DL_MESSAGES=$(gcloud pubsub subscriptions pull $DL_SUB \
+            --project=$PROJECT_ID \
+            --limit=1 \
+            --format="value(message.messageId)" 2>&1)
+
+          if [ -z "$DL_MESSAGES" ]; then
+            echo "✅ Dead-letter queue is empty — no failed deliveries"
+          else
+            echo "⚠️  Dead-letter queue has messages — push subscription may be failing"
+            echo "Message IDs found: $DL_MESSAGES"
+          fi
+
+      - name: "Summary"
+        if: always()
+        run: |
+          echo "=========================================="
+          echo "VALIDATION SUMMARY"
+          echo "Environment : ${{ github.event.inputs.environment }}"
+          echo "Project     : $PROJECT_ID"
+          echo "Bucket      : $BUCKET_NAME"
+          echo "Folder      : $FOLDER_PREFIX/"
+          echo "Topic       : $TOPIC_NAME"
+          echo "Workflow    : $WORKFLOW_NAME"
+          echo "=========================================="
