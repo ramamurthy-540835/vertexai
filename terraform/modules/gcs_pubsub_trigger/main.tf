@@ -115,3 +115,9 @@ resource "google_pubsub_subscription_iam_member" "pubsub_sa_push_subscriber" {
   role         = "roles/pubsub.subscriber"
   member       = "serviceAccount:service-${data.google_project.project.number}@gcp-sa-pubsub.iam.gserviceaccount.com"
 }
+
+resource "google_service_account_iam_member" "pubsub_token_creator" {
+  service_account_id = "projects/${var.project_id}/serviceAccounts/${var.workflow_invoker_sa_email}"
+  role               = "roles/iam.serviceAccountTokenCreator"
+  member             = "serviceAccount:service-${data.google_project.project.number}@gcp-sa-pubsub.iam.gserviceaccount.com"
+}
