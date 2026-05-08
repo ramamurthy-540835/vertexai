@@ -8,48 +8,53 @@ main:
           text: ${"[TEST] Raw args received = " + json.encode_to_string(args)}
           severity: INFO
 
-    - check_message:
+    - check_format:
         switch:
-          - condition: ${not("message" in args)}
-            next: log_no_message
+          # Real GCS notification — raw JSON, has "bucket" directly in args
+          - condition: ${"bucket" in args}
+            next: handle_raw_gcs
+          # Pub/Sub push envelope — has message.data base64 encoded
+          - condition: ${"message" in args}
+            next: handle_pubsub_envelope
+        next: log_unknown_format
 
-    - decode_message:
+    - handle_raw_gcs:
+        steps:
+          - assign_raw:
+              assign:
+                - gcs_event: ${args}
+          - next_step:
+              next: log_file
+
+    - handle_pubsub_envelope:
         steps:
           - decode:
               assign:
                 - raw_data: ${args.message.data}
                 - decoded_text: ${text.decode(base64.decode(raw_data))}
                 - gcs_event: ${json.decode(decoded_text)}
+          - next_step:
+              next: log_file
 
-          - log_decoded:
-              call: sys.log
-              args:
-                text: ${"[TEST] Decoded GCS event = " + json.encode_to_string(gcs_event)}
-                severity: INFO
+    - log_file:
+        call: sys.log
+        args:
+          text: ${"[TEST] File = gs://" + gcs_event.bucket + "/" + gcs_event.name}
+          severity: INFO
 
-          - log_file:
-              call: sys.log
-              args:
-                text: ${"[TEST] File uploaded = gs://" + gcs_event.bucket + "/" + gcs_event.name}
-                severity: INFO
+    - success:
+        return:
+          status: "success"
+          bucket: ${gcs_event.bucket}
+          file: ${gcs_event.name}
 
-          - success:
-              return:
-                status: "success"
-                bucket: ${gcs_event.bucket}
-                file: ${gcs_event.name}
-                content_type: ${default(map.get(gcs_event, "contentType"), "unknown")}
-                raw_args: ${args}
-
-    - log_no_message:
+    - log_unknown_format:
         steps:
           - warn:
               call: sys.log
               args:
-                text: "[TEST] No message field in args — not a Pub/Sub push call"
+                text: ${"[TEST] Unknown format = " + json.encode_to_string(args)}
                 severity: WARNING
-
-          - return_skipped:
+          - end:
               return:
-                status: "skipped"
-                raw_args: ${args}
+                status: "unknown_format"
