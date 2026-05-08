@@ -157,3 +157,21 @@ jobs:
             --project=$PROJECT_ID \
             --limit=1 \
             --format=json 2>&1
+
+      - name: "Verify workflow exists"
+        run: |
+          unset CLOUDSDK_CORE_PROJECT CLOUDSDK_PROJECT GCLOUD_PROJECT GCP_PROJECT GOOGLE_CLOUD_PROJECT
+          gcloud config set project p-601-np-bcleadsmgmt-adt
+
+          echo "=== List all workflows ==="
+          gcloud workflows list \
+            --location=us-central1 \
+            --project=p-601-np-bcleadsmgmt-adt \
+            --format="table(name,state,updateTime)" 2>&1
+
+          echo ""
+          echo "=== Manually trigger workflow to confirm it works ==="
+          gcloud workflows run lead_match_workflow \
+            --location=us-central1 \
+            --project=p-601-np-bcleadsmgmt-adt \
+            --data='{"message":{"data":"eyJidWNrZXQiOiJ0ZXN0IiwibmFtZSI6InRlc3QudHh0In0=","messageId":"123","publishTime":"2026-05-08T00:00:00Z"},"subscription":"test"}' 2>&1
