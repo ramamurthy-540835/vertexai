@@ -63,9 +63,13 @@ main:
 
     - trigger_lead_match_workflow:
         steps:
-          - build_argument:
+          - build_map:
               assign:
-                - lead_match_args: ${json.encode_to_string({"batch_id": batch_id})}
+                - lead_match_map:
+                    batch_id: ${batch_id}
+          - encode_argument:
+              assign:
+                - lead_match_args: ${json.encode_to_string(lead_match_map)}
           - create_execution:
               call: googleapis.workflowexecutions.v1.projects.locations.workflows.executions.create
               args:
