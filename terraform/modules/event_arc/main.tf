@@ -72,8 +72,7 @@ resource "google_eventarc_trigger" "gcs_workflow_trigger" {
   }
 
   depends_on = [
-    google_project_iam_member.event_receiver,
-    google_project_iam_member.gcs_pubsub_publisher,
-    google_pubsub_topic_iam_member.eventarc_publisher
-  ]
+  google_pubsub_topic_iam_member.gcs_pubsub_publisher,
+  google_pubsub_topic_iam_member.eventarc_publisher
+]
 }
