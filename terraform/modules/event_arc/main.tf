@@ -10,18 +10,40 @@ data "google_storage_project_service_account" "gcs_sa" {
   project = var.project_id
 }
 
-# Allow Eventarc SA to receive Eventarc events
+# ─────────────────────────────────────────────────────────────
+# IAM Permissions
+# ─────────────────────────────────────────────────────────────
+
+# Allow custom service account to receive Eventarc events
 resource "google_project_iam_member" "event_receiver" {
   project = var.project_id
   role    = "roles/eventarc.eventReceiver"
   member  = "serviceAccount:${var.service_account_email}"
 }
 
-# Allow GCS to publish events to Pub/Sub
+# Allow GCS service account to publish events
 resource "google_project_iam_member" "gcs_pubsub_publisher" {
   project = var.project_id
   role    = "roles/pubsub.publisher"
   member  = "serviceAccount:${data.google_storage_project_service_account.gcs_sa.email_address}"
+}
+
+# Allow Eventarc service agent to publish to transport topic
+resource "google_pubsub_topic_iam_member" "eventarc_publisher" {
+  project = var.project_id
+  topic   = google_pubsub_topic.eventarc_transport.name
+  role    = "roles/pubsub.publisher"
+
+  member = "serviceAccount:service-${data.google_project.project.number}@gcp-sa-eventarc.iam.gserviceaccount.com"
+}
+
+# ─────────────────────────────────────────────────────────────
+# Transport Pub/Sub Topic
+# ─────────────────────────────────────────────────────────────
+
+resource "google_pubsub_topic" "eventarc_transport" {
+  name    = "${var.trigger_name}-transport"
+  project = var.project_id
 }
 
 # ─────────────────────────────────────────────────────────────
@@ -54,13 +76,10 @@ resource "google_eventarc_trigger" "gcs_workflow_trigger" {
       topic = google_pubsub_topic.eventarc_transport.id
     }
   }
-}
 
-# ─────────────────────────────────────────────────────────────
-# Transport Pub/Sub Topic (required by Eventarc)
-# ─────────────────────────────────────────────────────────────
-
-resource "google_pubsub_topic" "eventarc_transport" {
-  name    = "${var.trigger_name}-transport"
-  project = var.project_id
+  depends_on = [
+    google_project_iam_member.event_receiver,
+    google_project_iam_member.gcs_pubsub_publisher,
+    google_pubsub_topic_iam_member.eventarc_publisher
+  ]
 }
