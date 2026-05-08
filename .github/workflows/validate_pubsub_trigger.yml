@@ -62,15 +62,26 @@ jobs:
       - name: "2. Manually publish to topic and check workflow triggers"
         run: |
           unset CLOUDSDK_CORE_PROJECT CLOUDSDK_PROJECT GCLOUD_PROJECT GCP_PROJECT GOOGLE_CLOUD_PROJECT
+
           gcloud config set project $PROJECT_ID
 
-          echo "=== Publishing simulated GCS event to topic ==="
-          GCS_EVENT=$(printf '{"bucket":"%s","name":"pos-raw-data/manual-test.txt","contentType":"text/plain","size":"5"}' "$BUCKET_NAME" | base64 -w 0)
+          echo "=== Publishing workflow execution payload ==="
+
+          WORKFLOW_PAYLOAD=$(cat <<EOF
+          {
+            "argument":"{\"bucket\":\"$BUCKET_NAME\",\"name\":\"pos-raw-data/manual-test.txt\"}"
+          }
+          EOF
+          )
+
+          echo "Payload being published:"
+          echo "$WORKFLOW_PAYLOAD"
 
           MSG_ID=$(gcloud pubsub topics publish $TOPIC_NAME \
             --project=$PROJECT_ID \
-            --message="$GCS_EVENT" \
-            --format="value(messageIds[0])" 2>&1)
+            --message="$WORKFLOW_PAYLOAD" \
+            --format="value(messageIds[0])")
+
           echo "Published message ID: $MSG_ID"
 
           echo "Waiting 20s for push delivery..."
@@ -78,11 +89,13 @@ jobs:
 
           echo ""
           echo "=== Workflow executions after manual publish ==="
+
           gcloud workflows executions list $WORKFLOW_NAME \
             --location=$REGION \
             --project=$PROJECT_ID \
-            --limit=3 \
-            --format="table(name.basename(),state,startTime)" 2>&1
+            --limit=5 \
+            --format="table(name.basename(),state,startTime)"
+            
 
       - name: "3. Get latest execution detail"
         run: |
