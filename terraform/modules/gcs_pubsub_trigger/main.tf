@@ -71,10 +71,6 @@
         service_account_email = var.service_account_email
         audience              = "https://workflowexecutions.googleapis.com/"
       }
-
-      no_wrapper {
-        write_metadata = true  # includes Pub/Sub metadata like messageId, publishTime
-      }
     }
 
     dead_letter_policy {
