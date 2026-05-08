@@ -14,18 +14,12 @@ data "google_storage_project_service_account" "gcs_sa" {
 # IAM Permissions
 # ─────────────────────────────────────────────────────────────
 
-# Allow custom service account to receive Eventarc events
-resource "google_project_iam_member" "event_receiver" {
-  project = var.project_id
-  role    = "roles/eventarc.eventReceiver"
-  member  = "serviceAccount:${var.service_account_email}"
-}
-
 # Allow GCS service account to publish events
-resource "google_project_iam_member" "gcs_pubsub_publisher" {
+resource "google_pubsub_topic_iam_member" "gcs_pubsub_publisher" {
   project = var.project_id
-  role    = "roles/pubsub.publisher"
-  member  = "serviceAccount:${data.google_storage_project_service_account.gcs_sa.email_address}"
+  topic   = google_pubsub_topic.eventarc_transport.name
+  role   = "roles/pubsub.publisher"
+  member = "serviceAccount:${data.google_storage_project_service_account.gcs_sa.email_address}"
 }
 
 # Allow Eventarc service agent to publish to transport topic
