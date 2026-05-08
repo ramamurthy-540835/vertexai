@@ -148,3 +148,12 @@ jobs:
           echo "Bucket   : $BUCKET_NAME"
           echo "Topic    : $TOPIC_NAME"
           echo "Workflow : $WORKFLOW_NAME"
+      - name: "Pull dead-letter messages"
+        run: |
+          unset CLOUDSDK_CORE_PROJECT CLOUDSDK_PROJECT GCLOUD_PROJECT GCP_PROJECT GOOGLE_CLOUD_PROJECT
+          gcloud config set project $PROJECT_ID
+
+          gcloud pubsub subscriptions pull "${TOPIC_NAME}-deadletter-sub" \
+            --project=$PROJECT_ID \
+            --limit=1 \
+            --format=json 2>&1
