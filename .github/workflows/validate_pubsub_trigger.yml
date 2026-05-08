@@ -162,6 +162,11 @@ jobs:
         run: |
           unset CLOUDSDK_CORE_PROJECT CLOUDSDK_PROJECT GCLOUD_PROJECT GCP_PROJECT GOOGLE_CLOUD_PROJECT
           gcloud config set project p-601-np-bcleadsmgmt-adt
+          gcloud iam service-accounts get-iam-policy \
+          gco-iam-svc-lead-mgmt-bc-adt@p-601-np-bcleadsmgmt-adt.iam.gserviceaccount.com \
+          --project=p-601-np-bcleadsmgmt-adt
+
+
 
           echo "=== Get access token ==="
           TOKEN=$(gcloud auth print-access-token)
