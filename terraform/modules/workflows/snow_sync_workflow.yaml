@@ -62,12 +62,17 @@ main:
             skip_polling: false
 
     - trigger_lead_match_workflow:
-        call: googleapis.workflowexecutions.v1.projects.locations.workflows.executions.create
-        args:
-          parent: ${"projects/" + project_id + "/locations/" + job_location + "/workflows/lead_match_workflow"}
-          body:
-            argument: ${json.encode_to_string({"batch_id": batch_id})}
-        result: lead_match_execution
+        steps:
+          - build_argument:
+              assign:
+                - lead_match_args: ${json.encode_to_string({"batch_id": batch_id})}
+          - create_execution:
+              call: googleapis.workflowexecutions.v1.projects.locations.workflows.executions.create
+              args:
+                parent: ${"projects/" + project_id + "/locations/" + job_location + "/workflows/lead_match_workflow"}
+                body:
+                  argument: ${lead_match_args}
+              result: lead_match_execution
     
     - wait_for_lead_match:
         call: googleapis.workflowexecutions.v1.projects.locations.workflows.executions.get

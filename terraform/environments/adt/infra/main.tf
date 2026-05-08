@@ -241,7 +241,7 @@ output "watched_folder" {
 }
 
 
-module "gcs_eventarc_workflow_trigger" {
+/*module "gcs_eventarc_workflow_trigger" {
   source = "../../../modules/event_arc"
 
   project_id   = var.projectId
@@ -251,5 +251,5 @@ module "gcs_eventarc_workflow_trigger" {
   workflow_name = module.lead_match_workflow.workflow_name
   service_account_email = module.project_init.service_account_email
   trigger_name = "gcs-file-finalized-trigger"
-}
+}*/
 
