@@ -23,7 +23,7 @@ main:
           - assign_raw:
               assign:
                 - gcs_event: ${args}
-          - next_step:
+          - goto_log_file_raw:
               next: log_file
 
     - handle_pubsub_envelope:
@@ -33,7 +33,7 @@ main:
                 - raw_data: ${args.message.data}
                 - decoded_text: ${text.decode(base64.decode(raw_data))}
                 - gcs_event: ${json.decode(decoded_text)}
-          - next_step:
+          - goto_log_file_pubsub:
               next: log_file
 
     - log_file:
