@@ -72,8 +72,8 @@
         audience              = "https://workflowexecutions.googleapis.com/"
       }
 
-      attributes = {
-        x-goog-version = "v1"
+      no_wrapper {
+        write_metadata = true  # includes Pub/Sub metadata like messageId, publishTime
       }
     }
 
