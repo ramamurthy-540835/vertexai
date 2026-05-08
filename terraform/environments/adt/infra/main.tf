@@ -245,7 +245,7 @@ module "gcs_eventarc_workflow_trigger" {
   source = "../../../modules/event_arc"
 
   project_id   = var.projectId
-  region       = var.region
+  location       = var.location
   bucket_name  = module.pos_bucket.bucket_name
   workflow_name = module.lead_match_workflow.workflow_name
   service_account_email = module.project_init.service_account_email

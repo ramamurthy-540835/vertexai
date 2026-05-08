@@ -4,7 +4,7 @@
 
 resource "google_eventarc_trigger" "gcs_workflow_trigger" {
   name     = var.trigger_name
-  location = var.region
+  location = var.location
   project  = var.project_id
 
   service_account = var.service_account_email
