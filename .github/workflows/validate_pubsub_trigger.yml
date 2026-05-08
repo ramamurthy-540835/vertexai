@@ -18,7 +18,7 @@ env:
   REGION: 'us-central1'
   BUCKET_NAME: 'gcp-gcs-lead-mgmt-us-${{ github.event.inputs.environment }}-pos-raw'
   TOPIC_NAME: 'gcs-file-events-${{ github.event.inputs.environment }}'
-  WORKFLOW_NAME: 'snow_sync_workflow'
+  WORKFLOW_NAME: 'lead_match_workflow'
   SA_EMAIL: 'gco-iam-svc-lead-mgmt-bc-adt@p-601-np-bcleadsmgmt-${{ github.event.inputs.environment }}.iam.gserviceaccount.com'
 
 jobs:
