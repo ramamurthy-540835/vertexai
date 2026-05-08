@@ -55,6 +55,6 @@ main:
               args:
                 text: ${"[TEST] Unknown format = " + json.encode_to_string(args)}
                 severity: WARNING
-          - end:
+          - finish:
               return:
                 status: "unknown_format"
