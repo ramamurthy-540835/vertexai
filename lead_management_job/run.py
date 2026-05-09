@@ -1,8 +1,11 @@
 from google.cloud import aiplatform
 from costco.leadmgmt.pipeline_manager.compile_pipeline import compile_and_upload_pipeline
 from costco.leadmgmt.util.match_id_creation import match_id_creation
-from costco.leadmgmt.components.* import update_cloud_sql,update_servicenow,data_ingestion_cloud_sql,
-primary_matching,temporary_file_deletion
+from costco.leadmgmt.components.update_source_data import update_cloud_sql
+from costco.leadmgmt.components.update_servicenow import update_servicenow
+from costco.leadmgmt.components.data_ingestion_cloud_sql import load_and_preprocess_data_cloud_sql
+from costco.leadmgmt.components.lead_matching import primary_classification
+from costco.leadmgmt.components.temporary_file_deletion import delete_temp_files_from_gcs
 import sys
 import os
 
