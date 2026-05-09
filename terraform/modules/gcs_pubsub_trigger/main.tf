@@ -52,38 +52,6 @@
     depends_on = [google_pubsub_topic_iam_member.gcs_sa_publisher]
   }
 
-  # ── Push Subscription → Cloud Workflow ────────────────────────────────────────
-
-  resource "google_pubsub_subscription" "push" {
-    name    = "${var.topic_name}-push-sub"
-    project = var.project_id
-    topic   = google_pubsub_topic.this.name
-    labels  = var.labels
-
-    ack_deadline_seconds       = var.ack_deadline_seconds
-    message_retention_duration = var.message_retention_duration
-    retain_acked_messages      = false
-
-    push_config {
-      push_endpoint = "https://workflowexecutions.googleapis.com/v1/projects/${var.project_id}/locations/${var.region}/workflows/${var.workflow_name}/executions"
-
-      oidc_token {
-        service_account_email = var.service_account_email
-        audience              = "https://workflowexecutions.googleapis.com/"
-      }
-    }
-
-    dead_letter_policy {
-      dead_letter_topic     = google_pubsub_topic.deadletter.id
-      max_delivery_attempts = var.max_delivery_attempts
-    }
-
-    retry_policy {
-      minimum_backoff = var.retry_minimum_backoff
-      maximum_backoff = var.retry_maximum_backoff
-    }
-  }
-
   # ── Dead-letter Pull Subscription (for alerting / inspection) ─────────────────
 
   resource "google_pubsub_subscription" "deadletter_pull" {
@@ -102,18 +70,4 @@ resource "google_pubsub_topic_iam_member" "pubsub_sa_deadletter_publisher" {
   topic   = google_pubsub_topic.deadletter.name
   role    = "roles/pubsub.publisher"
   member  = "serviceAccount:service-${data.google_project.project.number}@gcp-sa-pubsub.iam.gserviceaccount.com"
-}
-
-# Pub/Sub service agent — subscribe on push sub to forward to dead-letter
-resource "google_pubsub_subscription_iam_member" "pubsub_sa_push_subscriber" {
-  project      = var.project_id
-  subscription = google_pubsub_subscription.push.name
-  role         = "roles/pubsub.subscriber"
-  member       = "serviceAccount:service-${data.google_project.project.number}@gcp-sa-pubsub.iam.gserviceaccount.com"
-}
-
-resource "google_service_account_iam_member" "pubsub_token_creator" {
-  service_account_id = "projects/${var.project_id}/serviceAccounts/${var.service_account_email}"
-  role               = "roles/iam.serviceAccountTokenCreator"
-  member             = "serviceAccount:service-${data.google_project.project.number}@gcp-sa-pubsub.iam.gserviceaccount.com"
 }

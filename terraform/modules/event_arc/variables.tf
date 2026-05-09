@@ -1,40 +1,34 @@
 variable "project_id" {
-  description = "GCP project ID"
   type        = string
+  description = "GCP project ID"
 }
 
 variable "location" {
-  description = "Eventarc trigger location — must match the bucket's region or multi-region"
   type        = string
-}
-
-variable "region" {
-  description = "Region of the destination Cloud Workflow"
-  type        = string
+  description = "Eventarc trigger location. Must be a single region (not multi-region) and match the workflow region."
 }
 
 variable "trigger_name" {
+  type        = string
   description = "Name of the Eventarc trigger"
-  type        = string
 }
 
-variable "bucket_name" {
-  description = "GCS bucket name (without gs:// prefix)"
+variable "pubsub_topic_id" {
   type        = string
-}
-
-variable "folder_prefix" {
-  description = "Folder inside the bucket to watch for manifests. No leading or trailing slash."
-  type        = string
-  default     = "manifests"
+  description = "Full resource ID of the Pub/Sub topic to subscribe to (projects/.../topics/...). Output from pubsub_gcs_trigger module."
 }
 
 variable "workflow_name" {
-  description = "Name of the Cloud Workflow that processes the manifest"
   type        = string
+  description = "Name of the destination Cloud Workflow"
+}
+
+variable "workflow_location" {
+  type        = string
+  description = "Region of the destination Cloud Workflow"
 }
 
 variable "service_account_email" {
-  description = "Service account email Eventarc uses to invoke the workflow"
   type        = string
+  description = "Service account Eventarc impersonates to invoke the workflow"
 }
