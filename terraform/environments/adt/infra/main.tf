@@ -245,7 +245,7 @@ module "gcs_eventarc_workflow_trigger" {
   source = "../../../modules/event_arc"
 
   project_id            = var.projectId
-  location              = var.location
+  location              = var.region
   region                = var.region
   bucket_name           = module.pos_bucket.bucket_name
   folder_prefix         = "manifests"
