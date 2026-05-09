@@ -241,15 +241,16 @@ output "watched_folder" {
 }
 
 
-/*module "gcs_eventarc_workflow_trigger" {
+module "gcs_eventarc_workflow_trigger" {
   source = "../../../modules/event_arc"
 
-  project_id   = var.projectId
-  location       = var.location
-  region = var.region
-  bucket_name  = module.pos_bucket.bucket_name
-  workflow_name = module.lead_match_workflow.workflow_name
+  project_id            = var.projectId
+  location              = var.location
+  region                = var.region
+  bucket_name           = module.pos_bucket.bucket_name
+  folder_prefix         = "manifests"
+  workflow_name         = module.lead_match_workflow.workflow_name
   service_account_email = module.project_init.service_account_email
-  trigger_name = "gcs-file-finalized-trigger"
-}*/
+  trigger_name          = "pos-manifest-trigger"
+}
 
