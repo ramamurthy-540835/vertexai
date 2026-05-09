@@ -193,7 +193,7 @@ module "gcs_pubsub_trigger" {
   environment = var.environment
 
   bucket_name   = module.pos_bucket.bucket_name
-  folder_prefix = "pos-raw-data/"
+  folder_prefix = "manifests/"
 
   topic_name = "gcs-file-events-${var.environment}"
 
