@@ -91,9 +91,6 @@ main:
                         body:
                           overrides:
                             containerOverrides:
-                              env:
-                                - name: BATCH_ID
-                                  value: ${batch_id}
                               args:
                                 - run.py
                                 - update_service_now
@@ -115,9 +112,6 @@ main:
                         body:
                           overrides:
                             containerOverrides:
-                              env:
-                                - name: BATCH_ID
-                                  value: ${batch_id}
                               args:
                                 - run.py
                                 - update_database
@@ -138,9 +132,6 @@ main:
           body:
             overrides:
               containerOverrides:
-                env:
-                  - name: BATCH_ID
-                    value: ${batch_id}
                 args:
                   - run.py
                   - temporary_file_deletion
