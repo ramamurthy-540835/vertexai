@@ -37,20 +37,25 @@
   # ── GCS Bucket Notification (folder-scoped) ───────────────────────────────────
 
   resource "google_storage_notification" "this" {
-    bucket         = var.bucket_name
-    payload_format = "JSON_API_V1"
-    topic          = google_pubsub_topic.this.id
-    event_types    = ["OBJECT_FINALIZE"]
+  bucket               = var.bucket_name
+  payload_format       = "JSON_API_V1"
+  topic                = google_pubsub_topic.this.id
+  event_types          = ["OBJECT_FINALIZE"]
+  object_name_prefix   = var.folder_prefix
 
-    object_name_prefix = var.folder_prefix
-
-    custom_attributes = {
-      env    = var.environment
-      source = "gcs-pubsub-trigger"
-    }
-
-    depends_on = [google_pubsub_topic_iam_member.gcs_sa_publisher]
+  custom_attributes = {
+    env    = var.environment
+    source = "gcs-pubsub-trigger"
   }
+
+  depends_on = [google_pubsub_topic_iam_member.gcs_sa_publisher]
+
+  lifecycle {
+    replace_triggered_by = [
+      var.folder_prefix
+    ]
+  }
+}
 
   # ── Dead-letter Pull Subscription (for alerting / inspection) ─────────────────
 
