@@ -25,7 +25,7 @@ resource "google_workflows_workflow" "snow_sync_workflow" {
   service_account = var.service_account_email
 
   # Import the workflow definition from the external YAML file
-  source_contents = file("${path.module}/snow_sync_workflow.yaml")
+  source_contents = file(var.workflow_path)
 
   # Ensure APIs and service account are ready before deploying workflow
   depends_on = [

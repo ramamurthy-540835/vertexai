@@ -1,0 +1,16 @@
+{
+  "name": "POS Schema-Adaptive ETL Pipeline",
+  "description": "Reads any file from GCS, auto-detects schema, evolves target table, loads to Cloud SQL",
+  "parameters": [
+    {"name": "subscription",             "label": "Pub/Sub Subscription",
+     "helpText": "projects/PROJECT/subscriptions/NAME", "isOptional": false},
+    {"name": "instance_connection_name", "label": "Cloud SQL Connection Name",
+     "helpText": "PROJECT:REGION:INSTANCE e.g. md-d-data-agents-platform:us-central1:pos-cloudsql",
+     "isOptional": false},
+    {"name": "db_name",    "label": "Database Name",   "helpText": "postgres",  "isOptional": true},
+    {"name": "db_schema",  "label": "Target Schema",   "helpText": "pos_raw",   "isOptional": true},
+    {"name": "db_table",   "label": "Target Table",    "helpText": "pos_data",  "isOptional": true},
+    {"name": "batch_size", "label": "Batch Insert Size","helpText": "2000",     "isOptional": true},
+    {"name": "dlq_bucket", "label": "DLQ Output Path", "helpText": "gs://BUCKET/dlq/", "isOptional": true}
+  ]
+}

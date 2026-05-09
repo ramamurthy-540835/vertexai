@@ -17,7 +17,7 @@ env:
   PROJECT_ID: 'p-601-np-bcleadsmgmt-${{ github.event.inputs.environment }}'
   REGION: 'us-central1'
   BUCKET_NAME: 'gcp-gcs-lead-mgmt-us-${{ github.event.inputs.environment }}-pos-raw'
-  FOLDER_PREFIX: 'pos-raw-data'
+  FOLDER_PREFIX: 'manifests'
   TOPIC_NAME: 'gcs-file-events-${{ github.event.inputs.environment }}'
   WORKFLOW_NAME: 'snow_sync_workflow'
 
@@ -63,73 +63,36 @@ jobs:
             exit 1
           fi
 
-          echo "---"
-          echo "Checking dead-letter topic: ${TOPIC_NAME}-deadletter"
-
-          DL_TOPIC=$(gcloud pubsub topics describe "${TOPIC_NAME}-deadletter" \
-            --project=$PROJECT_ID \
-            --format="value(name)" 2>&1)
-
-          if echo "$DL_TOPIC" | grep -q "topics/${TOPIC_NAME}-deadletter"; then
-            echo "✅ Dead-letter topic exists: $DL_TOPIC"
-          else
-            echo "❌ Dead-letter topic NOT found"
-            exit 1
-          fi
-
-      - name: "2. Validate Push Subscription exists and is configured correctly"
+      - name: "2. Ensure GCS Notification exists with correct folder prefix"
         run: |
           unset CLOUDSDK_CORE_PROJECT
           gcloud config set project $PROJECT_ID
 
-          SUB_NAME="${TOPIC_NAME}-push-sub"
-
           echo "=========================================="
-          echo "Checking subscription: $SUB_NAME"
+          echo "Checking GCS notification configuration"
           echo "=========================================="
 
-          SUB=$(gcloud pubsub subscriptions describe $SUB_NAME \
-            --project=$PROJECT_ID \
-            --format=json 2>&1)
+          EXISTING_NOTIFICATION=$(gcloud storage buckets notifications list gs://$BUCKET_NAME \
+            --format=json 2>/dev/null || echo "[]")
 
-          if echo "$SUB" | grep -q "pushConfig"; then
-            echo "✅ Push subscription exists: $SUB_NAME"
+          echo "$EXISTING_NOTIFICATION"
+
+          if echo "$EXISTING_NOTIFICATION" | grep -q "$TOPIC_NAME" && \
+             echo "$EXISTING_NOTIFICATION" | grep -q "manifests/"; then
+
+            echo "✅ Correct notification already exists. Skipping creation."
+
           else
-            echo "❌ Push subscription NOT found or not a push type"
-            exit 1
+            echo "⚠️ Correct notification not found. Creating new notification..."
+
+            gcloud storage buckets notifications create gs://$BUCKET_NAME \
+              --topic=$TOPIC_NAME \
+              --payload-format=json \
+              --event-types=OBJECT_FINALIZE \
+              --object-prefix=manifests/
+
+            echo "✅ Notification created successfully"
           fi
-
-          # Validate push endpoint points to correct workflow
-          if echo "$SUB" | grep -q "$WORKFLOW_NAME"; then
-            echo "✅ Push endpoint correctly targets workflow: $WORKFLOW_NAME"
-          else
-            echo "❌ Push endpoint does not reference workflow: $WORKFLOW_NAME"
-            echo "$SUB"
-            exit 1
-          fi
-
-          # Validate OIDC auth is configured
-          if echo "$SUB" | grep -q "oidcToken"; then
-            echo "✅ OIDC authentication is configured on push subscription"
-          else
-            echo "❌ OIDC authentication is NOT configured"
-            exit 1
-          fi
-
-          echo "---"
-          echo "Checking dead-letter subscription: ${TOPIC_NAME}-deadletter-sub"
-
-          DL_SUB=$(gcloud pubsub subscriptions describe "${TOPIC_NAME}-deadletter-sub" \
-            --project=$PROJECT_ID \
-            --format="value(name)" 2>&1)
-
-          if echo "$DL_SUB" | grep -q "subscriptions/${TOPIC_NAME}-deadletter-sub"; then
-            echo "✅ Dead-letter pull subscription exists"
-          else
-            echo "❌ Dead-letter pull subscription NOT found"
-            exit 1
-          fi
-
       - name: "3. Validate GCS Bucket Notification exists"
         run: |
           unset CLOUDSDK_CORE_PROJECT
@@ -139,21 +102,22 @@ jobs:
           echo "Checking GCS notification on bucket: $BUCKET_NAME"
           echo "=========================================="
 
-          NOTIFICATIONS=$(gsutil notification list gs://$BUCKET_NAME 2>&1)
+          NOTIFICATIONS=$(gcloud storage buckets notifications list gs://$BUCKET_NAME \
+            --format=json 2>&1)
+
+          echo "$NOTIFICATIONS"
 
           if echo "$NOTIFICATIONS" | grep -q "$TOPIC_NAME"; then
             echo "✅ GCS notification found pointing to topic: $TOPIC_NAME"
           else
             echo "❌ No notification found for topic: $TOPIC_NAME"
-            echo "$NOTIFICATIONS"
             exit 1
           fi
 
-          if echo "$NOTIFICATIONS" | grep -q "$FOLDER_PREFIX"; then
-            echo "✅ Notification is scoped to folder prefix: $FOLDER_PREFIX"
+          if echo "$NOTIFICATIONS" | grep -q "manifests/"; then
+            echo "✅ Notification is scoped to folder prefix: manifests/"
           else
-            echo "❌ Folder prefix not found in notification config: $FOLDER_PREFIX"
-            echo "$NOTIFICATIONS"
+            echo "❌ Folder prefix not found in notification config"
             exit 1
           fi
 
@@ -163,32 +127,42 @@ jobs:
             echo "❌ OBJECT_FINALIZE event type not set"
             exit 1
           fi
-
-      - name: "4. End-to-End Test — Upload file and verify workflow triggered"
+      - name: "4. End-to-End Test — Upload JSON file and verify workflow triggered"
         run: |
           unset CLOUDSDK_CORE_PROJECT
           gcloud config set project $PROJECT_ID
 
           echo "=========================================="
-          echo "Uploading test file to watched folder"
+          echo "Uploading test JSON file to manifests folder"
           echo "=========================================="
 
-          TEST_FILE="pos-raw-data/e2e-trigger-test-$(date +%s).txt"
-          echo "terraform e2e validation test - $(date)" > /tmp/test-trigger.txt
+          TEST_FILE="manifests/e2e-trigger-test-$(date +%s).json"
 
-          gsutil cp /tmp/test-trigger.txt gs://$BUCKET_NAME/$TEST_FILE
+          cat <<EOF > /tmp/test-trigger.json
+          {
+            "test": true,
+            "environment": "${{ github.event.inputs.environment }}",
+            "timestamp": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+          }
+          EOF
+
+          gcloud storage cp \
+            /tmp/test-trigger.json \
+            gs://$BUCKET_NAME/$TEST_FILE
 
           if [ $? -eq 0 ]; then
-            echo "✅ Test file uploaded: gs://$BUCKET_NAME/$TEST_FILE"
+            echo "✅ Test JSON file uploaded: gs://$BUCKET_NAME/$TEST_FILE"
           else
-            echo "❌ Failed to upload test file"
+            echo "❌ Failed to upload test JSON file"
             exit 1
           fi
 
-          echo "Waiting 15s for Pub/Sub to deliver and workflow to start..."
+          echo "Waiting 15s for Pub/Sub → Eventarc → Workflow trigger..."
           sleep 15
 
-      - name: "5. Validate Workflow Execution was triggered"
+    
+
+      - name: "4. Validate Workflow Execution was triggered"
         run: |
           unset CLOUDSDK_CORE_PROJECT
           gcloud config set project $PROJECT_ID
@@ -197,7 +171,6 @@ jobs:
           echo "Checking workflow executions: $WORKFLOW_NAME"
           echo "=========================================="
 
-          # Get the most recent execution
           LATEST_EXECUTION=$(gcloud workflows executions list $WORKFLOW_NAME \
             --location=$REGION \
             --project=$PROJECT_ID \
@@ -209,46 +182,18 @@ jobs:
           if echo "$LATEST_EXECUTION" | grep -qE "SUCCEEDED|ACTIVE|RUNNING"; then
             echo "✅ Workflow execution triggered successfully"
           else
-            echo "⚠️  Latest execution state may need manual review:"
+            echo "⚠️ Latest execution state may need manual review:"
             echo "$LATEST_EXECUTION"
           fi
 
-          # Show last 3 executions for context
           echo "---"
           echo "Last 3 executions:"
+
           gcloud workflows executions list $WORKFLOW_NAME \
             --location=$REGION \
             --project=$PROJECT_ID \
             --limit=3 \
             --format="table(name.basename(),state,startTime,endTime)"
-
-      - name: "6. Check Dead-letter backlog (should be 0)"
-        run: |
-          unset CLOUDSDK_CORE_PROJECT
-          gcloud config set project $PROJECT_ID
-
-          echo "=========================================="
-          echo "Checking dead-letter backlog"
-          echo "=========================================="
-
-          DL_SUB="${TOPIC_NAME}-deadletter-sub"
-
-          BACKLOG=$(gcloud pubsub subscriptions describe $DL_SUB \
-            --project=$PROJECT_ID \
-            --format="value(name)" 2>&1)
-
-          # Pull with max 1 message with no ack — if empty, dead-letter is clean
-          DL_MESSAGES=$(gcloud pubsub subscriptions pull $DL_SUB \
-            --project=$PROJECT_ID \
-            --limit=1 \
-            --format="value(message.messageId)" 2>&1)
-
-          if [ -z "$DL_MESSAGES" ]; then
-            echo "✅ Dead-letter queue is empty — no failed deliveries"
-          else
-            echo "⚠️  Dead-letter queue has messages — push subscription may be failing"
-            echo "Message IDs found: $DL_MESSAGES"
-          fi
 
       - name: "Summary"
         if: always()

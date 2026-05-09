@@ -161,6 +161,19 @@ module "workflows" {
   project_id            = var.projectId
   region                = var.region
   service_account_email = module.project_init.service_account_email
+  workflow_name = "snow_sync_workflow"
+  workflow_path = "../../../modules/workflows/snow_sync_workflow.yaml"
+  workflow_description = "sync between service now and GCP"
+}
+
+module "lead_match_workflow" {
+  source                = "../../../modules/workflows"
+  project_id            = var.projectId
+  region                = var.region
+  service_account_email = module.project_init.service_account_email
+  workflow_name = "lead_match_workflow"
+  workflow_path = "../../../modules/workflows/lead_match_workflow.yaml"
+  workflow_description = "Exact matching between leads and sales data"
 }
 
 module "security_monitoring" {

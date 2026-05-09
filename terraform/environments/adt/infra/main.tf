@@ -161,8 +161,20 @@ module "workflows" {
   project_id            = var.projectId
   region                = var.region
   service_account_email = module.project_init.service_account_email
+  workflow_name = "snow_sync_workflow"
+  workflow_path = "../../../modules/workflows/snow_sync_workflow.yaml"
+  workflow_description = "Orchestrates data sync from ServiceNow to GCP"
 }
 
+module "lead_match_workflow" {
+  source                = "../../../modules/workflows"
+  project_id            = var.projectId
+  region                = var.region
+  service_account_email = module.project_init.service_account_email
+  workflow_name = "lead_match_workflow"
+  workflow_path = "../../../modules/workflows/lead_match_workflow.yaml"
+  workflow_description = "Exact matching between leads and sales data"
+}
 
 module "security_monitoring" {
   source                = "../../../modules/security_monitoring"
@@ -170,62 +182,59 @@ module "security_monitoring" {
   notification_channels = [module.monitoring_alert.notification_channel_id]
 }
 
+###############################################################################
+# 1. Pub/Sub layer — GCS folder → topic
+###############################################################################
 module "gcs_pubsub_trigger" {
-  source = "../../../modules/gcs_pubsub_trigger"  
+  source = "../../../modules/gcs_pubsub_trigger"
 
-  # ── Identity ────────────────────────────────────────────────────────────────
   project_id  = var.projectId
   region      = var.region
   environment = var.environment
 
-  # ── GCS ─────────────────────────────────────────────────────────────────────
   bucket_name   = module.pos_bucket.bucket_name
-  folder_prefix = "pos-raw-data/"  
+  folder_prefix = "manifests/"
 
-  # ── Pub/Sub ──────────────────────────────────────────────────────────────────
-  topic_name = "gcs-file-events-adt"
+  topic_name = "gcs-file-events-${var.environment}"
 
-  # ── Workflow ─────────────────────────────────────────────────────────────────
-  workflow_name             = "snow_sync_workflow"
-  service_account_email = module.project_init.service_account_email  # SA with roles/workflows.invoker
-
-  # ── Labels ───────────────────────────────────────────────────────────────────
   labels = {
     managed-by  = "terraform"
     environment = var.environment
     team        = "membership-gcp"
   }
 
-  # ── Optional overrides (module defaults shown) ───────────────────────────────
-  # message_retention_duration = "86600s"   # ~24 hours
-  # ack_deadline_seconds       = 60
-  # max_delivery_attempts      = 5
-  # retry_minimum_backoff      = "10s"
-  # retry_maximum_backoff      = "300s"
+  # message_retention_duration = "86400s"   # default ~24h
 }
 
 ###############################################################################
-# Outputs — expose module outputs to the environment level
+# 2. Eventarc layer — topic → workflow
 ###############################################################################
+module "gcs_eventarc_workflow_trigger" {
+  source = "../../../modules/event_arc"
 
+  project_id            = var.projectId
+  location              = var.region
+  trigger_name          = "pos-manifest-trigger"
+  pubsub_topic_id       = module.gcs_pubsub_trigger.topic_id
+  workflow_name         = "snow_sync_workflow"
+  workflow_location     = var.region
+  service_account_email = module.project_init.service_account_email
+}
+
+###############################################################################
+# Outputs
+###############################################################################
 output "topic_id" {
   value       = module.gcs_pubsub_trigger.topic_id
   description = "Pub/Sub topic ID"
 }
 
-output "push_subscription_id" {
-  value       = module.gcs_pubsub_trigger.push_subscription_id
-  description = "Push subscription ID"
+output "deadletter_topic_id" {
+  value       = module.gcs_pubsub_trigger.deadletter_topic_id
+  description = "Dead-letter topic ID"
 }
 
-output "notification_id" {
-  value       = module.gcs_pubsub_trigger.notification_id
-  description = "GCS notification ID"
+output "eventarc_trigger_name" {
+  value       = module.gcs_eventarc_workflow_trigger.eventarc_trigger_name
+  description = "Eventarc trigger name"
 }
-
-output "watched_folder" {
-  value       = module.gcs_pubsub_trigger.watched_folder
-  description = "GCS folder prefix being watched"
-}
-
-

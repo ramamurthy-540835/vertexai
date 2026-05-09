@@ -1,191 +1,644 @@
-import pandas as pd
-import requests
 import json
-from costco.leadmgmt.config.Configuration import JobConfig
-from costco.leadmgmt.util.apputil import load_file_from_gcs
-from google.cloud import storage
 import time
 
-def get_gcs_file_path(uri: str) -> str:
-    if not uri.startswith("gs://"):
-        raise ValueError("Invalid GCS URI. Must start with 'gs://'.")
+import pandas as pd
+import requests
+from google.cloud import storage
 
-    # Extract bucket and folder from URI
+from costco.leadmgmt.config.Configuration import JobConfig
+from costco.leadmgmt.util.apputil import load_file_from_gcs
+
+
+def get_gcs_file_path(uri: str) -> str:
+
+    if not uri.startswith("gs://"):
+        raise ValueError(
+            "Invalid GCS URI. Must start with 'gs://'."
+        )
+
+    # ==========================================================
+    # EXTRACT BUCKET + PATH
+    # ==========================================================
     path = uri[5:]
+
     parts = path.split('/', 1)
+
     bucket_name = parts[0]
+
     folder_path = parts[1] if len(parts) > 1 else ""
 
     if folder_path and not folder_path.endswith('/'):
         folder_path += '/'
 
-    # Connect to GCS
+    # ==========================================================
+    # GCS CLIENT
+    # ==========================================================
     client = storage.Client()
+
     bucket = client.bucket(bucket_name)
 
-    # List blobs under the folder
-    blobs = list(bucket.list_blobs(prefix=folder_path))
-    files = [blob.name for blob in blobs if not blob.name.endswith('/')]
+    blobs = list(
+        bucket.list_blobs(prefix=folder_path)
+    )
+
+    files = [
+        blob.name
+        for blob in blobs
+        if not blob.name.endswith('/')
+    ]
 
     if len(files) != 1:
-        raise ValueError(f"Expected exactly one file in '{uri}', found {len(files)}")
+
+        raise ValueError(
+            f"Expected exactly one file in '{uri}', "
+            f"found {len(files)}"
+        )
 
     return f"gs://{bucket_name}/{files[0]}"
 
+
+# ==============================================================
+# OAUTH TOKEN
+# ==============================================================
+def get_oauth_token(
+        token_url: str,
+        client_id: str,
+        client_secret: str
+) -> str:
+
+    payload = {
+        "grant_type": "client_credentials",
+        "client_id": client_id,
+        "client_secret": client_secret
+    }
+
+    headers = {
+        "Content-Type":
+            "application/x-www-form-urlencoded"
+    }
+
+    response = requests.post(
+        token_url,
+        data=payload,
+        headers=headers,
+        timeout=(10, 60)
+    )
+
+    response.raise_for_status()
+
+    token_response = response.json()
+
+    access_token = token_response.get("access_token")
+
+    if not access_token:
+        raise Exception(
+            "OAuth token missing in token response"
+        )
+
+    return access_token
+
+
+# ==============================================================
+# GENERATE SERVICENOW PAYLOAD
+# ==============================================================
 def generate_post_json(df):
 
-    # Normalize types
-    df['lead_id'] = df['lead_id'].astype(str)
-    df['pos_id'] = df['pos_id'].astype(str)
-    df['match_result'] = df['match_result'].astype(str)
-    df['business_name'] = df['business_name_transaction'].astype(str)
-    df['match_value'] = pd.to_numeric(df['similarity_score'], errors='coerce')
-    df['matched_by'] = 'System'
-    df['fiscal_year'] = df['fiscal_year_transaction'].astype('int64')
-    df['fiscal_period'] = df['fiscal_period_transaction'].astype('int64')
-    df['week'] = df['week'].astype('int64')
-    df['warehouse_number'] = df['warehouse_number'].astype('int64')
-    df['primary_transaction'] = df['primary_transaction'].astype('int64')
+    # ==========================================================
+    # NORMALIZE TYPES
+    # ==========================================================
+    df = df.fillna("")
 
+    numeric_columns = [
+        "similarity_score",
+        "fiscal_year_transaction",
+        "fiscal_period_transaction",
+        "week",
+        "warehouse_number",
+        "primary_transaction",
+        "order_amount"
+    ]
+
+    for col in numeric_columns:
+
+        if col in df.columns:
+
+            df[col] = pd.to_numeric(
+                df[col],
+                errors="coerce"
+            ).fillna(0)
+
+    # ==========================================================
+    # COUNTS
+    # ==========================================================
     unique_count_lead = df['lead_id'].nunique()
-    print("Number of unique lead IDs:", unique_count_lead)
+
+    print(
+        "Number of unique lead IDs:",
+        unique_count_lead
+    )
 
     unique_count_pos = df['pos_id'].nunique()
-    print("Number of unique pos IDs:", unique_count_pos)
 
-    # build pos results
+    print(
+        "Number of unique pos IDs:",
+        unique_count_pos
+    )
+
+    # ==========================================================
+    # BUILD RESULT PAYLOAD
+    # ==========================================================
     results = []
+
     for _, row in df.iterrows():
-        results.append({
-            "pos_id":           row['pos_id'],
-            "lead_id":          row['lead_id'],
-            "business_name":    row['business_name'],
-            "warehouse_number": row['warehouse_number'],
-            "fiscal_period":    row['fiscal_period'],
-            "fiscal_year":      row['fiscal_year'],
-            "week":             row['week'],
-            "match_value":      row['match_value'],
-            "matched_by":       row['matched_by'],
-            "match_percentage": None,   # map similarity_score → match_percentage
-            "match_result":     row['match_result'],
-            "primary_transaction": row['primary_transaction'],
-        })
-    total_matched = unique_count_pos  # total POS records matched
+
+        result = {
+
+            # ==================================================
+            # POS INFORMATION
+            # ==================================================
+            "number": str(
+                    row.get(
+                        "pos_id",
+                        ""
+                    )
+                )
+            "active": "true",
+
+            "u_type":
+                str(row.get("shop_type", "")),
+
+            "u_business_name":
+                str(
+                    row.get(
+                        "business_name_transaction",
+                        ""
+                    )
+                ),
+
+            "u_address_1":
+                str(
+                    row.get(
+                        "address_line_one",
+                        ""
+                    )
+                ),
+
+            "u_address_2":
+                str(
+                    row.get(
+                        "address_line_two",
+                        ""
+                    )
+                ),
+
+            "u_first":
+                str(
+                    row.get(
+                        "first_name",
+                        ""
+                    )
+                ),
+
+            "u_last":
+                str(
+                    row.get(
+                        "last_name",
+                        ""
+                    )
+                ),
+
+            "u_city":
+                str(
+                    row.get(
+                        "city",
+                        ""
+                    )
+                ),
+
+            "u_state_pos":
+                str(
+                    row.get(
+                        "state",
+                        ""
+                    )
+                ),
+
+            "u_zip_code":
+                str(
+                    row.get(
+                        "zip_code",
+                        ""
+                    )
+                ),
+
+            "u_email":
+                str(
+                    row.get(
+                        "email",
+                        ""
+                    )
+                ),
+
+            "u_phone_number":
+                str(
+                    row.get(
+                        "phone",
+                        ""
+                    )
+                ),
+
+            # ==================================================
+            # TRANSACTION DETAILS
+            # ==================================================
+            "u_fiscal_year":
+                str(
+                    int(
+                        row.get(
+                            "fiscal_year_transaction",
+                            0
+                        )
+                    )
+                ),
+
+            "u_period_1":
+                str(
+                    int(
+                        row.get(
+                            "fiscal_period_transaction",
+                            0
+                        )
+                    )
+                ),
+
+            "u_week":
+                str(
+                    int(
+                        row.get(
+                            "week",
+                            0
+                        )
+                    )
+                ),
+
+            "u_sales_reference_id":
+                str(
+                    row.get(
+                        "sales_reference_id",
+                        ""
+                    )
+                ),
+
+            "u_account_number":
+                str(
+                    row.get(
+                        "account_number",
+                        ""
+                    )
+                ),
+
+            "u_warehouse_number":
+                str(
+                    int(
+                        row.get(
+                            "warehouse_number",
+                            0
+                        )
+                    )
+                ),
+
+            "u_membership_number":
+                str(
+                    row.get(
+                        "membership_number",
+                        ""
+                    )
+                ),
+
+            "u_industry_description": "",
+
+            "u_bd_industry_pos": str(
+                    row.get(
+                        "bd_industry",
+                        ""
+                    )
+                ),
+
+            "u_order_amount":
+                str(
+                    row.get(
+                        "order_amount",
+                        0
+                    )
+                ),
+
+            "u_order_amount_rounded":
+                str(
+                    round(
+                        float(
+                            row.get(
+                                "order_amount",
+                                0
+                            )
+                        ),
+                        2
+                    )
+                ),
+
+            # ==================================================
+            # MATCH DETAILS
+            # ==================================================
+            "u_matching_comments":
+                str(
+                    row.get(
+                        "matching_comments",
+                        ""
+                    )
+                ),
+
+            "u_match_percentage":
+                str(
+                    row.get(
+                        "similarity_score",
+                        ""
+                    )
+                ),
+
+            "u_matched_by":
+                "System",
+
+            "u_match_value":
+                str(
+                    row.get(
+                        "similarity_score",
+                        ""
+                    )
+                ),
+
+            "u_match_result":
+                str(
+                    row.get(
+                        "match_result",
+                        ""
+                    )
+                ),
+
+            # ==================================================
+            # MATCHED LEAD
+            # ==================================================
+            "u_matched_lead": {
+                "number":
+                    str(
+                        row.get(
+                            "lead_id",
+                            ""
+                        )
+                    ),
+                "value": ""
+            },
+
+            # ==================================================
+            # OPTIONAL EMPTY FIELDS
+            # ==================================================
+            "u_warehouse_ref": {
+                "value": ""
+            }
+
+        }
+
+        results.append(result)
+
+    total_matched = unique_count_pos
 
     return total_matched, results
 
 
-def process_batches(total_matched, data, batch_size, url, max_retries, retry_delay, username=None, password=None):
+# ==============================================================
+# PROCESS BATCHES
+# ==============================================================
+def process_batches(
+        total_matched,
+        data,
+        batch_size,
+        url,
+        max_retries,
+        retry_delay,
+        access_token
+):
+
     headers = {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json'
+
+        'Content-Type':
+            'application/json',
+
+        'Accept':
+            'application/json',
+
+        'Authorization':
+            f'Bearer {access_token}'
     }
-    batch_size, max_retries, retry_delay = map(int, [batch_size, max_retries, retry_delay])  
-    auth = (username, password) if username and password else None
+
+    batch_size = int(batch_size)
+
+    max_retries = int(max_retries)
+
+    retry_delay = int(retry_delay)
 
     print("URL:", url)
-    print("Auth present:", auth is not None)
-    print("Username:", username)
-    # print("Payload size:", len(payload))
+
+    print("OAuth Enabled: True")
 
     for i in range(0, len(data), batch_size):
+
         batch = data[i:i + batch_size]
+
         batch_number = i // batch_size + 1
 
-        # ---- NEW wrapper structure ----
+        # ======================================================
+        # FINAL PAYLOAD
+        # ======================================================
         payload = json.dumps({
-            "result": {
-                "total_matched":   str(total_matched),
-                "returned_count":  str(len(batch)),
-                "results":         batch
-            }
+            "result": batch
         })
 
-        print("Payload size:", len(payload))
+        print(
+            f"[Batch {batch_number}] "
+            f"Payload size: {len(payload)}"
+        )
 
         success = False
-        last_error = None  # To store the last error message
+
+        last_error = None
 
         for attempt in range(1, max_retries + 1):
+
             try:
-                response = requests.post(url, headers=headers, data=payload, auth=auth, timeout=(10, 60))
-                print(f"[Batch {batch_number}] Raw response: {response.text}")
 
-                if response.status_code == 200:
-                    try:
-                        result = response.json().get("result", {})
-                    except ValueError:
-                        last_error = "Failed to parse JSON response."
-                        print(f"[Batch {batch_number}] Attempt {attempt}: {last_error}")
-                        print(response)
-                        print("The response from the ServiceNow: ",response.text)
+                response = requests.post(
+                    url,
+                    headers=headers,
+                    data=payload,
+                    timeout=(10, 120)
+                )
 
-                        break
+                print(
+                    f"[Batch {batch_number}] "
+                    f"Status Code: {response.status_code}"
+                )
 
-                    status = result.get("status", "").lower()
-                    message = result.get("message", "")
-                    success_count = result.get("successcount", "")
+                print(
+                    f"[Batch {batch_number}] "
+                    f"Response: {response.text}"
+                )
 
-                    if status == "success":
-                        print(f"[Batch {batch_number}] Success: {message}, Success Count: {success_count}")
-                        success = True
+                # ==============================================
+                # SUCCESS
+                # ==============================================
+                if response.status_code in [200, 201]:
 
-                    else:
-                        last_error = f"Failed: {message}"
-                        print(f"[Batch {batch_number}] {last_error}")
+                    success = True
+
+                    print(
+                        f"[Batch {batch_number}] "
+                        f"Success"
+                    )
+
                     break
 
-                elif response.status_code == 404:
-                    last_error = "Resource not found (404). Not retrying."
-                    print(f"[Batch {batch_number}] Attempt {attempt}: {last_error}")
-                    break
-
+                # ==============================================
+                # FAILURE
+                # ==============================================
                 else:
-                    last_error = f"HTTP {response.status_code} - {response.text}"
-                    print(f"[Batch {batch_number}] Attempt {attempt}: {last_error}")
+
+                    last_error = (
+                        f"HTTP {response.status_code} - "
+                        f"{response.text}"
+                    )
+
+                    print(
+                        f"[Batch {batch_number}] "
+                        f"Attempt {attempt}: "
+                        f"{last_error}"
+                    )
 
             except requests.RequestException as e:
-                last_error = f"Request failed - {e}"
-                print(f"[Batch {batch_number}] Attempt {attempt}: {last_error}")
 
+                last_error = (
+                    f"Request failed - {e}"
+                )
+
+                print(
+                    f"[Batch {batch_number}] "
+                    f"Attempt {attempt}: "
+                    f"{last_error}"
+                )
+
+            # ==============================================
+            # RETRY
+            # ==============================================
             if attempt < max_retries:
+
                 time.sleep(retry_delay)
 
+        # ======================================================
+        # FINAL FAILURE
+        # ======================================================
         if not success:
-            print(f"[Batch {batch_number}] Failed after {max_retries} attempts. Last error: {last_error}")
+
+            print(
+                f"[Batch {batch_number}] "
+                f"Failed after "
+                f"{max_retries} attempts. "
+                f"Last error: {last_error}"
+            )
 
 
+# ==============================================================
+# UPDATE SERVICENOW
+# ==============================================================
+def update_servicenow(
+        config_file_path: str,
+        file_path: str = ""
+):
 
-
-def update_servicenow(config_file_path: str,file_path: str = ""):
-    # Initialization
+    # ==========================================================
+    # INITIALIZATION
+    # ==========================================================
     job_config = JobConfig(config_file_path)
 
-    # service now configurayion
     servicenow_config = job_config.snow_config
-    
-    #in case of failure
-    storage_config=job_config.storage_config
-    standalone_file_path=storage_config.standalone_file_path
+
+    storage_config = job_config.storage_config
+
+    # ==========================================================
+    # FILE PATH
+    # ==========================================================
+    standalone_file_path = (
+        storage_config.standalone_file_path
+    )
 
     if file_path == "":
-        file_path = get_gcs_file_path(standalone_file_path)
 
+        file_path = get_gcs_file_path(
+            standalone_file_path
+        )
+
+    # ==========================================================
+    # SERVICENOW CONFIG
+    # ==========================================================
     BATCH_SIZE = servicenow_config.batch_size
-    url= servicenow_config.match_result_update_url
-    MAX_RETRIES=servicenow_config.max_retries
-    RETRY_DELAY=servicenow_config.retry_delay
-    username = servicenow_config.snow_user
-    password = servicenow_config.snow_password
 
+    url = servicenow_config.match_result_update_url
 
+    MAX_RETRIES = servicenow_config.max_retries
 
+    RETRY_DELAY = servicenow_config.retry_delay
+
+    token_url = servicenow_config.token_url
+
+    client_id = servicenow_config.snow_client_id
+
+    client_secret = servicenow_config.snow_client_secret
+
+    # ==========================================================
+    # GET ACCESS TOKEN
+    # ==========================================================
+    access_token = get_oauth_token(
+        token_url,
+        client_id,
+        client_secret
+    )
+
+    print("Successfully obtained OAuth token")
+
+    # ==========================================================
+    # LOAD FINAL OUTPUT
+    # ==========================================================
     final_df = load_file_from_gcs(file_path)
 
-    final_df = final_df[final_df['match_result'].isin(['Complete','Potential'])]
-    final_df = final_df[['lead_id', 'pos_id', 'match_result', 'account_number',
-                          'similarity_score', 'business_name_transaction',
-                          'fiscal_year_transaction', 'fiscal_period_transaction',
-                          'week', 'warehouse_number', 'primary_transaction']]
-    total_matched,json_data = generate_post_json(final_df)
-    process_batches(total_matched,json_data, BATCH_SIZE, url, MAX_RETRIES, RETRY_DELAY,username,password)
+    final_df = final_df[
+        final_df['match_result'].isin(
+            ['Complete', 'Potential']
+        )
+    ]
+
+    # ==========================================================
+    # GENERATE PAYLOAD
+    # ==========================================================
+    total_matched, json_data = generate_post_json(
+        final_df
+    )
+
+    # ==========================================================
+    # PROCESS BATCHES
+    # ==========================================================
+    process_batches(
+        total_matched,
+        json_data,
+        BATCH_SIZE,
+        url,
+        MAX_RETRIES,
+        RETRY_DELAY,
+        access_token
+    )
+
+    print("ServiceNow update completed")
