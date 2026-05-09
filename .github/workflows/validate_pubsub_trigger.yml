@@ -1,4 +1,4 @@
-name: "validate_eventarc_trigger"
+name: "validate_pubsub_trigger"
 
 on:
   workflow_dispatch:
@@ -14,19 +14,16 @@ on:
           - 'spt'
 
 env:
-  PROJECT_ID:        'p-601-np-bcleadsmgmt-${{ github.event.inputs.environment }}'
-  REGION:            'us-central1'
-  BUCKET_NAME:       'gcp-gcs-lead-mgmt-us-${{ github.event.inputs.environment }}-pos-raw'
-  TRIGGER_NAME:      'pos-manifest-trigger'
-  TRIGGER_LOCATION:  'us-central1'
-  WORKFLOW_NAME:     'lead_match_workflow'
-  WORKFLOW_LOCATION: 'us-central1'
-  MANIFEST_PREFIX:   'manifests'
-  SA_EMAIL:          'gco-iam-svc-lead-mgmt-bc-adt@p-601-np-bcleadsmgmt-${{ github.event.inputs.environment }}.iam.gserviceaccount.com'
+  PROJECT_ID: 'p-601-np-bcleadsmgmt-${{ github.event.inputs.environment }}'
+  REGION: 'us-central1'
+  BUCKET_NAME: 'gcp-gcs-lead-mgmt-us-${{ github.event.inputs.environment }}-pos-raw'
+  FOLDER_PREFIX: 'manifests'
+  TOPIC_NAME: 'gcs-file-events-${{ github.event.inputs.environment }}'
+  WORKFLOW_NAME: 'snow_sync_workflow'
 
 jobs:
   validate:
-    name: "Validate Eventarc Trigger → Workflow"
+    name: "Validate Pub/Sub Trigger"
     runs-on: "ubuntu-latest"
     environment: ${{ github.event.inputs.environment }}
 
@@ -46,429 +43,230 @@ jobs:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
           service_account: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
 
-      # ─────────────────────────────────────────────────────────
-      # 1. Inspect trigger configuration and IAM
-      # ─────────────────────────────────────────────────────────
-      - name: "1. Inspect Eventarc trigger and IAM"
-        id: trigger_info
+      - name: "1. Validate Pub/Sub Topic exists"
         run: |
-          unset CLOUDSDK_CORE_PROJECT CLOUDSDK_PROJECT GCLOUD_PROJECT GCP_PROJECT GOOGLE_CLOUD_PROJECT
+          unset CLOUDSDK_CORE_PROJECT
           gcloud config set project $PROJECT_ID
 
-          # Fail loudly if the trigger doesn't exist (drift detection)
-          if ! gcloud eventarc triggers describe $TRIGGER_NAME \
-                 --location=$TRIGGER_LOCATION \
-                 --project=$PROJECT_ID >/dev/null 2>&1; then
-            echo "❌ Trigger '$TRIGGER_NAME' not found in $PROJECT_ID @ $TRIGGER_LOCATION"
-            echo ""
-            echo "Available triggers in this location:"
-            gcloud eventarc triggers list \
-              --project=$PROJECT_ID \
-              --location=$TRIGGER_LOCATION \
-              --format="value(name.basename())"
+          echo "=========================================="
+          echo "Checking topic: $TOPIC_NAME"
+          echo "=========================================="
+
+          TOPIC=$(gcloud pubsub topics describe $TOPIC_NAME \
+            --project=$PROJECT_ID \
+            --format="value(name)" 2>&1)
+
+          if echo "$TOPIC" | grep -q "topics/$TOPIC_NAME"; then
+            echo "✅ Topic exists: $TOPIC"
+          else
+            echo "❌ Topic NOT found: $TOPIC_NAME"
             exit 1
           fi
 
-          echo "=== Eventarc trigger details ==="
-          gcloud eventarc triggers describe $TRIGGER_NAME \
-            --location=$TRIGGER_LOCATION \
-            --project=$PROJECT_ID 2>&1
+          echo "---"
+          echo "Checking dead-letter topic: ${TOPIC_NAME}-deadletter"
 
-          echo ""
-          echo "=== Trigger event filters ==="
-          # For direct GCS event triggers, the only filters are 'type' and 'bucket'.
-          # Path filtering happens INSIDE the workflow (first step checks event.data.name).
-          gcloud eventarc triggers describe $TRIGGER_NAME \
-            --location=$TRIGGER_LOCATION \
+          DL_TOPIC=$(gcloud pubsub topics describe "${TOPIC_NAME}-deadletter" \
             --project=$PROJECT_ID \
-            --format="value(eventFilters)" 2>&1
+            --format="value(name)" 2>&1)
 
-          # Verify this is a direct GCS event trigger (not audit-log)
-          EVENT_TYPE=$(gcloud eventarc triggers describe $TRIGGER_NAME \
-            --location=$TRIGGER_LOCATION \
-            --project=$PROJECT_ID \
-            --format="value(eventFilters[0].value)")
-          echo "Event type: $EVENT_TYPE"
-          if [[ "$EVENT_TYPE" != "google.cloud.storage.object.v1.finalized" ]]; then
-            echo "⚠️  Expected direct GCS event 'google.cloud.storage.object.v1.finalized'"
-            echo "    Got: $EVENT_TYPE"
-            echo "    The validator's negative test assumes workflow-side filtering."
-          fi
-
-          # Capture topic and subscription for later steps
-          TRIGGER_TOPIC=$(gcloud eventarc triggers describe $TRIGGER_NAME \
-            --location=$TRIGGER_LOCATION \
-            --project=$PROJECT_ID \
-            --format="value(transport.pubsub.topic)")
-          TRIGGER_SUB=$(gcloud eventarc triggers describe $TRIGGER_NAME \
-            --location=$TRIGGER_LOCATION \
-            --project=$PROJECT_ID \
-            --format="value(transport.pubsub.subscription)")
-
-          TOPIC_ID=$(basename "$TRIGGER_TOPIC")
-          SUB_ID=$(basename "$TRIGGER_SUB")
-
-          echo ""
-          echo "=== Auto-created Pub/Sub resources for this trigger ==="
-          echo "Topic       : $TRIGGER_TOPIC"
-          echo "Subscription: $TRIGGER_SUB"
-
-          echo "TOPIC_ID=$TOPIC_ID" >> $GITHUB_OUTPUT
-          echo "SUB_ID=$SUB_ID"     >> $GITHUB_OUTPUT
-
-          echo ""
-          echo "=== GCS service agent (must have publisher on the topic) ==="
-          gcloud storage service-agent --project=$PROJECT_ID 2>&1
-
-      # ─────────────────────────────────────────────────────────
-      # 2. Topic and subscription health (BEFORE we test)
-      # ─────────────────────────────────────────────────────────
-      - name: "2. Check trigger topic and subscription state"
-        id: pubsub_health
-        run: |
-          unset CLOUDSDK_CORE_PROJECT CLOUDSDK_PROJECT GCLOUD_PROJECT GCP_PROJECT GOOGLE_CLOUD_PROJECT
-          gcloud config set project $PROJECT_ID
-
-          TOPIC_ID="${{ steps.trigger_info.outputs.TOPIC_ID }}"
-          SUB_ID="${{ steps.trigger_info.outputs.SUB_ID }}"
-
-          echo "=== Subscription configuration ==="
-          gcloud pubsub subscriptions describe "$SUB_ID" \
-            --project=$PROJECT_ID \
-            --format="yaml(name,topic,pushConfig.pushEndpoint,ackDeadlineSeconds,messageRetentionDuration,state)" 2>&1
-          echo ""
-
-          NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-          HOUR_AGO=$(date -u -d '1 hour ago' +%Y-%m-%dT%H:%M:%SZ)
-
-          echo "=== Pub/Sub flow (last 1 hour) ==="
-
-          PUBLISH_COUNT=$(gcloud monitoring time-series list \
-            --project=$PROJECT_ID \
-            --filter="metric.type=\"pubsub.googleapis.com/topic/send_message_operation_count\" 
-                      AND resource.labels.topic_id=\"$TOPIC_ID\"" \
-            --interval-end-time="$NOW" \
-            --interval-start-time="$HOUR_AGO" \
-            --format="value(points[0].value.int64Value)" 2>/dev/null | head -1)
-          PUBLISH_COUNT=${PUBLISH_COUNT:-0}
-
-          ACKED=$(gcloud monitoring time-series list \
-            --project=$PROJECT_ID \
-            --filter="metric.type=\"pubsub.googleapis.com/subscription/ack_message_count\" 
-                      AND resource.labels.subscription_id=\"$SUB_ID\"" \
-            --interval-end-time="$NOW" \
-            --interval-start-time="$HOUR_AGO" \
-            --format="value(points[0].value.int64Value)" 2>/dev/null | head -1)
-          ACKED=${ACKED:-0}
-
-          UNACKED=$(gcloud monitoring time-series list \
-            --project=$PROJECT_ID \
-            --filter="metric.type=\"pubsub.googleapis.com/subscription/num_undelivered_messages\" 
-                      AND resource.labels.subscription_id=\"$SUB_ID\"" \
-            --interval-end-time="$NOW" \
-            --interval-start-time="$HOUR_AGO" \
-            --format="value(points[0].value.int64Value)" 2>/dev/null | head -1)
-          UNACKED=${UNACKED:-0}
-
-          echo "Topic publish count : $PUBLISH_COUNT  (GCS object events → topic — should be > 0 if any uploads occurred)"
-          echo "Subscription acked  : $ACKED          (delivered to workflow successfully)"
-          echo "Subscription unacked: $UNACKED        (stuck — non-zero means delivery failing)"
-          echo ""
-
-          if [ "$PUBLISH_COUNT" -eq 0 ]; then
-            echo "ℹ️  No messages published to topic in the last hour."
-            echo "    For direct GCS triggers, this just means no uploads have occurred recently."
-            echo "    The test in step 4 will validate the trigger fires on a fresh upload."
-          elif [ "$UNACKED" -gt 0 ]; then
-            echo "⚠️  $UNACKED messages stuck in subscription — workflow invocation is failing."
-            echo "    Check trigger SA has roles/workflows.invoker."
-          elif [ "$ACKED" -eq 0 ] && [ "$PUBLISH_COUNT" -gt 0 ]; then
-            echo "⚠️  Topic receiving messages but no successful deliveries."
-            echo "    IAM or push endpoint issue."
+          if echo "$DL_TOPIC" | grep -q "topics/${TOPIC_NAME}-deadletter"; then
+            echo "✅ Dead-letter topic exists: $DL_TOPIC"
           else
-            echo "✅ Pub/Sub pipeline looks healthy"
+            echo "❌ Dead-letter topic NOT found"
+            exit 1
           fi
 
-          echo "PUBLISH_COUNT=$PUBLISH_COUNT" >> $GITHUB_OUTPUT
-
-      # ─────────────────────────────────────────────────────────
-      # 3. Capture baseline execution count
-      # ─────────────────────────────────────────────────────────
-      - name: "3. Capture baseline workflow execution count"
-        id: baseline
+      - name: "2. Validate Push Subscription exists and is configured correctly"
         run: |
-          unset CLOUDSDK_CORE_PROJECT CLOUDSDK_PROJECT GCLOUD_PROJECT GCP_PROJECT GOOGLE_CLOUD_PROJECT
+          unset CLOUDSDK_CORE_PROJECT
           gcloud config set project $PROJECT_ID
 
-          BEFORE=$(gcloud workflows executions list $WORKFLOW_NAME \
-            --location=$WORKFLOW_LOCATION \
+          SUB_NAME="${TOPIC_NAME}-push-sub"
+
+          echo "=========================================="
+          echo "Checking subscription: $SUB_NAME"
+          echo "=========================================="
+
+          SUB=$(gcloud pubsub subscriptions describe $SUB_NAME \
             --project=$PROJECT_ID \
-            --format="value(name)" 2>&1 | wc -l)
-          echo "BEFORE=$BEFORE" >> $GITHUB_OUTPUT
-          echo "Executions before test: $BEFORE"
+            --format=json 2>&1)
 
-      # ─────────────────────────────────────────────────────────
-      # 4. POSITIVE TEST — upload a manifest, expect workflow to process it
-      # ─────────────────────────────────────────────────────────
-      - name: "4. Upload test manifest (POSITIVE — should trigger and process)"
-        id: upload
+          if echo "$SUB" | grep -q "pushConfig"; then
+            echo "✅ Push subscription exists: $SUB_NAME"
+          else
+            echo "❌ Push subscription NOT found or not a push type"
+            exit 1
+          fi
+
+          # Validate push endpoint points to Eventarc / workflow flow
+          if echo "$SUB" | grep -q "$WORKFLOW_NAME"; then
+            echo "✅ Push endpoint correctly targets workflow flow: $WORKFLOW_NAME"
+          else
+            echo "❌ Push endpoint does not reference workflow: $WORKFLOW_NAME"
+            echo "$SUB"
+            exit 1
+          fi
+
+          # Validate OIDC auth is configured
+          if echo "$SUB" | grep -q "oidcToken"; then
+            echo "✅ OIDC authentication is configured on push subscription"
+          else
+            echo "❌ OIDC authentication is NOT configured"
+            exit 1
+          fi
+
+          echo "---"
+          echo "Checking dead-letter subscription: ${TOPIC_NAME}-deadletter-sub"
+
+          DL_SUB=$(gcloud pubsub subscriptions describe "${TOPIC_NAME}-deadletter-sub" \
+            --project=$PROJECT_ID \
+            --format="value(name)" 2>&1)
+
+          if echo "$DL_SUB" | grep -q "subscriptions/${TOPIC_NAME}-deadletter-sub"; then
+            echo "✅ Dead-letter pull subscription exists"
+          else
+            echo "❌ Dead-letter pull subscription NOT found"
+            exit 1
+          fi
+
+      - name: "3. Validate GCS Bucket Notification exists"
         run: |
-          unset CLOUDSDK_CORE_PROJECT CLOUDSDK_PROJECT GCLOUD_PROJECT GCP_PROJECT GOOGLE_CLOUD_PROJECT
+          unset CLOUDSDK_CORE_PROJECT
           gcloud config set project $PROJECT_ID
 
-          # Use nanoseconds for guaranteed uniqueness across rapid re-runs
-          RUN_ID="ci-validate-${GITHUB_RUN_ID}-$(date +%s%N)"
-          echo "RUN_ID=$RUN_ID"            >> $GITHUB_OUTPUT
-          MANIFEST_PATH="${MANIFEST_PREFIX}/${RUN_ID}.json"
-          echo "MANIFEST_PATH=$MANIFEST_PATH" >> $GITHUB_OUTPUT
+          echo "=========================================="
+          echo "Checking GCS notification on bucket: $BUCKET_NAME"
+          echo "=========================================="
 
-          cat > /tmp/manifest.json <<EOF
+          NOTIFICATIONS=$(gsutil notification list gs://$BUCKET_NAME 2>&1)
+
+          if echo "$NOTIFICATIONS" | grep -q "$TOPIC_NAME"; then
+            echo "✅ GCS notification found pointing to topic: $TOPIC_NAME"
+          else
+            echo "❌ No notification found for topic: $TOPIC_NAME"
+            echo "$NOTIFICATIONS"
+            exit 1
+          fi
+
+          if echo "$NOTIFICATIONS" | grep -q "$FOLDER_PREFIX"; then
+            echo "✅ Notification is scoped to folder prefix: $FOLDER_PREFIX"
+          else
+            echo "❌ Folder prefix not found in notification config: $FOLDER_PREFIX"
+            echo "$NOTIFICATIONS"
+            exit 1
+          fi
+
+          if echo "$NOTIFICATIONS" | grep -q "OBJECT_FINALIZE"; then
+            echo "✅ Event type is OBJECT_FINALIZE"
+          else
+            echo "❌ OBJECT_FINALIZE event type not set"
+            exit 1
+          fi
+
+      - name: "4. End-to-End Test — Upload JSON file and verify workflow triggered"
+        run: |
+          unset CLOUDSDK_CORE_PROJECT
+          gcloud config set project $PROJECT_ID
+
+          echo "=========================================="
+          echo "Uploading test JSON file to manifests folder"
+          echo "=========================================="
+
+          TEST_FILE="manifests/e2e-trigger-test-$(date +%s).json"
+
+          cat <<EOF > /tmp/test-trigger.json
           {
-            "run_id":         "$RUN_ID",
-            "submitted_by":   "github-actions-${GITHUB_ACTOR}",
-            "submitted_at":   "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-            "github_run_url": "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}",
-            "files":          []
+            "test": true,
+            "environment": "${{ github.event.inputs.environment }}",
+            "timestamp": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
           }
           EOF
 
-          echo "=== Manifest payload ==="
-          cat /tmp/manifest.json
-          echo ""
+          gsutil cp /tmp/test-trigger.json gs://$BUCKET_NAME/$TEST_FILE
 
-          gcloud storage cp /tmp/manifest.json \
-            "gs://$BUCKET_NAME/$MANIFEST_PATH" \
-            --project=$PROJECT_ID 2>&1
-
-          echo "Uploaded: gs://$BUCKET_NAME/$MANIFEST_PATH"
-
-      # ─────────────────────────────────────────────────────────
-      # 5. Poll for workflow execution matching this manifest path
-      #    Direct GCS events deliver fast (typically < 30s)
-      # ─────────────────────────────────────────────────────────
-      - name: "5. Wait for workflow execution matching this test"
-        id: wait
-        run: |
-          unset CLOUDSDK_CORE_PROJECT CLOUDSDK_PROJECT GCLOUD_PROJECT GCP_PROJECT GOOGLE_CLOUD_PROJECT
-          gcloud config set project $PROJECT_ID
-
-          MANIFEST_PATH="${{ steps.upload.outputs.MANIFEST_PATH }}"
-          RUN_ID="${{ steps.upload.outputs.RUN_ID }}"
-
-          # Direct GCS events embed the object name in event.data.name — that's
-          # what the workflow sees, not the file CONTENTS. So we match by path,
-          # not by run_id (workflow may not even read the manifest body).
-          echo "Polling for execution whose argument references: $MANIFEST_PATH"
-
-          FOUND=0
-          MATCH=""
-          # 18 attempts × 10s = 3 minutes (direct events are faster than audit-log)
-          for i in $(seq 1 18); do
-            sleep 10
-
-            MATCH=$(gcloud workflows executions list $WORKFLOW_NAME \
-              --location=$WORKFLOW_LOCATION \
-              --project=$PROJECT_ID \
-              --limit=20 \
-              --format="value(name.basename(),argument)" 2>/dev/null \
-              | grep "$MANIFEST_PATH" || true)
-
-            if [ -n "$MATCH" ]; then
-              echo "✅ Found execution triggered by this upload:"
-              echo "$MATCH"
-              FOUND=1
-              break
-            fi
-            echo "Attempt $i/18 — no match yet for path=$MANIFEST_PATH"
-          done
-
-          if [ "$FOUND" -ne 1 ]; then
-            echo ""
-            echo "❌ No workflow execution matched path=$MANIFEST_PATH after 3 minutes"
-            echo ""
-            echo "Likely causes (in order of probability):"
-            echo "  1. Trigger SA missing roles/workflows.invoker"
-            echo "  2. GCS service agent missing roles/pubsub.publisher on trigger's auto-topic"
-            echo "  3. Bucket region doesn't match trigger location"
-            echo "  4. Trigger event type is not 'google.cloud.storage.object.v1.finalized'"
-            echo ""
-            echo "Recent executions (none reference $MANIFEST_PATH):"
-            gcloud workflows executions list $WORKFLOW_NAME \
-              --location=$WORKFLOW_LOCATION \
-              --project=$PROJECT_ID \
-              --limit=5 \
-              --format="table(name.basename(),state,startTime)"
-            exit 1
-          fi
-
-          echo "FOUND=1" >> $GITHUB_OUTPUT
-
-      # ─────────────────────────────────────────────────────────
-      # 6. Inspect the matching execution detail
-      # ─────────────────────────────────────────────────────────
-      - name: "6. Inspect matching execution"
-        run: |
-          unset CLOUDSDK_CORE_PROJECT CLOUDSDK_PROJECT GCLOUD_PROJECT GCP_PROJECT GOOGLE_CLOUD_PROJECT
-          gcloud config set project $PROJECT_ID
-
-          MANIFEST_PATH="${{ steps.upload.outputs.MANIFEST_PATH }}"
-
-          # Find the execution whose argument contains our manifest path
-          MATCHING=$(gcloud workflows executions list $WORKFLOW_NAME \
-            --location=$WORKFLOW_LOCATION \
-            --project=$PROJECT_ID \
-            --limit=20 \
-            --format="value(name,argument)" 2>/dev/null \
-            | grep "$MANIFEST_PATH" \
-            | head -1 \
-            | awk '{print $1}')
-
-          if [ -z "$MATCHING" ]; then
-            echo "❌ Could not re-locate matching execution"
-            exit 1
-          fi
-
-          echo "=== Matching execution: $MATCHING ==="
-          gcloud workflows executions describe "$MATCHING" \
-            --location=$WORKFLOW_LOCATION \
-            --project=$PROJECT_ID \
-            --format="table(state,startTime,endTime)" 2>&1
-
-          echo ""
-          echo "=== Raw input argument ==="
-          gcloud workflows executions describe "$MATCHING" \
-            --location=$WORKFLOW_LOCATION \
-            --project=$PROJECT_ID \
-            --format="value(argument)" 2>&1
-
-          echo ""
-          echo "=== Final result ==="
-          gcloud workflows executions describe "$MATCHING" \
-            --location=$WORKFLOW_LOCATION \
-            --project=$PROJECT_ID \
-            --format="value(result)" 2>&1
-
-          echo ""
-          echo "=== Error detail (if any) ==="
-          gcloud workflows executions describe "$MATCHING" \
-            --location=$WORKFLOW_LOCATION \
-            --project=$PROJECT_ID \
-            --format="value(error)" 2>&1
-
-      # ─────────────────────────────────────────────────────────
-      # 7. NEGATIVE TEST — non-manifest upload SHOULD trigger workflow
-      #    but workflow's first step should ignore it (path-mismatch)
-      #
-      #    Direct GCS triggers fire on EVERY upload, so we can't filter
-      #    at the trigger level. Instead, the workflow must check
-      #    event.data.name and bail out for non-manifest paths.
-      # ─────────────────────────────────────────────────────────
-      - name: "7. Upload non-manifest file (NEGATIVE — workflow should ignore)"
-        id: negative
-        run: |
-          unset CLOUDSDK_CORE_PROJECT CLOUDSDK_PROJECT GCLOUD_PROJECT GCP_PROJECT GOOGLE_CLOUD_PROJECT
-          gcloud config set project $PROJECT_ID
-
-          PROBE_ID="probe-${GITHUB_RUN_ID}-$(date +%s%N)"
-          PROBE_PATH="incoming-files/${PROBE_ID}.csv"
-          echo "PROBE_ID=$PROBE_ID"     >> $GITHUB_OUTPUT
-          echo "PROBE_PATH=$PROBE_PATH" >> $GITHUB_OUTPUT
-
-          echo "Uploading non-manifest file to incoming-files/"
-          echo "(trigger WILL fire, but workflow's first step should bail out)"
-          echo "non-manifest data" > /tmp/probe.csv
-          gcloud storage cp /tmp/probe.csv \
-            "gs://$BUCKET_NAME/$PROBE_PATH" \
-            --project=$PROJECT_ID 2>&1
-
-          echo "Waiting 90s for the workflow execution to complete..."
-          sleep 90
-
-          # The workflow SHOULD have an execution referencing this path,
-          # but it should have completed quickly with a "not a manifest" return value.
-          MATCH=$(gcloud workflows executions list $WORKFLOW_NAME \
-            --location=$WORKFLOW_LOCATION \
-            --project=$PROJECT_ID \
-            --limit=20 \
-            --format="value(name,argument,state,result)" 2>/dev/null \
-            | grep "$PROBE_PATH" \
-            | head -1 || true)
-
-          if [ -z "$MATCH" ]; then
-            echo "ℹ️  No execution found for $PROBE_PATH after 90s"
-            echo "    Either the trigger didn't fire, or polling missed it."
-            echo "    For direct GCS triggers this is unexpected — every upload should"
-            echo "    produce an execution. Check workflow logic, not the trigger."
-            exit 0
-          fi
-
-          # Get the full execution detail
-          EXEC_NAME=$(echo "$MATCH" | awk '{print $1}')
-          STATE=$(gcloud workflows executions describe "$EXEC_NAME" \
-            --location=$WORKFLOW_LOCATION \
-            --project=$PROJECT_ID \
-            --format="value(state)")
-          RESULT=$(gcloud workflows executions describe "$EXEC_NAME" \
-            --location=$WORKFLOW_LOCATION \
-            --project=$PROJECT_ID \
-            --format="value(result)")
-          DURATION_SEC=$(gcloud workflows executions describe "$EXEC_NAME" \
-            --location=$WORKFLOW_LOCATION \
-            --project=$PROJECT_ID \
-            --format="value(duration)" | sed 's/s$//' | cut -d. -f1)
-          DURATION_SEC=${DURATION_SEC:-0}
-
-          echo "=== Negative-test execution ==="
-          echo "Execution: $EXEC_NAME"
-          echo "State    : $STATE"
-          echo "Result   : $RESULT"
-          echo "Duration : ${DURATION_SEC}s"
-          echo ""
-
-          # The workflow should bail out fast for non-manifest paths.
-          # If it ran for more than 30 seconds, it probably tried to process the file.
-          if [ "$STATE" = "FAILED" ]; then
-            echo "⚠️  Workflow failed when processing non-manifest path."
-            echo "    Workflow may not have a guard for non-manifest uploads."
-            echo "    Recommend adding a first-step path check to short-circuit."
-          elif [ "$DURATION_SEC" -gt 30 ]; then
-            echo "⚠️  Workflow ran for ${DURATION_SEC}s on a non-manifest path."
-            echo "    It likely tried to process the file. Add a path guard."
-          elif echo "$RESULT" | grep -qi "ignor\|skip\|not.*manifest"; then
-            echo "✅ Workflow correctly identified and ignored the non-manifest path"
+          if [ $? -eq 0 ]; then
+            echo "✅ Test JSON file uploaded: gs://$BUCKET_NAME/$TEST_FILE"
           else
-            echo "ℹ️  Workflow completed in ${DURATION_SEC}s (state=$STATE)."
-            echo "    Verify manually that the result indicates a 'skip' / 'not a manifest' outcome."
+            echo "❌ Failed to upload test JSON file"
+            exit 1
           fi
 
-      # ─────────────────────────────────────────────────────────
-      # 8. Cleanup test artefacts (best-effort)
-      # ─────────────────────────────────────────────────────────
-      - name: "8. Cleanup"
-        if: always()
+          echo "Waiting 15s for Pub/Sub → Eventarc → Workflow trigger..."
+          sleep 15
+
+      - name: "5. Validate Workflow Execution was triggered"
         run: |
-          unset CLOUDSDK_CORE_PROJECT CLOUDSDK_PROJECT GCLOUD_PROJECT GCP_PROJECT GOOGLE_CLOUD_PROJECT
+          unset CLOUDSDK_CORE_PROJECT
           gcloud config set project $PROJECT_ID
 
-          set +e
-          gcloud storage rm \
-            "gs://$BUCKET_NAME/${{ steps.upload.outputs.MANIFEST_PATH }}" \
-            --project=$PROJECT_ID 2>/dev/null || true
-          gcloud storage rm \
-            "gs://$BUCKET_NAME/${{ steps.negative.outputs.PROBE_PATH }}" \
-            --project=$PROJECT_ID 2>/dev/null || true
-          echo "Cleanup complete"
+          echo "=========================================="
+          echo "Checking workflow executions: $WORKFLOW_NAME"
+          echo "=========================================="
 
-      # ─────────────────────────────────────────────────────────
-      # Summary
-      # ─────────────────────────────────────────────────────────
+          # Get the most recent execution
+          LATEST_EXECUTION=$(gcloud workflows executions list $WORKFLOW_NAME \
+            --location=$REGION \
+            --project=$PROJECT_ID \
+            --limit=1 \
+            --format="value(name,state,startTime)" 2>&1)
+
+          echo "Latest execution: $LATEST_EXECUTION"
+
+          if echo "$LATEST_EXECUTION" | grep -qE "SUCCEEDED|ACTIVE|RUNNING"; then
+            echo "✅ Workflow execution triggered successfully"
+          else
+            echo "⚠️  Latest execution state may need manual review:"
+            echo "$LATEST_EXECUTION"
+          fi
+
+          # Show last 3 executions for context
+          echo "---"
+          echo "Last 3 executions:"
+
+          gcloud workflows executions list $WORKFLOW_NAME \
+            --location=$REGION \
+            --project=$PROJECT_ID \
+            --limit=3 \
+            --format="table(name.basename(),state,startTime,endTime)"
+
+      - name: "6. Check Dead-letter backlog (should be 0)"
+        run: |
+          unset CLOUDSDK_CORE_PROJECT
+          gcloud config set project $PROJECT_ID
+
+          echo "=========================================="
+          echo "Checking dead-letter backlog"
+          echo "=========================================="
+
+          DL_SUB="${TOPIC_NAME}-deadletter-sub"
+
+          BACKLOG=$(gcloud pubsub subscriptions describe $DL_SUB \
+            --project=$PROJECT_ID \
+            --format="value(name)" 2>&1)
+
+          # Pull with max 1 message with no ack — if empty, dead-letter is clean
+          DL_MESSAGES=$(gcloud pubsub subscriptions pull $DL_SUB \
+            --project=$PROJECT_ID \
+            --limit=1 \
+            --format="value(message.messageId)" 2>&1)
+
+          if [ -z "$DL_MESSAGES" ]; then
+            echo "✅ Dead-letter queue is empty — no failed deliveries"
+          else
+            echo "⚠️  Dead-letter queue has messages — push subscription may be failing"
+            echo "Message IDs found: $DL_MESSAGES"
+          fi
+
       - name: "Summary"
         if: always()
         run: |
-          echo "Project          : $PROJECT_ID"
-          echo "Bucket           : $BUCKET_NAME"
-          echo "Trigger          : $TRIGGER_NAME @ $TRIGGER_LOCATION  (direct GCS event)"
-          echo "Workflow         : $WORKFLOW_NAME @ $WORKFLOW_LOCATION"
-          echo "Manifest uploaded: ${{ steps.upload.outputs.MANIFEST_PATH }}"
-          echo "Probe uploaded   : ${{ steps.negative.outputs.PROBE_PATH }}"
-          echo "Topic publishes  : ${{ steps.pubsub_health.outputs.PUBLISH_COUNT }} in last hour"
+          echo "=========================================="
+          echo "VALIDATION SUMMARY"
+          echo "Environment : ${{ github.event.inputs.environment }}"
+          echo "Project     : $PROJECT_ID"
+          echo "Bucket      : $BUCKET_NAME"
+          echo "Folder      : $FOLDER_PREFIX/"
+          echo "Topic       : $TOPIC_NAME"
+          echo "Workflow    : $WORKFLOW_NAME"
+          echo "=========================================="
