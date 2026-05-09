@@ -63,7 +63,7 @@ jobs:
             exit 1
           fi
 
-            - name: "2. Ensure GCS Notification exists with correct folder prefix"
+      - name: "2. Ensure GCS Notification exists with correct folder prefix"
         run: |
           unset CLOUDSDK_CORE_PROJECT
           gcloud config set project $PROJECT_ID
