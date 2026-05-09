@@ -161,7 +161,7 @@ def generate_post_json(df):
                         "pos_id",
                         ""
                     )
-                )
+                ),
             "active": "true",
 
             "u_type":
