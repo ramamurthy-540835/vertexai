@@ -63,6 +63,37 @@ jobs:
             exit 1
           fi
 
+            - name: "2. Ensure GCS Notification exists with correct folder prefix"
+        run: |
+          unset CLOUDSDK_CORE_PROJECT
+          gcloud config set project $PROJECT_ID
+
+          echo "=========================================="
+          echo "Checking GCS notification configuration"
+          echo "=========================================="
+
+          EXISTING_NOTIFICATION=$(gcloud storage buckets notifications list gs://$BUCKET_NAME \
+            --format=json 2>/dev/null || echo "[]")
+
+          echo "$EXISTING_NOTIFICATION"
+
+          if echo "$EXISTING_NOTIFICATION" | grep -q "$TOPIC_NAME" && \
+             echo "$EXISTING_NOTIFICATION" | grep -q "manifests/"; then
+
+            echo "✅ Correct notification already exists. Skipping creation."
+
+          else
+            echo "⚠️ Correct notification not found. Creating new notification..."
+
+            gcloud storage buckets notifications create gs://$BUCKET_NAME \
+              --topic=$TOPIC_NAME \
+              --payload-format=json \
+              --event-types=OBJECT_FINALIZE \
+              --object-prefix=manifests/
+
+            echo "✅ Notification created successfully"
+          fi
+
       - name: "2. Validate GCS Bucket Notification exists"
         run: |
           unset CLOUDSDK_CORE_PROJECT

@@ -49,12 +49,6 @@
   }
 
   depends_on = [google_pubsub_topic_iam_member.gcs_sa_publisher]
-
-  lifecycle {
-    replace_triggered_by = [
-      var.folder_prefix
-    ]
-  }
 }
 
   # ── Dead-letter Pull Subscription (for alerting / inspection) ─────────────────
