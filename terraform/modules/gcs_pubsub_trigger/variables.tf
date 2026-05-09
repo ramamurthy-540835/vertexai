@@ -36,16 +36,6 @@ variable "workflow_name" {
   type        = string
 }
 
-variable "service_account_email" {
-  description = <<-EOT
-    Email of the service account used to authenticate the Pub/Sub push call
-    to the Workflows REST API (OIDC token on the push subscription).
-    This SA must already exist and have roles/workflows.invoker granted at project level.
-    Pub/Sub publisher role is NOT needed here — it is granted at project level externally.
-  EOT
-  type = string
-}
-
 variable "environment" {
   description = "Environment name (dev / staging / prod) — used in notification attributes and labels"
   type        = string
