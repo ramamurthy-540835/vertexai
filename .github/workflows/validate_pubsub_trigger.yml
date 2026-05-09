@@ -93,8 +93,7 @@ jobs:
 
             echo "✅ Notification created successfully"
           fi
-
-      - name: "2. Validate GCS Bucket Notification exists"
+      - name: "3. Validate GCS Bucket Notification exists"
         run: |
           unset CLOUDSDK_CORE_PROJECT
           gcloud config set project $PROJECT_ID
@@ -103,21 +102,22 @@ jobs:
           echo "Checking GCS notification on bucket: $BUCKET_NAME"
           echo "=========================================="
 
-          NOTIFICATIONS=$(gsutil notification list gs://$BUCKET_NAME 2>&1)
+          NOTIFICATIONS=$(gcloud storage buckets notifications list gs://$BUCKET_NAME \
+            --format=json 2>&1)
+
+          echo "$NOTIFICATIONS"
 
           if echo "$NOTIFICATIONS" | grep -q "$TOPIC_NAME"; then
             echo "✅ GCS notification found pointing to topic: $TOPIC_NAME"
           else
             echo "❌ No notification found for topic: $TOPIC_NAME"
-            echo "$NOTIFICATIONS"
             exit 1
           fi
 
-          if echo "$NOTIFICATIONS" | grep -q "$FOLDER_PREFIX"; then
-            echo "✅ Notification is scoped to folder prefix: $FOLDER_PREFIX"
+          if echo "$NOTIFICATIONS" | grep -q "manifests/"; then
+            echo "✅ Notification is scoped to folder prefix: manifests/"
           else
-            echo "❌ Folder prefix not found in notification config: $FOLDER_PREFIX"
-            echo "$NOTIFICATIONS"
+            echo "❌ Folder prefix not found in notification config"
             exit 1
           fi
 
