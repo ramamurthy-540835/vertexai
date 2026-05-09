@@ -279,6 +279,7 @@ def classify_matches(
             "shop_type",
             "sales_reference_id",
             "order_amount",
+            "bd_industry",
 
             # POS CUSTOMER DETAILS
             "first_name",
@@ -405,6 +406,7 @@ def classify_matches(
             "fiscal_period_transaction",
             "week",
             "shop_type",
+            "bd_industry",
             "order_amount",
 
             # POS CUSTOMER DETAILS

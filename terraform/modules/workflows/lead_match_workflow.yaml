@@ -1,60 +1,157 @@
 main:
-  params: [args]
+  params: [input]
 
   steps:
-    - log_raw_input:
-        call: sys.log
+    - init:
+        assign:
+          - project_id: ${sys.get_env("GOOGLE_CLOUD_PROJECT_ID")}
+          - job_location: us-central1
+          - job_name: lead-match-job
+          - job_name_par: lead-match-job-par
+
+    # Run lead + POS ingestion in parallel
+    - load_data_parallel:
+        parallel:
+          branches:
+
+            - load_leads_branch:
+                steps:
+                  - load_lead_from_cloud_sql:
+                      call: googleapis.run.v1.namespaces.jobs.run
+                      args:
+                        name: ${"namespaces/" + project_id + "/jobs/" + job_name}
+                        location: ${job_location}
+                        body:
+                          overrides:
+                            containerOverrides:
+                              args:
+                                - run.py
+                                - ingest_leads_from_cloud_sql
+                        connector_params:
+                          timeout: 72000
+                          polling_policy:
+                            initial_delay: 5
+                            multiplier: 1.5
+                            max_delay: 60
+                          skip_polling: false
+
+            - load_pos_branch:
+                steps:
+                  - load_pos_from_cloud_sql:
+                      call: googleapis.run.v1.namespaces.jobs.run
+                      args:
+                        name: ${"namespaces/" + project_id + "/jobs/" + job_name}
+                        location: ${job_location}
+                        body:
+                          overrides:
+                            containerOverrides:
+                              args:
+                                - run.py
+                                - ingest_pos_from_cloud_sql
+                        connector_params:
+                          timeout: 72000
+                          polling_policy:
+                            initial_delay: 5
+                            multiplier: 1.5
+                            max_delay: 60
+                          skip_polling: false
+
+    # Runs only after BOTH parallel branches complete
+    - lead_matching:
+        call: googleapis.run.v1.namespaces.jobs.run
         args:
-          text: ${"[TEST] Raw args received = " + json.encode_to_string(args)}
-          severity: INFO
+          name: ${"namespaces/" + project_id + "/jobs/" + job_name}
+          location: ${job_location}
+          body:
+            overrides:
+              containerOverrides:
+                args:
+                  - run.py
+                  - primary_matching
+          connector_params:
+            timeout: 72000
+            polling_policy:
+              initial_delay: 5
+              multiplier: 1.5
+              max_delay: 60
+            skip_polling: false
 
-    - check_format:
-        switch:
-          # Real GCS notification — raw JSON, has "bucket" directly in args
-          - condition: ${"bucket" in args}
-            next: handle_raw_gcs
-          # Pub/Sub push envelope — has message.data base64 encoded
-          - condition: ${"message" in args}
-            next: handle_pubsub_envelope
-        next: log_unknown_format
+    # Run ServiceNow update + DB update in parallel
+    - update_parallel:
+        parallel:
+          branches:
 
-    - handle_raw_gcs:
-        steps:
-          - assign_raw:
-              assign:
-                - gcs_event: ${args}
-          - goto_log_file_raw:
-              next: log_file
+            - update_servicenow_branch:
+                steps:
+                  - update_service_now:
+                      call: googleapis.run.v1.namespaces.jobs.run
+                      args:
+                        name: ${"namespaces/" + project_id + "/jobs/" + job_name}
+                        location: ${job_location}
+                        body:
+                          overrides:
+                            containerOverrides:
+                              env:
+                                - name: BATCH_ID
+                                  value: ${batch_id}
+                              args:
+                                - run.py
+                                - update_service_now
+                        connector_params:
+                          timeout: 72000
+                          polling_policy:
+                            initial_delay: 5
+                            multiplier: 1.5
+                            max_delay: 60
+                          skip_polling: false
 
-    - handle_pubsub_envelope:
-        steps:
-          - decode:
-              assign:
-                - raw_data: ${args.message.data}
-                - decoded_text: ${text.decode(base64.decode(raw_data))}
-                - gcs_event: ${json.decode(decoded_text)}
-          - goto_log_file_pubsub:
-              next: log_file
+            - update_database_branch:
+                steps:
+                  - update_cloud_sql:
+                      call: googleapis.run.v1.namespaces.jobs.run
+                      args:
+                        name: ${"namespaces/" + project_id + "/jobs/" + job_name}
+                        location: ${job_location}
+                        body:
+                          overrides:
+                            containerOverrides:
+                              env:
+                                - name: BATCH_ID
+                                  value: ${batch_id}
+                              args:
+                                - run.py
+                                - update_database
+                        connector_params:
+                          timeout: 72000
+                          polling_policy:
+                            initial_delay: 5
+                            multiplier: 1.5
+                            max_delay: 60
+                          skip_polling: false
 
-    - log_file:
-        call: sys.log
+    # Runs only after BOTH updates complete
+    - temporary_file_deletion:
+        call: googleapis.run.v1.namespaces.jobs.run
         args:
-          text: ${"[TEST] File = gs://" + gcs_event.bucket + "/" + gcs_event.name}
-          severity: INFO
+          name: ${"namespaces/" + project_id + "/jobs/" + job_name}
+          location: ${job_location}
+          body:
+            overrides:
+              containerOverrides:
+                env:
+                  - name: BATCH_ID
+                    value: ${batch_id}
+                args:
+                  - run.py
+                  - temporary_file_deletion
+          connector_params:
+            timeout: 72000
+            polling_policy:
+              initial_delay: 5
+              multiplier: 1.5
+              max_delay: 60
+            skip_polling: false
 
     - success:
         return:
           status: "success"
-          bucket: ${gcs_event.bucket}
-          file: ${gcs_event.name}
-
-    - log_unknown_format:
-        steps:
-          - warn:
-              call: sys.log
-              args:
-                text: ${"[TEST] Unknown format = " + json.encode_to_string(args)}
-                severity: WARNING
-          - finish:
-              return:
-                status: "unknown_format"
