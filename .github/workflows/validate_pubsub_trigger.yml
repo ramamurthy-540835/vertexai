@@ -17,7 +17,7 @@ env:
   PROJECT_ID:        'p-601-np-bcleadsmgmt-${{ github.event.inputs.environment }}'
   REGION:            'us-central1'
   BUCKET_NAME:       'gcp-gcs-lead-mgmt-us-${{ github.event.inputs.environment }}-pos-raw'
-  TRIGGER_NAME:      'gcs-file-finalized-trigger'
+  TRIGGER_NAME:      'pos-manifest-trigger'
   TRIGGER_LOCATION:  'us-central1'
   WORKFLOW_NAME:     'lead_match_workflow'
   WORKFLOW_LOCATION: 'us-central1'
