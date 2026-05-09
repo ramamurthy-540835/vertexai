@@ -1,8 +1,8 @@
 from google.cloud import aiplatform
 from costco.leadmgmt.pipeline_manager.compile_pipeline import compile_and_upload_pipeline
 from costco.leadmgmt.util.match_id_creation import match_id_creation
-from costco.leadmgmt.components.update_source_data import update_cloud_sql
-from costco.leadmgmt.components.update_servicenow import update_servicenow
+from costco.leadmgmt.components.* import update_cloud_sql,update_servicenow,data_ingestion_cloud_sql,
+primary_matching,temporary_file_deletion
 import sys
 import os
 
@@ -55,3 +55,11 @@ if __name__ == "__main__":
         update_cloud_sql(config_file_path)
     elif stage.lower() == "update_service_now":
         update_servicenow(config_file_path)
+    elif stage.lower() == "ingest_leads_from_cloud_sql":
+        data_ingestion_cloud_sql('leads',config_file_path)
+    elif stage.lower() == "ingest_leads_from_cloud_sql":
+        data_ingestion_cloud_sql('pos',config_file_path)   
+    elif stage.lower() == "primary_matching":
+        lead_matching(match_id,config_file_path)
+    elif stage.lower() == "temporary_file_deletion":
+        temporary_file_deletion(match_id,config_file_path)

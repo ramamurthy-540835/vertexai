@@ -5,15 +5,21 @@ import sqlalchemy
 from sqlalchemy import text
 from datetime import datetime
 from costco.leadmgmt.util.apputil import load_file_from_gcs
+from costco.leadmgmt.components.update_servicenow import get_gcs_file_path
 
 
-def delete_temp_files_from_gcs(match_id: str, file_path: str, config_file_path: str):
+def delete_temp_files_from_gcs(match_id: str, file_path: str = "", config_file_path: str):
     """Delete temporary files from the 'temporary folder' folder in GCS."""
     # Initialization
     job_config = JobConfig(config_file_path)
     db_config = job_config.db_config
     query_config = job_config.match_query
     storage_config = job_config.storage_config
+
+    standalone_file_path=storage_config.standalone_file_path
+
+    if file_path == "":
+        file_path = get_gcs_file_path(standalone_file_path)
 
     # storage
     input_bucket = storage_config.input_bucket_name

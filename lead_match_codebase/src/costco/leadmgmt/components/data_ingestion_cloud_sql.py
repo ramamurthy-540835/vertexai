@@ -7,47 +7,49 @@ from costco.leadmgmt.util.apputil import process_and_archive_files
 from costco.leadmgmt.util.fiscal_year import get_costco_fiscal_info
 
 
-def normalize_string(s):
-    """Normalize text for comparison (remove special chars, lowercase)."""
-    if pd.isna(s):
-        return ''
+def normalize_series(s: pd.Series) -> pd.Series:
+    return (
+        s.fillna('')
+         .astype(str)
+         .apply(lambda x: ''.join(e if e.isalnum() or e.isspace() else '' for e in unidecode(x)).lower())
+    )
 
-    return ''.join(e if e.isalnum() or e.isspace() else '' for e in unidecode(str(s))).lower()
+def validate_combined_field(df: pd.DataFrame) -> pd.DataFrame:
+    address_fields = ['address_line_one', 'address_line_two', 'city', 'state', 'zip_code']
+    name_fields    = ['first_name', 'last_name']
 
-def create_combined_field(row):
-    """Combine CUSTOMER_NAME and ADDRESS fields into a single composite string."""
-    address_fields = ['address_line_one','address_line_two', 'city','state','zip_code']
-    CUSTOMER_NAME = ['first_name', 'last_name']
-    business_name_field = 'business_name'
+    # Normalize all columns at once, column by column
+    norm = {}
+    for col in address_fields + name_fields + ['business_name', 'phone', 'email']:
+        if col in df.columns:
+            norm[col] = normalize_series(df[col]).str.strip()
+        else:
+            norm[col] = pd.Series('', index=df.index)
 
-    full_address = '^'.join([
-        normalize_string(row[col]).strip()
-        for col in address_fields
-        if col in row and pd.notna(row[col])
-    ])
+    # Build FULL_ADDRESS — no apply, pure Series arithmetic
+    addr_parts = [norm[c] for c in address_fields]
+    full_address = addr_parts[0]
+    for part in addr_parts[1:]:
+        sep = (full_address != '') & (part != '')
+        full_address = full_address + sep.map({True: '^', False: ''}) + part
+    full_address = full_address.str.strip('^')
 
-    if set(full_address.split('^')) == {''}:
-        full_address = ''
+    # Build CUSTOMER_NAME — no apply, pure Series arithmetic
+    sep = (norm['first_name'] != '') & (norm['last_name'] != '')
+    customer_name = norm['first_name'] + sep.map({True: '^', False: ''}) + norm['last_name']
 
-    customer_name = '^'.join([
-        normalize_string(row[col]).strip()
-        for col in CUSTOMER_NAME
-        if col in row and pd.notna(row[col])
-    ])
+    # Build COMBINED_FIELD
+    df['COMBINED_FIELD'] = (
+        norm['business_name'] + '^' +
+        full_address          + '^' +
+        norm['phone']         + '^' +
+        customer_name         + '^' +
+        norm['email']
+    ).str.strip()
 
+    df['FULL_ADDRESS']  = full_address
+    df['CUSTOMER_NAME'] = customer_name
 
-    business_name = normalize_string(row[business_name_field]).strip() if business_name_field in row and pd.notna(row[business_name_field]) else ''
-
-    combined_field = f"{business_name}^{full_address}^{row['phone']}^{customer_name}^{row['email']}".strip()
-
-    return combined_field,full_address,customer_name
-
-def validate_combined_field(df):
-
-    if 'COMBINED_FIELD' not in df.columns or 'FULL_ADDRESS' not in df.columns or 'CUSTOMER_NAME' not in df.columns:
-        df[['COMBINED_FIELD','FULL_ADDRESS','CUSTOMER_NAME']] = df.apply(
-            lambda row: pd.Series(create_combined_field(row)), axis=1
-        )
     return df
 
 def enforce_required_columns(df, required_columns):
@@ -66,7 +68,7 @@ def clean_required_columns(df, required_columns):
     """Clean required columns by stripping, replacing spaces, and converting to lowercase."""
     for col in required_columns:
         if col in df.columns:
-            df[col] = df[col].astype(str).apply(lambda x: x.strip().lower())
+            df[col] = df[col].fillna('').astype(str).str.strip().str.lower()
     return df
 
 
@@ -126,31 +128,40 @@ def load_and_preprocess_data_cloud_sql(base_name: str, config_file_path:str) -> 
     input_data_df = load_data_from_cloudsql(engine, query_input)
 
     #Archive the input file received
-    uri = process_and_archive_files(source_bucket_name, source_folder_input, destination_bucket_name,
+    archive_uri = process_and_archive_files(source_bucket_name, source_folder_input, destination_bucket_name,
                               destination_folder_input, input_data_df, base_name)
 
 
     input_data_df = input_data_df.fillna("")
 
     # Ensure required columns
-    required_columns = ['warehouse_number', 'membership_number', 'business_name', 'first_name', 'last_name',
-                        'address_line_one', 'address_line_two', 'city', 'state', 'zip_code', 'phone', 'email']
+    if base_name == 'pos':
+        required_columns = ['warehouse_number', 'membership_number', 'business_name', 'first_name', 'last_name',
+                            'address_line_one', 'address_line_two', 'city', 'state', 'zip_code', 'phone', 'email',
+                            'shop_type','order_amount','bd_industry','sales_reference_id']
+    elif base_name == 'leads':
+        required_columns = ['warehouse_number', 'membership_number', 'business_name', 'first_name', 'last_name',
+                            'address_line_one', 'address_line_two', 'city', 'state', 'zip_code', 'phone', 'email']
 
     input_data_df = enforce_required_columns(input_data_df, required_columns)
 
     # Validate and create COMBINED_FIELD
     input_data_df = validate_combined_field(input_data_df)
 
-    required_columns = ['warehouse_number', 'membership_number', 'business_name', 'first_name', 'last_name', 'city',
-                        'state', 'zip_code', 'phone', 'email', 'address_line_one', 'address_line_two', 'COMBINED_FIELD',
-                        'FULL_ADDRESS', 'CUSTOMER_NAME']
+
+    if base_name == 'pos':
+        required_columns = ['warehouse_number', 'membership_number', 'business_name', 'first_name', 'last_name', 'city',
+                            'state', 'zip_code', 'phone', 'email', 'address_line_one', 'address_line_two', 'COMBINED_FIELD',
+                            'FULL_ADDRESS', 'CUSTOMER_NAME','shop_type','order_amount','bd_industry','sales_reference_id']
+    elif base_name == 'leads':
+        required_columns = ['warehouse_number', 'membership_number', 'business_name', 'first_name', 'last_name', 'city',
+                            'state', 'zip_code', 'phone', 'email', 'address_line_one', 'address_line_two', 'COMBINED_FIELD',
+                            'FULL_ADDRESS', 'CUSTOMER_NAME']
 
     input_data_df = clean_required_columns(input_data_df, required_columns)
 
     # Generate the new file name by adding "_temp" before the extension
-    base_name = base_name  # name as input parameter from pipeline
-    name_without_extension = base_name.rsplit('.', 1)[0]  # Remove the file extension
-    new_file_name = f"{name_without_extension}_temp.csv"  # Append "_temp" before the file extension
+    new_file_name = f"{base_name}_temp.csv"
 
     # Save the preprocessed data to the "Temporary Files" folder in GCS
     output_file = f"{preprocessed_folder}/{new_file_name}"
@@ -161,9 +172,9 @@ def load_and_preprocess_data_cloud_sql(base_name: str, config_file_path:str) -> 
     output_blob.upload_from_string(input_data_df.to_csv(index=False), 'text/csv')
     output_bucket_name = bucket.name
 
-    uri = f"gs://{output_bucket_name}/{output_file}"
+    output_uri = f"gs://{output_bucket_name}/{output_file}"
 
-    return uri
+    return output_uri
 
 
 
