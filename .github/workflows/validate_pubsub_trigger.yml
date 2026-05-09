@@ -127,8 +127,7 @@ jobs:
             echo "❌ OBJECT_FINALIZE event type not set"
             exit 1
           fi
-
-      - name: "3. End-to-End Test — Upload JSON file and verify workflow triggered"
+      - name: "4. End-to-End Test — Upload JSON file and verify workflow triggered"
         run: |
           unset CLOUDSDK_CORE_PROJECT
           gcloud config set project $PROJECT_ID
@@ -147,7 +146,9 @@ jobs:
           }
           EOF
 
-          gsutil cp /tmp/test-trigger.json gs://$BUCKET_NAME/$TEST_FILE
+          gcloud storage cp \
+            /tmp/test-trigger.json \
+            gs://$BUCKET_NAME/$TEST_FILE
 
           if [ $? -eq 0 ]; then
             echo "✅ Test JSON file uploaded: gs://$BUCKET_NAME/$TEST_FILE"
@@ -158,6 +159,8 @@ jobs:
 
           echo "Waiting 15s for Pub/Sub → Eventarc → Workflow trigger..."
           sleep 15
+
+    
 
       - name: "4. Validate Workflow Execution was triggered"
         run: |
