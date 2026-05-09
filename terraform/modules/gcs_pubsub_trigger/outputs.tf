@@ -8,11 +8,6 @@ output "topic_name" {
   value       = google_pubsub_topic.this.name
 }
 
-output "push_subscription_id" {
-  description = "Pub/Sub push subscription ID"
-  value       = google_pubsub_subscription.push.id
-}
-
 output "deadletter_topic_id" {
   description = "Dead-letter Pub/Sub topic ID"
   value       = google_pubsub_topic.deadletter.id

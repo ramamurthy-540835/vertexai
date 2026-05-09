@@ -235,6 +235,6 @@ output "deadletter_topic_id" {
 }
 
 output "eventarc_trigger_name" {
-  value       = module.gcs_eventarc_workflow_trigger.trigger_name
+  value       = module.gcs_eventarc_workflow_trigger.eventarc_trigger_name
   description = "Eventarc trigger name"
 }
