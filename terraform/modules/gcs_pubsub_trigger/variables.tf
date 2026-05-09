@@ -4,7 +4,7 @@ variable "project_id" {
 }
 
 variable "region" {
-  description = "GCP region (must match the workflow region)"
+  description = "Region for the topic's message storage policy"
   type        = string
 }
 
@@ -19,7 +19,6 @@ variable "folder_prefix" {
     Must end with '/'. Examples: "uploads/", "data/raw/", "ingest/orders/"
   EOT
   type = string
-
   validation {
     condition     = endswith(var.folder_prefix, "/")
     error_message = "folder_prefix must end with '/' (e.g. 'uploads/')."
@@ -27,12 +26,7 @@ variable "folder_prefix" {
 }
 
 variable "topic_name" {
-  description = "Name for the Pub/Sub topic (subscription and dead-letter names are derived from this)"
-  type        = string
-}
-
-variable "workflow_name" {
-  description = "Name of the existing Cloud Workflow to trigger"
+  description = "Name for the Pub/Sub topic (dead-letter topic and subscription names are derived from this)"
   type        = string
 }
 
@@ -50,31 +44,7 @@ variable "labels" {
 }
 
 variable "message_retention_duration" {
-  description = "How long Pub/Sub retains unacknowledged messages (seconds string)"
+  description = "How long Pub/Sub retains unacknowledged messages on the main topic (seconds string)"
   type        = string
-  default     = "86600s" # ~24 hours
-}
-
-variable "ack_deadline_seconds" {
-  description = "Acknowledgement deadline for the push subscription"
-  type        = number
-  default     = 60
-}
-
-variable "max_delivery_attempts" {
-  description = "Number of delivery attempts before a message is sent to the dead-letter topic"
-  type        = number
-  default     = 5
-}
-
-variable "retry_minimum_backoff" {
-  description = "Minimum backoff duration between push retries"
-  type        = string
-  default     = "10s"
-}
-
-variable "retry_maximum_backoff" {
-  description = "Maximum backoff duration between push retries"
-  type        = string
-  default     = "300s"
+  default     = "86400s" # 24 hours
 }
