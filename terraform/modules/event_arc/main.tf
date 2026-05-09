@@ -33,32 +33,20 @@ resource "google_eventarc_trigger" "gcs_workflow_trigger" {
   destination {
     workflow = "projects/${var.project_id}/locations/${var.region}/workflows/${var.workflow_name}"
   }
-
-  # Order: audit logging must exist before the trigger references it
-  depends_on = [google_project_iam_audit_config.gcs_audit]
-}
-
-
-resource "google_project_iam_audit_config" "gcs_audit" {
-  project = var.project_id
-  service = "storage.googleapis.com"
-
-  audit_log_config {
-    log_type = "ADMIN_READ"
-  }
-  audit_log_config {
-    log_type = "DATA_READ"
-  }
-  audit_log_config {
-    log_type = "DATA_WRITE"
-  }
 }
 
 # ─────────────────────────────────────────────────────────────
 # IAM bindings the trigger SA needs
 # ─────────────────────────────────────────────────────────────
 # GCS service agent needs to publish to Pub/Sub (Eventarc uses Pub/Sub
-# under the hood for storage events)
+# under the hood for storage events). This binding is scoped to only
+# the topic Eventarc auto-creates for this trigger.
+# NOTE: This module assumes DATA_WRITE audit logs for storage.googleapis.com
+# are already enabled at the org or project level. If the trigger never
+# fires after deployment, that's the most likely cause — check with the
+# platform/security team.
+# ─────────────────────────────────────────────────────────────
+
 data "google_storage_project_service_account" "gcs_sa" {
   project = var.project_id
 }
