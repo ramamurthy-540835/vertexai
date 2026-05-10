@@ -9,8 +9,9 @@ from costco.leadmgmt.components.temporary_file_deletion import delete_temp_files
 import sys
 import os
 
+match_id = str(match_id_creation())
 
-def run_pipeline(config_file_path):
+def run_pipeline(config_file_path,match_id):
 
     project_id = os.environ.get("PROJECT_ID")
     region = os.environ.get("REGION")
@@ -22,10 +23,6 @@ def run_pipeline(config_file_path):
 
     aiplatform.init(project=project_id, location=region)
     template_path = f"{registry_url}/{pipeline_name}/latest"
-
-    match_id = str(match_id_creation())
-
-
 
     job = aiplatform.PipelineJob(
         display_name=f"{pipeline_name}-latest",
@@ -49,9 +46,9 @@ if __name__ == "__main__":
 
     if stage.lower() == "compile_run_pipeline":
         compile_and_upload_pipeline(pipeline_name,registry_url)
-        run_pipeline(config_file_path)
+        run_pipeline(config_file_path,match_id)
     elif stage.lower() == "run_pipeline":
-        run_pipeline(config_file_path)
+        run_pipeline(config_file_path,match_id)
     elif stage.lower() == "compile_pipeline":
         compile_and_upload_pipeline(pipeline_name, registry_url)
     elif stage.lower() == "update_database":
