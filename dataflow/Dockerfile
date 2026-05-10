@@ -2,9 +2,7 @@
 FROM gcr.io/dataflow-templates-base/python312-template-launcher-base:latest
 
 # Copy all pipeline source files
-COPY pos_pipeline.py  /template/pos_pipeline/main.py
-COPY file_reader.py   /template/pos_pipeline/file_reader.py
-COPY schema_utils.py  /template/pos_pipeline/schema_utils.py
+COPY pos_pipeline/    /template/pos_pipeline/
 COPY setup.py         /template/setup.py
 COPY requirements.txt /template/requirements.txt
 COPY field_map.json   /template/field_map.json
