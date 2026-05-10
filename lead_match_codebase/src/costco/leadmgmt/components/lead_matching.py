@@ -460,12 +460,7 @@ def classify_matches(
     return final_df
 
 
-def primary_classification(
-        file_a_path: str = "",
-        file_b_path: str = "",
-        match_id: str = "",
-        config_file_path: str = ""
-) -> str:
+def primary_classification(match_id: str, config_file_path: str, file_a_path: str = "", file_b_path: str = "") -> str:
 
     # ==========================================================
     # INITIALIZATION

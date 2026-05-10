@@ -227,7 +227,7 @@ def classify_matches(file_leads, file_sales):
     return pd.concat([matched_df, no_match_df], ignore_index=True)
 
 
-def primary_classification(file_a_path: str = "", file_b_path: str = "",match_id: str,config_file_path:str)-> str:
+def primary_classification(match_id: str, config_file_path: str, file_a_path: str = "", file_b_path: str = "") -> str:
 
     """
     This Kubeflow pipeline component performs primary classification of leads data by matching it with sales data.

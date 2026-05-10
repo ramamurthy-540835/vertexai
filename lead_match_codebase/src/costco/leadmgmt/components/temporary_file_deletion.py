@@ -8,7 +8,7 @@ from costco.leadmgmt.util.apputil import load_file_from_gcs
 from costco.leadmgmt.components.update_servicenow import get_gcs_file_path
 
 
-def delete_temp_files_from_gcs(match_id: str, file_path: str = "", config_file_path: str):
+def delete_temp_files_from_gcs(match_id: str, config_file_path: str, file_path: str = ""):
     """Delete temporary files from the 'temporary folder' folder in GCS."""
     # Initialization
     job_config = JobConfig(config_file_path)
