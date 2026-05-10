@@ -59,9 +59,9 @@ if __name__ == "__main__":
     elif stage.lower() == "update_service_now":
         update_servicenow(config_file_path)
     elif stage.lower() == "ingest_leads_from_cloud_sql":
-        data_ingestion_cloud_sql('leads',config_file_path)
-    elif stage.lower() == "ingest_leads_from_cloud_sql":
-        data_ingestion_cloud_sql('pos',config_file_path)   
+        load_and_preprocess_data_cloud_sql('leads',config_file_path)
+    elif stage.lower() == "ingest_pos_from_cloud_sql":
+        load_and_preprocess_data_cloud_sql('pos',config_file_path)   
     elif stage.lower() == "primary_matching":
         lead_matching(match_id,config_file_path)
     elif stage.lower() == "temporary_file_deletion":
