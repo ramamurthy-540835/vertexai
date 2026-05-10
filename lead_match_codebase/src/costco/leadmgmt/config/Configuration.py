@@ -330,6 +330,8 @@ class StorageConfig:
     source_folder_output: str
     destination_folder_output: str
     standalone_file_path: str
+    temp_leads_path: str
+    temp_pos_path: str
 
     @staticmethod
     def get_config(section, key, config, default):
@@ -398,7 +400,9 @@ class StorageConfig:
                    destination_bucket_name=cls.get_config("STORAGE", "destination_bucket_name", config, ""),
                    source_folder_output=cls.get_config("STORAGE", "source_folder_output", config, ""),
                    destination_folder_output=cls.get_config("STORAGE", "destination_folder_output", config, ""),
-                   standalone_file_path=cls.get_config("STORAGE", "standalone_file_path", config, "")
+                   temp_leads_path=cls.get_config("STORAGE", "temp_leads_path", config, ""),
+                   standalone_file_path=cls.get_config("STORAGE", "standalone_file_path", config, ""),
+                   temp_pos_path=cls.get_config("STORAGE", "temp_pos_path", config, "")
 
                    )
 
