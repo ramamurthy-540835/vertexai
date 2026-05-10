@@ -1,0 +1,134 @@
+name: "create_manifest"
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to create manifest for'
+        required: true
+        default: 'adt'
+        type: choice
+        options: ['adt', 'qat', 'spt']
+      run_label:
+        description: 'Optional label for run_id (e.g. "may-monthly-01"). Leave blank for auto.'
+        required: false
+        default: ''
+      dry_run:
+        description: 'If true, build manifest but do not upload (preview only)'
+        required: true
+        default: false
+        type: boolean
+
+env:
+  PROJECT_ID:        'p-601-np-bcleadsmgmt-${{ github.event.inputs.environment }}'
+  BUCKET_NAME:       'gcp-gcs-lead-mgmt-us-${{ github.event.inputs.environment }}-pos-raw'
+  INCOMING_PREFIX:   'pos-raw-data/incoming-files'
+  MANIFESTS_PREFIX:  'pos-raw-data/manifests'
+
+jobs:
+  create_manifest:
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment }}
+
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: "Checkout"
+        uses: actions/checkout@v4
+
+      - name: "Auth in GCP"
+        uses: "google-github-actions/auth@v2"
+        with:
+          create_credentials_file: true
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
+          service_account: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
+
+      - name: "1. List files in incoming folder"
+        id: list
+        run: |
+          unset CLOUDSDK_CORE_PROJECT CLOUDSDK_PROJECT GCLOUD_PROJECT GCP_PROJECT GOOGLE_CLOUD_PROJECT
+          gcloud config set project $PROJECT_ID
+
+          echo "=== Files in gs://${BUCKET_NAME}/${INCOMING_PREFIX}/ ==="
+          mapfile -t FILES < <(gcloud storage ls "gs://${BUCKET_NAME}/${INCOMING_PREFIX}/" 2>/dev/null \
+                               | grep -v '/$' || true)
+
+          if [ ${#FILES[@]} -eq 0 ]; then
+            echo "❌ No files found in incoming folder. Nothing to process."
+            exit 1
+          fi
+
+          echo "Found ${#FILES[@]} file(s):"
+          printf '  %s\n' "${FILES[@]}"
+
+          # Save as JSON array for the next step
+          printf '%s\n' "${FILES[@]}" | jq -R . | jq -s -c . > /tmp/files.json
+          cat /tmp/files.json
+
+      - name: "2. Build manifest"
+        id: build
+        run: |
+          # Determine run_id
+          RUN_LABEL="${{ github.event.inputs.run_label }}"
+          if [ -z "$RUN_LABEL" ]; then
+            RUN_ID="run-$(date -u +%Y%m%d-%H%M%S)"
+          else
+            # Sanitize label: lowercase, replace spaces/special with hyphens
+            CLEAN=$(echo "$RUN_LABEL" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]/-/g')
+            RUN_ID="${CLEAN}-$(date -u +%Y%m%d-%H%M%S)"
+          fi
+          echo "RUN_ID=$RUN_ID" >> $GITHUB_OUTPUT
+
+          # Build manifest
+          jq -n \
+            --arg run_id "$RUN_ID" \
+            --arg submitted_by "github-actions-${GITHUB_ACTOR}" \
+            --arg submitted_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --arg github_run_url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            --argjson files "$(cat /tmp/files.json)" \
+            '{
+              run_id: $run_id,
+              submitted_by: $submitted_by,
+              submitted_at: $submitted_at,
+              github_run_url: $github_run_url,
+              files: $files
+            }' > /tmp/manifest.json
+
+          echo "=== Generated manifest ==="
+          cat /tmp/manifest.json
+
+      - name: "3. Upload manifest (or skip if dry_run)"
+        run: |
+          unset CLOUDSDK_CORE_PROJECT CLOUDSDK_PROJECT GCLOUD_PROJECT GCP_PROJECT GOOGLE_CLOUD_PROJECT
+          gcloud config set project $PROJECT_ID
+
+          RUN_ID="${{ steps.build.outputs.RUN_ID }}"
+          DEST="gs://${BUCKET_NAME}/${MANIFESTS_PREFIX}/${RUN_ID}.json"
+
+          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+            echo "ℹ️  DRY RUN — would upload to: $DEST"
+            echo "   Skipping actual upload. Re-run with dry_run=false to submit."
+            exit 0
+          fi
+
+          gcloud storage cp /tmp/manifest.json "$DEST" --project=$PROJECT_ID
+          echo "✅ Uploaded: $DEST"
+          echo "   The Pub/Sub → Eventarc → Workflow trigger should fire shortly."
+
+      - name: "4. Summary"
+        if: always()
+        run: |
+          {
+            echo "## Manifest Creation — ${{ github.event.inputs.environment }}"
+            echo ""
+            echo "- **Run ID:** \`${{ steps.build.outputs.RUN_ID }}\`"
+            echo "- **Files in manifest:** $(jq '.files | length' /tmp/manifest.json 2>/dev/null || echo '0')"
+            echo "- **Dry run:** ${{ github.event.inputs.dry_run }}"
+            echo ""
+            echo "### Manifest content"
+            echo '```json'
+            cat /tmp/manifest.json 2>/dev/null || echo '(no manifest generated)'
+            echo '```'
+          } >> $GITHUB_STEP_SUMMARY

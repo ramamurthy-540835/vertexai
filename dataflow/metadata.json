@@ -1,0 +1,49 @@
+{
+  "name": "POS ETL Pipeline",
+  "description": "Batch Dataflow pipeline that loads a single POS file from GCS into Cloud SQL Postgres",
+  "parameters": [
+    {
+      "name": "input_file",
+      "label": "Input file (full GCS path)",
+      "helpText": "gs://bucket/path/to/file.csv — the single file this job processes",
+      "regexes": ["^gs://[^/]+/.+"]
+    },
+    {
+      "name": "instance_connection_name",
+      "label": "Cloud SQL instance connection name",
+      "helpText": "PROJECT:REGION:INSTANCE format"
+    },
+    {
+      "name": "db_name",
+      "label": "Database name",
+      "helpText": "Postgres database to write to"
+    },
+    {
+      "name": "db_schema",
+      "label": "Database schema",
+      "helpText": "Schema containing the target table"
+    },
+    {
+      "name": "db_table",
+      "label": "Database table",
+      "helpText": "Target table for INSERT"
+    },
+    {
+      "name": "field_map_path",
+      "label": "Field map path",
+      "helpText": "Local path or gs:// path to field_map.json"
+    },
+    {
+      "name": "batch_size",
+      "label": "Insert batch size",
+      "helpText": "Rows per INSERT batch (default: 2000)",
+      "isOptional": true
+    },
+    {
+      "name": "chunk_size",
+      "label": "Read chunk size",
+      "helpText": "Rows per Beam bundle (default: 10000)",
+      "isOptional": true
+    }
+  ]
+}

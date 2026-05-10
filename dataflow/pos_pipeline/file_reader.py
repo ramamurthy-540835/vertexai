@@ -97,3 +97,87 @@ def _read_json(content_bytes):
 def _read_jsonl(content_bytes):
     lines = content_bytes.decode('utf-8').splitlines()
     return [json.loads(l) for l in lines if l.strip()]
+"""
+Multi-format file reader.
+
+Returns a list of dicts where keys are the source column headers (preserved
+as-is from the file) and values are Python primitives. The mapping to DB
+columns happens later in schema_utils.apply_field_map.
+"""
+
+import io
+import json
+import logging
+from typing import List, Dict, Any
+
+logger = logging.getLogger(__name__)
+
+
+def read_file_to_dicts(content: bytes, filename: str) -> List[Dict[str, Any]]:
+    """
+    Dispatch to the right reader based on file extension.
+    Add new readers here as new formats are needed.
+    """
+    name = filename.lower()
+    if name.endswith(".csv"):
+        return _read_csv(content)
+    if name.endswith(".tsv"):
+        return _read_csv(content, delimiter="\t")
+    if name.endswith((".xlsx", ".xls")):
+        return _read_excel(content)
+    if name.endswith(".json"):
+        return _read_json(content)
+    if name.endswith(".parquet"):
+        return _read_parquet(content)
+    raise ValueError(f"Unsupported file type: {filename}")
+
+
+def _read_csv(content: bytes, delimiter: str = ",") -> List[Dict[str, Any]]:
+    import csv
+    text = content.decode("utf-8-sig")  # strip BOM if present
+    reader = csv.DictReader(io.StringIO(text), delimiter=delimiter)
+    rows = [dict(row) for row in reader]
+    logger.info(f"CSV/TSV read: {len(rows)} rows")
+    return rows
+
+
+def _read_excel(content: bytes) -> List[Dict[str, Any]]:
+    import openpyxl
+    wb = openpyxl.load_workbook(io.BytesIO(content), read_only=True, data_only=True)
+    ws = wb.active
+
+    rows_iter = ws.iter_rows(values_only=True)
+    headers = next(rows_iter, None)
+    if not headers:
+        return []
+    headers = [str(h) if h is not None else "" for h in headers]
+
+    out: List[Dict[str, Any]] = []
+    for row in rows_iter:
+        if all(v is None or v == "" for v in row):
+            continue  # skip blank rows
+        out.append({headers[i]: row[i] for i in range(len(headers)) if headers[i]})
+    logger.info(f"Excel read: {len(out)} rows")
+    return out
+
+
+def _read_json(content: bytes) -> List[Dict[str, Any]]:
+    text = content.decode("utf-8-sig")
+    data = json.loads(text)
+    if isinstance(data, list):
+        rows = [r for r in data if isinstance(r, dict)]
+    elif isinstance(data, dict) and isinstance(data.get("rows"), list):
+        rows = [r for r in data["rows"] if isinstance(r, dict)]
+    else:
+        raise ValueError("JSON must be a list of objects, or {rows: [...]}")
+    logger.info(f"JSON read: {len(rows)} rows")
+    return rows
+
+
+def _read_parquet(content: bytes) -> List[Dict[str, Any]]:
+    import pyarrow.parquet as pq
+    import pyarrow as pa  # noqa
+    table = pq.read_table(io.BytesIO(content))
+    rows = table.to_pylist()
+    logger.info(f"Parquet read: {len(rows)} rows")
+    return rows
