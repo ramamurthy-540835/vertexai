@@ -10,7 +10,7 @@
     "template_path":   "gs://gcp-gcs-lead-mgmt-us-qat-pos-raw/templates/pos-pipeline-flex-qat.json",
     "service_account": "gco-iam-svc-lead-mgmt-bc-qat@p-601-np-bcleadsmgmt-qat.iam.gserviceaccount.com",
     "field_map_path":  "gs://gcp-gcs-lead-mgmt-us-qat-pos-raw/config/field_map.json",
-    "machine_type":    "n1-standard-2",
+    "machine_type":    "n2d-standard-2",
     "max_workers":     5,
     "subnetwork":      "https://www.googleapis.com/compute/v1/projects/gcp-prj-transit-hub/regions/us-central1/subnetworks/gcp-snt-np-usc1-601-cloudrunjobs-np",
     "chunk_size":      2,
