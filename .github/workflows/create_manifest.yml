@@ -23,7 +23,7 @@ env:
   PROJECT_ID:        'p-601-np-bcleadsmgmt-${{ github.event.inputs.environment }}'
   BUCKET_NAME:       'gcp-gcs-lead-mgmt-us-${{ github.event.inputs.environment }}-pos-raw'
   INCOMING_PREFIX:   'pos-raw-data/incoming-files'
-  MANIFESTS_PREFIX:  'pos-raw-data/manifests'
+  MANIFESTS_PREFIX:  'manifests'
 
 jobs:
   create_manifest:
