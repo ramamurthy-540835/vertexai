@@ -17,8 +17,8 @@
     "batch_size":      "2000"
   },
   "database": {
-    "instance_connection_name": "p-601-np-bcleadsmgmt-spt:us-central1:lead-mgmt-db",
-    "db_name":   "postgres",
+    "instance_connection_name": "p-601-np-bcleadsmgmt-spt:us-central1:lead-mgmt-spt",
+    "db_name":   "lead-mgmt-db",
     "db_schema": "lead-mgmt-spt",
     "db_table":  "pos_transactions"
   },

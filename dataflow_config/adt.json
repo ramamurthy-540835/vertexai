@@ -20,8 +20,8 @@
   },
 
   "database": {
-    "instance_connection_name": "p-601-np-bcleadsmgmt-adt:us-central1:lead-mgmt-db",
-    "db_name":   "postgres",
+    "instance_connection_name": "p-601-np-bcleadsmgmt-adt:us-central1:lead-mgmt-adt",
+    "db_name":   "lead-mgmt-db",
     "db_schema": "lead-mgmt-adt",
     "db_table":  "pos_transactions"
   },
