@@ -156,7 +156,7 @@ main:
             # ── 5b. Fan-in: poll every job in the chunk ──
             - wait_for_chunk:
                 parallel:
-                  shared: [chunk_job_states]
+                  shared: [chunk_job_states, all_job_states]
                   for:
                     value: jid
                     in: '${chunk_job_ids}'
