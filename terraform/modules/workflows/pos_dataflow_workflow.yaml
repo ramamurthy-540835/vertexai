@@ -1,6 +1,19 @@
 # pos_dataflow_workflow.yaml
 # Triggered by Eventarc → Pub/Sub when a manifest.json lands in the
 # configured manifests folder.
+#
+# All env-specific values come from config/workflow-config.json in
+# the same bucket as the triggering event. This workflow YAML is
+# identical across all environments (adt/qat/spt).
+#
+# Flow:
+#   1. Decode the Pub/Sub event → get manifest path + bucket
+#   2. Read env config from gs://<bucket>/config/workflow-config.json
+#   3. Read manifest from GCS
+#   4. Process its files in chunks (size from config) via Dataflow Flex Template
+#   5. On full success: trigger downstream workflow (snow_sync_workflow)
+#   6. Wait for it to complete (it triggers lead_match_workflow itself)
+#   7. Move source files from incoming-files/ to processed/
 
 main:
   params: [event]
@@ -21,7 +34,7 @@ main:
         args:
           bucket: '${bucket}'
           object: '${text.url_encode("config/workflow-config.json")}'
-          alt:    media
+          alt: media
         result: cfg
 
     - extract_config:
@@ -51,7 +64,7 @@ main:
     - validate_manifest_path:
         switch:
           - condition: '${not(text.match_regex(manifest_object, "^" + manifest_prefix + ".*\\.json$"))}'
-            return:    '${"Skipped: " + manifest_object + " is not under " + manifest_prefix}'
+            return: '${"Skipped: " + manifest_object + " is not under " + manifest_prefix}'
         next: read_manifest
 
     # ── 4. Read the manifest from GCS ──────────────────────────────────
@@ -60,7 +73,7 @@ main:
         args:
           bucket: '${bucket}'
           object: '${text.url_encode(manifest_object)}'
-          alt:    media
+          alt: media
         result: manifest
 
     - extract_run_metadata:
@@ -77,18 +90,23 @@ main:
           text: '${"[" + environment + "] run " + run_id + ": " + string(file_count) + " files in " + string(num_chunks) + " chunks of " + string(chunk_size) + " (sa=" + sa_email + ")"}'
 
     # ── 5. Sequential outer loop: chunk_size files at a time ───────────
+    # If any Dataflow job in a chunk fails, we raise an exception which
+    # propagates up and terminates the whole workflow as FAILED — no
+    # need to jump to a target step (Cloud Workflows forbids jumping
+    # out of any enclosing for loop).
     - process_chunks:
         for:
           value: chunk_idx
           range: [0, '${num_chunks - 1}']
           steps:
             - compute_chunk_bounds:
-              assign:
-                - start_idx:        '${chunk_idx * chunk_size}'
-                - end_idx:          '${if((chunk_idx + 1) * chunk_size > file_count, file_count, (chunk_idx + 1) * chunk_size)}'
-                - chunk_files:      []
-                - chunk_job_ids:    []
-                - chunk_job_states: []
+                assign:
+                  - start_idx:        '${chunk_idx * chunk_size}'
+                  - end_idx:          '${if((chunk_idx + 1) * chunk_size > file_count, file_count, (chunk_idx + 1) * chunk_size)}'
+                  - chunk_files:      []
+                  - chunk_job_ids:    []
+                  - chunk_job_states: []
+                  - chunk_failed:     false
 
             - build_chunk_files:
                 for:
@@ -143,7 +161,7 @@ main:
             # ── 5b. Fan-in: poll every job in the chunk ──
             - wait_for_chunk:
                 parallel:
-                  shared: [chunk_job_states]
+                  shared: [chunk_job_states, all_job_states]
                   for:
                     value: jid
                     in: '${chunk_job_ids}'
@@ -160,7 +178,7 @@ main:
                             - chunk_job_states: '${list.concat(chunk_job_states, final_state)}'
                             - all_job_states:   '${list.concat(all_job_states, final_state)}'
 
-            # ── 5c. Abort if any job in this chunk failed ──
+            # ── 5c. Scan results; set the chunk_failed flag (no jumps) ──
             - check_chunk_results:
                 for:
                   value: state
@@ -169,7 +187,16 @@ main:
                     - guard:
                         switch:
                           - condition: '${state != "JOB_STATE_DONE"}'
-                            next: abort_run
+                            assign:
+                              - chunk_failed: true
+
+            # ── 5d. If anything failed in this chunk, raise to abort. ──
+            # raise: propagates up through all enclosing for-loops and
+            # marks the workflow execution as FAILED.
+            - check_chunk_failure_flag:
+                switch:
+                  - condition: '${chunk_failed}'
+                    raise: '${"[" + environment + "] run " + run_id + " aborted in chunk " + string(chunk_idx) + ": at least one Dataflow job did not reach JOB_STATE_DONE. states=" + json.encode_to_string(all_job_states)}'
 
             - log_chunk_done:
                 call: sys.log
@@ -177,7 +204,7 @@ main:
                   severity: INFO
                   text: '${"[" + environment + "] chunk " + string(chunk_idx) + " — all jobs DONE"}'
 
-    # ── 6. Trigger downstream workflow ─────────────────────────────────
+    # ── 6. Trigger downstream workflow (snow_sync) ─────────────────────
     - trigger_downstream:
         steps:
           - build_payload:
@@ -221,7 +248,7 @@ main:
           seconds: 15
         next: wait_for_downstream
 
-    # ── 8. Move source files to processed/ ─────────────────────────────
+    # ── 8. Move source files to processed/ (on full chain success) ─────
     - move_files_to_processed:
         parallel:
           for:
@@ -247,10 +274,9 @@ main:
                     bucket: '${bucket_only}'
                     object: '${text.url_encode(object_only)}'
 
-    # ── 9. Terminal states ─────────────────────────────────────────────
-    - abort_run:
-        raise: '${"[" + environment + "] run " + run_id + " aborted: at least one Dataflow job did not reach JOB_STATE_DONE. states=" + json.encode_to_string(all_job_states)}'
-
+    # ── 9. Success terminal ────────────────────────────────────────────
+    # Note: no abort_run step needed. The raise: inside check_chunk_failure_flag
+    # terminates the workflow as FAILED if any Dataflow job didn't reach DONE.
     - done:
         return:
           status:                "success"
@@ -272,12 +298,12 @@ poll_dataflow_until_done:
           projectId: '${project_id}'
           location:  '${region}'
           jobId:     '${job_id}'
-          view:      "JOB_VIEW_SUMMARY"
+          view: "JOB_VIEW_SUMMARY"
         result: job
     - check_terminal:
         switch:
           - condition: '${job.currentState in ["JOB_STATE_DONE", "JOB_STATE_FAILED", "JOB_STATE_CANCELLED", "JOB_STATE_UPDATED", "JOB_STATE_DRAINED"]}'
-            return:    '${job.currentState}'
+            return: '${job.currentState}'
     - sleep_and_retry:
         call: sys.sleep
         args:
