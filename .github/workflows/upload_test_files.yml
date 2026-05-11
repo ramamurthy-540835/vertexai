@@ -21,7 +21,7 @@ on:
       source_folder:
         description: 'Folder in repo containing files to upload'
         required: true
-        default: 'test-data'
+        default: 'test_data'
         type: string
 
       file_pattern:
