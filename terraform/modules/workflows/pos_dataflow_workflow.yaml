@@ -115,7 +115,8 @@ main:
                           tempLocation: '${"gs://" + bucket + "/dataflow/temp"}'
                           stagingLocation: '${"gs://" + bucket + "/dataflow/staging"}'
                           ipConfiguration: WORKER_IP_PRIVATE
-                          enableConfidentialCompute: true
+                          additionalExperiments:
+                            - "enable_confidential_compute"
                   result: launch_resp
 
               - poll_until_done:
