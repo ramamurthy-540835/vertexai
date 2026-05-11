@@ -90,6 +90,10 @@ main:
           text: '${"[" + environment + "] run " + run_id + ": " + string(file_count) + " files in " + string(num_chunks) + " chunks of " + string(chunk_size) + " (sa=" + sa_email + ")"}'
 
     # ── 5. Sequential outer loop: chunk_size files at a time ───────────
+    # If any Dataflow job in a chunk fails, we raise an exception which
+    # propagates up and terminates the whole workflow as FAILED — no
+    # need to jump to a target step (Cloud Workflows forbids jumping
+    # out of any enclosing for loop).
     - process_chunks:
         for:
           value: chunk_idx
@@ -174,7 +178,7 @@ main:
                             - chunk_job_states: '${list.concat(chunk_job_states, final_state)}'
                             - all_job_states:   '${list.concat(all_job_states, final_state)}'
 
-            # ── 5c. Scan chunk results; set chunk_failed flag (no early exit) ──
+            # ── 5c. Scan results; set the chunk_failed flag (no jumps) ──
             - check_chunk_results:
                 for:
                   value: state
@@ -186,11 +190,13 @@ main:
                             assign:
                               - chunk_failed: true
 
-            # ── 5d. After the for-loop: act on the flag ──
+            # ── 5d. If anything failed in this chunk, raise to abort. ──
+            # raise: propagates up through all enclosing for-loops and
+            # marks the workflow execution as FAILED.
             - check_chunk_failure_flag:
                 switch:
                   - condition: '${chunk_failed}'
-                    next: abort_run
+                    raise: '${"[" + environment + "] run " + run_id + " aborted in chunk " + string(chunk_idx) + ": at least one Dataflow job did not reach JOB_STATE_DONE. states=" + json.encode_to_string(all_job_states)}'
 
             - log_chunk_done:
                 call: sys.log
@@ -268,10 +274,9 @@ main:
                     bucket: '${bucket_only}'
                     object: '${text.url_encode(object_only)}'
 
-    # ── 9. Terminal states ─────────────────────────────────────────────
-    - abort_run:
-        raise: '${"[" + environment + "] run " + run_id + " aborted: at least one Dataflow job did not reach JOB_STATE_DONE. states=" + json.encode_to_string(all_job_states)}'
-
+    # ── 9. Success terminal ────────────────────────────────────────────
+    # Note: no abort_run step needed. The raise: inside check_chunk_failure_flag
+    # terminates the workflow as FAILED if any Dataflow job didn't reach DONE.
     - done:
         return:
           status:                "success"
