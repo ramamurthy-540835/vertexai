@@ -113,16 +113,18 @@ main:
                   value: i
                   range: ['${start_idx}', '${end_idx - 1}']
                   steps:
-                    - append_file:
+                    - get_one_file:
                         assign:
-                          - chunk_files: '${list.concat(chunk_files, [all_files[i]])}'
+                          - one_file: '${all_files[i]}'
+                    - append_to_chunk:
+                        assign:
+                          - chunk_files: '${list.concat(chunk_files, [one_file])}'
 
             - log_chunk_start:
                 call: sys.log
                 args:
                   severity: INFO
-                  text: '${"[" + environment + "] chunk " + string(chunk_idx) + "/" + string(num_chunks - 1) + " — launching " + string(len(chunk_files)) + " jobs"}'
-
+                  text: '${"[" + environment + "] chunk " + string(chunk_idx) + "/" + string(num_chunks - 1) + " — chunk_files=" + json.encode_to_string(chunk_files)}'
             # ── 5a. Fan-out: launch up to chunk_size Dataflow jobs ──
             - launch_chunk_jobs:
                 parallel:
@@ -135,8 +137,7 @@ main:
                           call: sys.log
                           args:
                             severity: INFO
-                            text: '${"PARAMS: file_path=[" + file_path + "] | instance_conn=[" + instance_conn + "] | db_name=[" + db_name + "] | db_schema=[" + db_schema + "] | db_table=[" + db_table + "] | field_map_gcs=[" + field_map_gcs + "] | batch_size=[" + batch_size + "]"}'
-                    
+                            text: '${"PARAMS: file_path=" + json.encode_to_string(file_path) + " | instance_conn=" + json.encode_to_string(instance_conn) + " | db_name=" + json.encode_to_string(db_name) + " | db_schema=" + json.encode_to_string(db_schema) + " | db_table=" + json.encode_to_string(db_table) + " | field_map_gcs=" + json.encode_to_string(field_map_gcs) + " | batch_size=" + json.encode_to_string(batch_size)}
                       - launch_one:
                           call: googleapis.dataflow.v1b3.projects.locations.flexTemplates.launch
                           args:
