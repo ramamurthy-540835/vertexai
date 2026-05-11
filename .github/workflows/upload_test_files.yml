@@ -1,16 +1,11 @@
 name: upload_test_files
 
 # ─────────────────────────────────────────────────────────────
-# Upload test CSV files to incoming-files/ to test the
+# Upload test files (any type) to incoming-files/ to test the
 # end-to-end pipeline.
 #
-# Flow this triggers:
-#   1. This workflow uploads CSVs from test-data/ to incoming-files/
-#   2. (You then upload a manifest via the create_manifest workflow)
-#   3. Eventarc fires pos_dataflow_workflow
-#   4. Dataflow loads files to Postgres
-#   5. snow_sync_workflow runs → lead_match_workflow runs
-#   6. Files move to processed/
+# Supported file types depend on what your pos_pipeline reader
+# handles: CSV, TSV, Excel (.xlsx/.xls), JSON, Parquet.
 # ─────────────────────────────────────────────────────────────
 
 on:
@@ -24,13 +19,19 @@ on:
         options: ['adt', 'qat', 'spt']
 
       source_folder:
-        description: 'Folder in repo containing CSVs to upload'
+        description: 'Folder in repo containing files to upload'
         required: true
         default: 'test-data'
         type: string
 
+      file_pattern:
+        description: 'Glob pattern to filter files (e.g. * for all, *.csv for CSV only)'
+        required: true
+        default: '*'
+        type: string
+
       clear_incoming_first:
-        description: 'Clear incoming-files/ before uploading (avoids stale files)'
+        description: 'Clear incoming-files/ before uploading'
         required: true
         default: true
         type: boolean
@@ -50,6 +51,7 @@ jobs:
     env:
       ENV_NAME:      ${{ github.event.inputs.environment }}
       SOURCE_FOLDER: ${{ github.event.inputs.source_folder }}
+      FILE_PATTERN:  ${{ github.event.inputs.file_pattern }}
       PROJECT_ID:    'p-601-np-bcleadsmgmt-${{ github.event.inputs.environment }}'
       BUCKET_NAME:   'gcp-gcs-lead-mgmt-us-${{ github.event.inputs.environment }}-pos-raw'
       DEST_PREFIX:   'pos-raw-data/incoming-files'
@@ -81,24 +83,31 @@ jobs:
             exit 1
           fi
 
-          # Find CSV files (case-insensitive, top level only)
-          mapfile -t FILES < <(find "${SOURCE_FOLDER}" -maxdepth 1 -type f \
-            \( -iname '*.csv' -o -iname '*.tsv' \))
+          # Find all files matching the pattern (top level only, case-insensitive)
+          mapfile -t FILES < <(find "${SOURCE_FOLDER}" -maxdepth 1 -type f -iname "${FILE_PATTERN}")
 
           if [ ${#FILES[@]} -eq 0 ]; then
-            echo "❌ No CSV/TSV files found in ${SOURCE_FOLDER}/"
+            echo "❌ No files matching '${FILE_PATTERN}' in ${SOURCE_FOLDER}/"
+            echo ""
             echo "Folder contents:"
             ls -la "${SOURCE_FOLDER}"
             exit 1
           fi
 
-          echo "Found ${#FILES[@]} file(s) to upload:"
+          echo "Found ${#FILES[@]} file(s) matching '${FILE_PATTERN}':"
           for f in "${FILES[@]}"; do
             SIZE=$(stat -c%s "$f")
-            echo "  $f  ($SIZE bytes)"
+            # Human-readable size for the summary
+            if [ $SIZE -gt 1048576 ]; then
+              SIZE_DISPLAY="$(( SIZE / 1048576 )) MB"
+            elif [ $SIZE -gt 1024 ]; then
+              SIZE_DISPLAY="$(( SIZE / 1024 )) KB"
+            else
+              SIZE_DISPLAY="${SIZE} B"
+            fi
+            echo "  $f  (${SIZE_DISPLAY})"
           done
 
-          # Save list for next steps
           printf '%s\n' "${FILES[@]}" > /tmp/files-to-upload.txt
           echo "FILE_COUNT=${#FILES[@]}" >> $GITHUB_OUTPUT
 
@@ -109,7 +118,6 @@ jobs:
 
           echo "Clearing existing files in gs://${BUCKET_NAME}/${DEST_PREFIX}/"
 
-          # List what's there first (so user sees what's being removed)
           EXISTING=$(gcloud storage ls "gs://${BUCKET_NAME}/${DEST_PREFIX}/" \
             --project="${PROJECT_ID}" 2>/dev/null | grep -v '/$' || true)
 
@@ -155,6 +163,7 @@ jobs:
             echo ""
             echo "- **Bucket:** \`gs://${BUCKET_NAME}/${DEST_PREFIX}/\`"
             echo "- **Files uploaded:** ${{ steps.list.outputs.FILE_COUNT }}"
+            echo "- **Pattern used:** \`${FILE_PATTERN}\`"
             echo ""
             echo "### Next: trigger the pipeline"
             echo ""
