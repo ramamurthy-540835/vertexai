@@ -12,7 +12,7 @@ COPY metadata.json   /template/metadata.json
 RUN pip install --upgrade pip setuptools wheel && \
     pip install --no-cache-dir -r /template/requirements.txt
 
-ENV FLEX_TEMPLATE_PYTHON_PY_FILE=/template/pos_pipeline.py
+ENV FLEX_TEMPLATE_PYTHON_PY_FILE=/template/main.py
 ENV FLEX_TEMPLATE_PYTHON_SETUP_FILE=/template/setup.py
 
 ENTRYPOINT ["/opt/google/dataflow/python_template_launcher"]
