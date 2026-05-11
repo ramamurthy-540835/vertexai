@@ -34,7 +34,7 @@ main:
           - field_map_gcs: '${cfg.dataflow.field_map_path}'
           - machine_type: '${cfg.dataflow.machine_type}'
           - max_workers: '${cfg.dataflow.max_workers}'
-          - network: '${cfg.dataflow.network}'
+          - subnetwork: '${cfg.dataflow.subnetwork}'
           - batch_size: '${cfg.dataflow.batch_size}'
           - instance_conn: '${cfg.database.instance_connection_name}'
           - db_name: '${cfg.database.db_name}'
@@ -114,6 +114,7 @@ main:
                           machineType: '${machine_type}'
                           tempLocation: '${"gs://" + bucket + "/dataflow/temp"}'
                           stagingLocation: '${"gs://" + bucket + "/dataflow/staging"}'
+                          ipConfiguration: WORKER_IP_PRIVATE
                   result: launch_resp
 
               - poll_until_done:
