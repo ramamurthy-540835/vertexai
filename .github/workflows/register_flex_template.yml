@@ -1,21 +1,26 @@
 name: register_flex_template
 
+# ─────────────────────────────────────────────────────────────
+# Registers a Dataflow Flex Template spec in the target env's
+# bucket. Each env's template points to its own image tag
+# (:adt, :qat, :spt) so envs are independent.
+# ─────────────────────────────────────────────────────────────
+
 on:
-  # Called from dataflow_image_creation.yml after the image is pushed
+  # Called by the parent workflow with explicit env
   workflow_call:
     inputs:
-      workflow_trigger_event:
-        description: 'Set "True" when triggered from a parent workflow'
-        required: false
+      environment:
+        description: 'Environment to register template in'
+        required: true
         type: string
-        default: "False"
     secrets:
       GCP_WORKLOAD_IDENTITY_PROVIDER_ID:
         required: true
       GCP_WORKLOAD_IDENTITY_SA_EMAIL:
         required: true
 
-  # Allow manual deployment from the Actions tab too
+  # Or triggered manually from the Actions tab
   workflow_dispatch:
     inputs:
       environment:
@@ -27,7 +32,7 @@ on:
 
 jobs:
   register:
-    name: Register Dataflow Flex Template
+    name: Register Dataflow Flex Template (${{ inputs.environment }})
     runs-on:
       - self-hosted
       - us-central1
@@ -35,18 +40,12 @@ jobs:
       id-token: write
       contents: read
 
-    # Pick the env from manual input, or default to adt when called from parent
     env:
-      ENVIRONMENT: ${{ github.event.inputs.environment || 'adt' }}
+      ENVIRONMENT: ${{ inputs.environment }}
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
 
       - id: auth
         name: Auth to GCP
@@ -58,48 +57,42 @@ jobs:
       - name: Set up gcloud
         uses: google-github-actions/setup-gcloud@v2
 
-      - name: Resolve environment-specific config
+      - name: Resolve env-specific config
         id: cfg
         run: |
           set -euo pipefail
-          # Env-specific values follow the same pattern as the validator workflow
           PROJECT_ID="p-601-np-bcleadsmgmt-${ENVIRONMENT}"
-          REGION="us-central1"
           BUCKET_NAME="gcp-gcs-lead-mgmt-us-${ENVIRONMENT}-pos-raw"
 
-          # Image was built and pushed by the parent workflow with this fixed tag
-          IMAGE_URI="us-docker.pkg.dev/gcp-prj-images/gcp-gar-repo-mbrshp/pos-pipeline-flex:latest"
+          # Each env points to its own image tag
+          IMAGE_URI="us-docker.pkg.dev/gcp-prj-images/gcp-gar-repo-mbrshp/pos-pipeline-flex:${ENVIRONMENT}"
 
-          # Flex Template spec is registered in the per-env bucket
+          # Per-env template spec lives in the env's own bucket
           TEMPLATE_GCS="gs://${BUCKET_NAME}/templates/pos-pipeline-flex-${ENVIRONMENT}.json"
 
           echo "PROJECT_ID=$PROJECT_ID"     >> $GITHUB_OUTPUT
-          echo "REGION=$REGION"             >> $GITHUB_OUTPUT
           echo "BUCKET_NAME=$BUCKET_NAME"   >> $GITHUB_OUTPUT
           echo "IMAGE_URI=$IMAGE_URI"       >> $GITHUB_OUTPUT
           echo "TEMPLATE_GCS=$TEMPLATE_GCS" >> $GITHUB_OUTPUT
 
-          echo "Environment : $ENVIRONMENT"
-          echo "Project     : $PROJECT_ID"
-          echo "Image       : $IMAGE_URI"
-          echo "Template GCS: $TEMPLATE_GCS"
+          echo "Environment: $ENVIRONMENT"
+          echo "Image      : $IMAGE_URI"
+          echo "Template   : $TEMPLATE_GCS"
 
-      - name: Verify image exists in Artifact Registry
+      - name: Verify image tag exists
         run: |
           unset CLOUDSDK_CORE_PROJECT CLOUDSDK_PROJECT GCLOUD_PROJECT GCP_PROJECT GOOGLE_CLOUD_PROJECT
-          echo "Confirming image is reachable: ${{ steps.cfg.outputs.IMAGE_URI }}"
           gcloud artifacts docker images describe \
             "${{ steps.cfg.outputs.IMAGE_URI }}" \
             --project=gcp-prj-images \
             --format="value(image_summary.digest)"
 
-      - name: Verify metadata.json exists in repo
+      - name: Verify metadata.json exists
         run: |
           if [ ! -f "./dataflow/metadata.json" ]; then
             echo "❌ dataflow/metadata.json not found"
             exit 1
           fi
-          echo "=== metadata.json ==="
           cat ./dataflow/metadata.json
 
       - name: Register Flex Template
@@ -115,7 +108,7 @@ jobs:
 
           echo "✅ Flex Template registered: ${{ steps.cfg.outputs.TEMPLATE_GCS }}"
 
-      - name: Verify template spec is readable
+      - name: Verify spec is readable
         run: |
           gcloud storage cat "${{ steps.cfg.outputs.TEMPLATE_GCS }}" \
             --project=${{ steps.cfg.outputs.PROJECT_ID }} | head -50
@@ -124,9 +117,8 @@ jobs:
         if: always()
         run: |
           {
-            echo "## Dataflow Flex Template Registration"
+            echo "## Flex Template — ${ENVIRONMENT}"
             echo ""
-            echo "- **Environment:** ${ENVIRONMENT}"
             echo "- **Project:** \`${{ steps.cfg.outputs.PROJECT_ID }}\`"
             echo "- **Image:** \`${{ steps.cfg.outputs.IMAGE_URI }}\`"
             echo "- **Template:** \`${{ steps.cfg.outputs.TEMPLATE_GCS }}\`"

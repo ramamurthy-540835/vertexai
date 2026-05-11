@@ -1,0 +1,165 @@
+name: upload_test_files
+
+# ─────────────────────────────────────────────────────────────
+# Upload test CSV files to incoming-files/ to test the
+# end-to-end pipeline.
+#
+# Flow this triggers:
+#   1. This workflow uploads CSVs from test-data/ to incoming-files/
+#   2. (You then upload a manifest via the create_manifest workflow)
+#   3. Eventarc fires pos_dataflow_workflow
+#   4. Dataflow loads files to Postgres
+#   5. snow_sync_workflow runs → lead_match_workflow runs
+#   6. Files move to processed/
+# ─────────────────────────────────────────────────────────────
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'adt'
+        type: choice
+        options: ['adt', 'qat', 'spt']
+
+      source_folder:
+        description: 'Folder in repo containing CSVs to upload'
+        required: true
+        default: 'test-data'
+        type: string
+
+      clear_incoming_first:
+        description: 'Clear incoming-files/ before uploading (avoids stale files)'
+        required: true
+        default: true
+        type: boolean
+
+jobs:
+  upload:
+    name: "Upload test files to ${{ github.event.inputs.environment }}"
+    runs-on:
+      - self-hosted
+      - us-central1
+    environment: ${{ github.event.inputs.environment }}
+
+    permissions:
+      id-token: write
+      contents: read
+
+    env:
+      ENV_NAME:      ${{ github.event.inputs.environment }}
+      SOURCE_FOLDER: ${{ github.event.inputs.source_folder }}
+      PROJECT_ID:    'p-601-np-bcleadsmgmt-${{ github.event.inputs.environment }}'
+      BUCKET_NAME:   'gcp-gcs-lead-mgmt-us-${{ github.event.inputs.environment }}-pos-raw'
+      DEST_PREFIX:   'pos-raw-data/incoming-files'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - id: auth
+        name: Auth to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
+          service_account: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Validate source folder and list files
+        id: list
+        run: |
+          set -euo pipefail
+
+          if [ ! -d "${SOURCE_FOLDER}" ]; then
+            echo "❌ Source folder not found: ${SOURCE_FOLDER}"
+            echo ""
+            echo "Repo root contents:"
+            ls -la
+            exit 1
+          fi
+
+          # Find CSV files (case-insensitive, top level only)
+          mapfile -t FILES < <(find "${SOURCE_FOLDER}" -maxdepth 1 -type f \
+            \( -iname '*.csv' -o -iname '*.tsv' \))
+
+          if [ ${#FILES[@]} -eq 0 ]; then
+            echo "❌ No CSV/TSV files found in ${SOURCE_FOLDER}/"
+            echo "Folder contents:"
+            ls -la "${SOURCE_FOLDER}"
+            exit 1
+          fi
+
+          echo "Found ${#FILES[@]} file(s) to upload:"
+          for f in "${FILES[@]}"; do
+            SIZE=$(stat -c%s "$f")
+            echo "  $f  ($SIZE bytes)"
+          done
+
+          # Save list for next steps
+          printf '%s\n' "${FILES[@]}" > /tmp/files-to-upload.txt
+          echo "FILE_COUNT=${#FILES[@]}" >> $GITHUB_OUTPUT
+
+      - name: Clear incoming-files/ first (optional)
+        if: ${{ github.event.inputs.clear_incoming_first == 'true' }}
+        run: |
+          unset CLOUDSDK_CORE_PROJECT CLOUDSDK_PROJECT GCLOUD_PROJECT GCP_PROJECT GOOGLE_CLOUD_PROJECT
+
+          echo "Clearing existing files in gs://${BUCKET_NAME}/${DEST_PREFIX}/"
+
+          # List what's there first (so user sees what's being removed)
+          EXISTING=$(gcloud storage ls "gs://${BUCKET_NAME}/${DEST_PREFIX}/" \
+            --project="${PROJECT_ID}" 2>/dev/null | grep -v '/$' || true)
+
+          if [ -z "$EXISTING" ]; then
+            echo "  (folder is already empty)"
+          else
+            echo "  Files being removed:"
+            echo "$EXISTING" | sed 's/^/    /'
+            echo "$EXISTING" | xargs -I {} gcloud storage rm {} --project="${PROJECT_ID}"
+            echo "  ✅ Cleared"
+          fi
+
+      - name: Upload files
+        run: |
+          set -euo pipefail
+          unset CLOUDSDK_CORE_PROJECT CLOUDSDK_PROJECT GCLOUD_PROJECT GCP_PROJECT GOOGLE_CLOUD_PROJECT
+          gcloud config set project "${PROJECT_ID}"
+
+          DEST="gs://${BUCKET_NAME}/${DEST_PREFIX}/"
+          echo "Uploading to ${DEST}"
+          echo ""
+
+          while IFS= read -r f; do
+            BASENAME=$(basename "$f")
+            echo "Uploading $BASENAME ..."
+            gcloud storage cp "$f" "${DEST}${BASENAME}" --project="${PROJECT_ID}"
+          done < /tmp/files-to-upload.txt
+
+          echo ""
+          echo "✅ All ${{ steps.list.outputs.FILE_COUNT }} file(s) uploaded"
+
+      - name: Verify upload
+        run: |
+          unset CLOUDSDK_CORE_PROJECT CLOUDSDK_PROJECT GCLOUD_PROJECT GCP_PROJECT GOOGLE_CLOUD_PROJECT
+          echo "=== Contents of incoming-files/ now ==="
+          gcloud storage ls -l "gs://${BUCKET_NAME}/${DEST_PREFIX}/" \
+            --project="${PROJECT_ID}"
+
+      - name: Next steps
+        run: |
+          {
+            echo "## Test Files Uploaded — ${ENV_NAME}"
+            echo ""
+            echo "- **Bucket:** \`gs://${BUCKET_NAME}/${DEST_PREFIX}/\`"
+            echo "- **Files uploaded:** ${{ steps.list.outputs.FILE_COUNT }}"
+            echo ""
+            echo "### Next: trigger the pipeline"
+            echo ""
+            echo "Now upload a manifest to kick off processing. Either:"
+            echo ""
+            echo "1. Run the \`create_manifest\` workflow (recommended) — it lists incoming-files/ automatically"
+            echo "2. Or manually upload a manifest.json to \`gs://${BUCKET_NAME}/pos-raw-data/manifests/\`"
+          } >> $GITHUB_STEP_SUMMARY

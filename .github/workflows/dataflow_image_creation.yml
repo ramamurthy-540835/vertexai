@@ -1,17 +1,77 @@
 name: dataflow_image_creation
 
+# ─────────────────────────────────────────────────────────────
+# Strategy:
+#   feature*       → BUILD image, register adt template
+#   main           → re-tag :adt → :qat (no rebuild), register qat template
+#   release-spt*   → re-tag :adt → :spt (no rebuild), register spt template
+#
+# Image is built ONCE on feature pushes. main and tag pushes promote
+# the existing image via server-side tag-add (free, no bytes transferred).
+# ─────────────────────────────────────────────────────────────
+
 on:
-  # Triggers on push to feature* branches when dataflow code changes
   push:
     branches:
       - 'feature*'
+      - 'main'
+    tags:
+      - 'release-spt*'
     paths:
       - .github/workflows/dataflow_image_creation.yml
+      - .github/workflows/register_flex_template.yml
       - dataflow/**
 
+# Serialize concurrent runs so feature builds and main promotes don't race
+concurrency:
+  group: dataflow-deploy
+  cancel-in-progress: false
+
 jobs:
+  # ─────────────────────────────────────────────────────────────
+  # 1. Determine target env and whether to build
+  # ─────────────────────────────────────────────────────────────
+  determine-target:
+    name: Determine target environment
+    runs-on: ubuntu-latest
+    outputs:
+      target_env:   ${{ steps.targets.outputs.target_env }}
+      should_build: ${{ steps.targets.outputs.should_build }}
+    steps:
+      - id: targets
+        run: |
+          REF_TYPE="${{ github.ref_type }}"
+          REF_NAME="${{ github.ref_name }}"
+          TARGET_ENV=""
+          SHOULD_BUILD="false"
+
+          if [[ "$REF_TYPE" == "branch" && "$REF_NAME" == feature* ]]; then
+            TARGET_ENV="adt"
+            SHOULD_BUILD="true"
+          elif [[ "$REF_TYPE" == "branch" && "$REF_NAME" == "main" ]]; then
+            TARGET_ENV="qat"
+            SHOULD_BUILD="false"
+          elif [[ "$REF_TYPE" == "tag" && "$REF_NAME" == release-spt* ]]; then
+            TARGET_ENV="spt"
+            SHOULD_BUILD="false"
+          else
+            echo "❌ Unrecognized trigger: ref_type=$REF_TYPE ref_name=$REF_NAME"
+            exit 1
+          fi
+
+          echo "Target env  : $TARGET_ENV"
+          echo "Should build: $SHOULD_BUILD"
+
+          echo "target_env=$TARGET_ENV"     >> $GITHUB_OUTPUT
+          echo "should_build=$SHOULD_BUILD" >> $GITHUB_OUTPUT
+
+  # ─────────────────────────────────────────────────────────────
+  # 2. Build image (feature only). Tags as :latest AND :adt.
+  # ─────────────────────────────────────────────────────────────
   build-and-push-container:
-    name: Build and Push Dataflow Container
+    name: Build and Push Dataflow Container (adt)
+    needs: determine-target
+    if: needs.determine-target.outputs.should_build == 'true'
     runs-on:
       - self-hosted
       - us-central1
@@ -28,21 +88,13 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Install build dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install build wheel setuptools
-
       - name: Debug directory structure
         run: |
-          echo "=== Current working directory ==="
-          pwd
-          echo ""
-          echo "=== Repository root contents ==="
-          ls -la
-          echo ""
           echo "=== dataflow/ contents ==="
           ls -la ./dataflow
+          echo ""
+          echo "=== dataflow/pos_pipeline/ contents ==="
+          ls -la ./dataflow/pos_pipeline
 
       - name: Login to GitHub Container Registry
         uses: docker/login-action@v3
@@ -52,7 +104,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - id: auth
-        name: Auth to GCP for GAR service account
+        name: Auth to GCP for GAR
         uses: google-github-actions/auth@v2
         with:
           token_format: access_token
@@ -77,7 +129,8 @@ jobs:
             ghcr.io/${{ github.repository_owner }}/membership/lead-management/pos-pipeline-flex
             us-docker.pkg.dev/gcp-prj-images/gcp-gar-repo-mbrshp/pos-pipeline-flex
 
-      - name: Build and push
+      # Tags :latest and :adt both point to this build
+      - name: Build and push (adt)
         uses: docker/build-push-action@v6
         env:
           SOURCE_DATE_EPOCH: 0
@@ -86,14 +139,75 @@ jobs:
           file: ./dataflow/Dockerfile
           push: true
           labels: ${{ steps.meta.outputs.labels }}
-          tags: us-docker.pkg.dev/gcp-prj-images/gcp-gar-repo-mbrshp/pos-pipeline-flex:latest
+          tags: |
+            us-docker.pkg.dev/gcp-prj-images/gcp-gar-repo-mbrshp/pos-pipeline-flex:latest
+            us-docker.pkg.dev/gcp-prj-images/gcp-gar-repo-mbrshp/pos-pipeline-flex:adt
 
+  # ─────────────────────────────────────────────────────────────
+  # 3. Promote :adt to :qat or :spt (main / tag pushes only)
+  #    Server-side tag operation, no rebuild, no bytes transferred.
+  # ─────────────────────────────────────────────────────────────
+  promote-image:
+    name: Promote :adt to :${{ needs.determine-target.outputs.target_env }}
+    needs: determine-target
+    if: needs.determine-target.outputs.should_build == 'false'
+    runs-on:
+      - self-hosted
+      - us-central1
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - id: auth
+        name: Auth to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          token_format: access_token
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
+          service_account: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Re-tag :adt as :${{ needs.determine-target.outputs.target_env }}
+        run: |
+          unset CLOUDSDK_CORE_PROJECT CLOUDSDK_PROJECT GCLOUD_PROJECT GCP_PROJECT GOOGLE_CLOUD_PROJECT
+
+          TARGET_ENV="${{ needs.determine-target.outputs.target_env }}"
+          REGISTRY="us-docker.pkg.dev/gcp-prj-images/gcp-gar-repo-mbrshp/pos-pipeline-flex"
+
+          echo "Promoting ${REGISTRY}:adt → ${REGISTRY}:${TARGET_ENV}"
+
+          gcloud artifacts docker tags add \
+            "${REGISTRY}:adt" \
+            "${REGISTRY}:${TARGET_ENV}" \
+            --project=gcp-prj-images
+
+          echo "✅ ${REGISTRY}:${TARGET_ENV} now points to the same digest as :adt"
+
+      - name: Show resulting tags
+        run: |
+          unset CLOUDSDK_CORE_PROJECT CLOUDSDK_PROJECT GCLOUD_PROJECT GCP_PROJECT GOOGLE_CLOUD_PROJECT
+          gcloud artifacts docker images list \
+            us-docker.pkg.dev/gcp-prj-images/gcp-gar-repo-mbrshp/pos-pipeline-flex \
+            --include-tags \
+            --project=gcp-prj-images \
+            --format="table(IMAGE,TAGS,UPDATE_TIME)"
+
+  # ─────────────────────────────────────────────────────────────
+  # 4. Register the env-specific Flex Template spec
+  #    Runs after either build (feature) or promote (main/spt).
+  # ─────────────────────────────────────────────────────────────
   register-flex-template:
-    name: Trigger Workflow to Register Flex Template
-    needs: build-and-push-container
+    name: Register Flex Template (${{ needs.determine-target.outputs.target_env }})
+    needs: [determine-target, build-and-push-container, promote-image]
+    if: |
+      always() &&
+      needs.determine-target.result == 'success' &&
+      (needs.build-and-push-container.result == 'success' || needs.promote-image.result == 'success')
     uses: ./.github/workflows/register_flex_template.yml
     with:
-      workflow_trigger_event: "True"
+      environment: ${{ needs.determine-target.outputs.target_env }}
     secrets:
       GCP_WORKLOAD_IDENTITY_PROVIDER_ID: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
-      GCP_WORKLOAD_IDENTITY_SA_EMAIL: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
+      GCP_WORKLOAD_IDENTITY_SA_EMAIL:    ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
