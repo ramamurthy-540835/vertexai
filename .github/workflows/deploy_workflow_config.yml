@@ -21,7 +21,7 @@ on:
     tags:
       - 'release-spt*'
     paths:
-      - 'config/**'
+      - 'dataflow_config/**'
       - 'dataflow/field_map.json'            
       - '.github/workflows/deploy_workflow_config.yml'
 
@@ -92,7 +92,7 @@ jobs:
           CONFIG_CHANGED=false
           FIELD_MAP_CHANGED=false
 
-          if echo "$CHANGED_FILES" | grep -q '^config/'; then
+          if echo "$CHANGED_FILES" | grep -q '^dataflow_config/'; then
             CONFIG_CHANGED=true
           fi
           if echo "$CHANGED_FILES" | grep -q '^dataflow/field_map.json$'; then
@@ -141,22 +141,22 @@ jobs:
           set -euo pipefail
           unset CLOUDSDK_CORE_PROJECT CLOUDSDK_PROJECT GCLOUD_PROJECT GCP_PROJECT GOOGLE_CLOUD_PROJECT
 
-          if [ ! -f "config/${ENV_NAME}.json" ]; then
-            echo "❌ config/${ENV_NAME}.json not found"
+          if [ ! -f "dataflow_config/${ENV_NAME}.json" ]; then
+            echo "❌ dataflow_config/${ENV_NAME}.json not found"
             exit 1
           fi
-          if ! jq empty "config/${ENV_NAME}.json"; then
+          if ! jq empty "dataflow_config/${ENV_NAME}.json"; then
             echo "❌ Invalid JSON"
             exit 1
           fi
-          DECLARED=$(jq -r .environment "config/${ENV_NAME}.json")
+          DECLARED=$(jq -r .environment "dataflow_config/${ENV_NAME}.json")
           if [ "$DECLARED" != "${ENV_NAME}" ]; then
             echo "❌ env field mismatch"
             exit 1
           fi
 
           DEST="gs://${BUCKET_NAME}/config/workflow-config.json"
-          gcloud storage cp "config/${ENV_NAME}.json" "${DEST}" --project="${PROJECT_ID}"
+          gcloud storage cp "dataflow_config/${ENV_NAME}.json" "${DEST}" --project="${PROJECT_ID}"
           echo "✅ workflow-config.json uploaded"
 
       # ── Upload field_map (only if field_map changed) ──
