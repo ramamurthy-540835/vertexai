@@ -113,6 +113,7 @@ main:
                           maxWorkers: '${string(max_workers)}'
                           machineType: '${machine_type}'
                           tempLocation: '${"gs://" + bucket + "/dataflow/temp"}'
+                          stagingLocation: '${"gs://" + bucket + "/dataflow/staging"}'
                   result: launch_resp
 
               - poll_until_done:
