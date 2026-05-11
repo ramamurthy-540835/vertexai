@@ -21,7 +21,8 @@ variable "services" {
     "containerthreatdetection.googleapis.com",
     "logging.googleapis.com",
     "aiplatform.googleapis.com",
-    "eventarc.googleapis.com"
+    "eventarc.googleapis.com",
+    "dataflow.googleapis.com"
   ]
 }
 
