@@ -1,19 +1,6 @@
 # pos_dataflow_workflow.yaml
 # Triggered by Eventarc → Pub/Sub when a manifest.json lands in the
 # configured manifests folder.
-#
-# All env-specific values come from config/workflow-config.json in
-# the same bucket as the triggering event. This workflow YAML is
-# identical across all environments (adt/qat/spt).
-#
-# Flow:
-#   1. Decode the Pub/Sub event → get manifest path + bucket
-#   2. Read env config from gs://<bucket>/config/workflow-config.json
-#   3. Read manifest from GCS
-#   4. Process its files in chunks (size from config) via Dataflow Flex Template
-#   5. On full success: trigger downstream workflow (snow_sync_workflow)
-#   6. Wait for it to complete (it triggers lead_match_workflow itself)
-#   7. Move source files from incoming-files/ to processed/
 
 main:
   params: [event]
@@ -21,11 +8,11 @@ main:
     # ── 1. Decode the Pub/Sub-wrapped GCS event ────────────────────────
     - init_event:
         assign:
-          - project_id:      '${sys.get_env("GOOGLE_CLOUD_PROJECT_ID")}'
-          - raw_b64:         '${event.data.message.data}'
-          - raw_json:        '${text.decode(base64.decode(raw_b64))}'
-          - gcs_event:       '${json.decode(raw_json)}'
-          - bucket:          '${gcs_event.bucket}'
+          - project_id: '${sys.get_env("GOOGLE_CLOUD_PROJECT_ID")}'
+          - raw_b64: '${event.data.message.data}'
+          - raw_json: '${text.decode(base64.decode(raw_b64))}'
+          - gcs_event: '${json.decode(raw_json)}'
+          - bucket: '${gcs_event.bucket}'
           - manifest_object: '${gcs_event.name}'
 
     # ── 2. Read env config from the same bucket ────────────────────────
@@ -39,26 +26,26 @@ main:
 
     - extract_config:
         assign:
-          - environment:       '${cfg.environment}'
-          - region:            '${cfg.region}'
-          - chunk_size:        '${cfg.dataflow.chunk_size}'
-          - template_path:     '${cfg.dataflow.template_path}'
-          - sa_email:          '${cfg.dataflow.service_account}'
-          - field_map_gcs:     '${cfg.dataflow.field_map_path}'
-          - machine_type:      '${cfg.dataflow.machine_type}'
-          - max_workers:       '${cfg.dataflow.max_workers}'
-          - network:           '${cfg.dataflow.network}'
-          - batch_size:        '${cfg.dataflow.batch_size}'
-          - instance_conn:     '${cfg.database.instance_connection_name}'
-          - db_name:           '${cfg.database.db_name}'
-          - db_schema:         '${cfg.database.db_schema}'
-          - db_table:          '${cfg.database.db_table}'
-          - manifest_prefix:   '${cfg.manifest_prefix}'
-          - incoming_prefix:   '${cfg.incoming_prefix}'
-          - processed_prefix:  '${cfg.processed_prefix}'
-          - next_workflow:     '${cfg.downstream.next_workflow}'
-          - next_wf_location:  '${cfg.downstream.next_workflow_location}'
-          - all_job_states:    []
+          - environment: '${cfg.environment}'
+          - region: '${cfg.region}'
+          - chunk_size: '${cfg.dataflow.chunk_size}'
+          - template_path: '${cfg.dataflow.template_path}'
+          - sa_email: '${cfg.dataflow.service_account}'
+          - field_map_gcs: '${cfg.dataflow.field_map_path}'
+          - machine_type: '${cfg.dataflow.machine_type}'
+          - max_workers: '${cfg.dataflow.max_workers}'
+          - subnetwork: '${cfg.dataflow.subnetwork}'
+          - batch_size: '${cfg.dataflow.batch_size}'
+          - instance_conn: '${cfg.database.instance_connection_name}'
+          - db_name: '${cfg.database.db_name}'
+          - db_schema: '${cfg.database.db_schema}'
+          - db_table: '${cfg.database.db_table}'
+          - manifest_prefix: '${cfg.manifest_prefix}'
+          - incoming_prefix: '${cfg.incoming_prefix}'
+          - processed_prefix: '${cfg.processed_prefix}'
+          - next_workflow: '${cfg.downstream.next_workflow}'
+          - next_wf_location: '${cfg.downstream.next_workflow_location}'
+          - all_job_states: []
 
     # ── 3. Defensive: ignore non-manifest uploads ──────────────────────
     - validate_manifest_path:
@@ -78,131 +65,82 @@ main:
 
     - extract_run_metadata:
         assign:
-          - run_id:     '${default(map.get(manifest, "run_id"), manifest_object)}'
-          - all_files:  '${manifest.files}'
+          - run_id: '${default(map.get(manifest, "run_id"), manifest_object)}'
+          - all_files: '${manifest.files}'
           - file_count: '${len(all_files)}'
-          - num_chunks: '${int((file_count + chunk_size - 1) / chunk_size)}'
 
     - log_run_start:
         call: sys.log
         args:
           severity: INFO
-          text: '${"[" + environment + "] run " + run_id + ": " + string(file_count) + " files in " + string(num_chunks) + " chunks of " + string(chunk_size) + " (sa=" + sa_email + ")"}'
+          text: '${"[" + environment + "] run " + run_id + ": " + string(file_count) + " files, max " + string(chunk_size) + " in parallel"}'
 
-    # ── 5. Sequential outer loop: chunk_size files at a time ───────────
-    # If any Dataflow job in a chunk fails, we raise an exception which
-    # propagates up and terminates the whole workflow as FAILED — no
-    # need to jump to a target step (Cloud Workflows forbids jumping
-    # out of any enclosing for loop).
-    - process_chunks:
-        for:
-          value: chunk_idx
-          range: [0, '${num_chunks - 1}']
-          steps:
-            - compute_chunk_bounds:
-                assign:
-                  - start_idx:        '${chunk_idx * chunk_size}'
-                  - end_idx:          '${if((chunk_idx + 1) * chunk_size > file_count, file_count, (chunk_idx + 1) * chunk_size)}'
-                  - chunk_files:      []
-                  - chunk_job_ids:    []
-                  - chunk_job_states: []
-                  - chunk_failed:     false
+    # ── 5. Launch all Dataflow jobs in parallel with concurrency cap ───
+    - launch_all_jobs:
+        parallel:
+          shared: [all_job_states]
+          concurrency_limit: '${chunk_size}'
+          for:
+            value: file_path
+            in: '${all_files}'
+            steps:
+              - log_pre_launch:
+                  call: sys.log
+                  args:
+                    severity: INFO
+                    text: '${"[" + environment + "] launching: " + file_path}'
 
-            - build_chunk_files:
-                for:
-                  value: i
-                  range: ['${start_idx}', '${end_idx - 1}']
-                  steps:
-                    - append_file:
-                        assign:
-                          - chunk_files: '${list.concat(chunk_files, [all_files[i]])}'
+              - launch_one:
+                  call: googleapis.dataflow.v1b3.projects.locations.flexTemplates.launch
+                  args:
+                    projectId: '${project_id}'
+                    location: '${region}'
+                    body:
+                      launchParameter:
+                        jobName: '${"pos-etl-" + run_id + "-" + string(int(sys.now()))}'
+                        containerSpecGcsPath: '${template_path}'
+                        parameters:
+                          input_file: '${file_path}'
+                          instance_connection_name: '${instance_conn}'
+                          db_name: '${db_name}'
+                          db_schema: '${db_schema}'
+                          db_table: '${db_table}'
+                          field_map_path: '${field_map_gcs}'
+                          batch_size: '${batch_size}'
+                        environment:
+                          serviceAccountEmail: '${sa_email}'
+                          subnetwork: '${subnetwork}' 
+                          maxWorkers: '${string(max_workers)}'
+                          machineType: '${machine_type}'
+                          tempLocation: '${"gs://" + bucket + "/dataflow/temp"}'
+                          stagingLocation: '${"gs://" + bucket + "/dataflow/staging"}'
+                          ipConfiguration: WORKER_IP_PRIVATE
+                          additionalExperiments:
+                            - "enable_confidential_compute"
+                  result: launch_resp
 
-            - log_chunk_start:
-                call: sys.log
-                args:
-                  severity: INFO
-                  text: '${"[" + environment + "] chunk " + string(chunk_idx) + "/" + string(num_chunks - 1) + " — launching " + string(len(chunk_files)) + " jobs"}'
+              - poll_until_done:
+                  call: poll_dataflow_until_done
+                  args:
+                    project_id: '${project_id}'
+                    region: '${region}'
+                    job_id: '${launch_resp.job.id}'
+                  result: final_state
 
-            # ── 5a. Fan-out: launch up to chunk_size Dataflow jobs ──
-            - launch_chunk_jobs:
-                parallel:
-                  shared: [chunk_job_ids]
-                  for:
-                    value: file_path
-                    in: '${chunk_files}'
-                    steps:
-                      - launch_one:
-                          call: googleapis.dataflow.v1b3.projects.locations.flexTemplates.launch
-                          args:
-                            projectId: '${project_id}'
-                            location:  '${region}'
-                            body:
-                              launchParameter:
-                                jobName: '${"pos-etl-" + run_id + "-c" + string(chunk_idx) + "-" + string(int(sys.now()))}'
-                                containerSpecGcsPath: '${template_path}'
-                                parameters:
-                                  input_file:               '${file_path}'
-                                  instance_connection_name: '${instance_conn}'
-                                  db_name:                  '${db_name}'
-                                  db_schema:                '${db_schema}'
-                                  db_table:                 '${db_table}'
-                                  field_map_path:           '${field_map_gcs}'
-                                  batch_size:               '${batch_size}'
-                                environment:
-                                  serviceAccountEmail: '${sa_email}'
-                                  network:             '${network}'
-                                  maxWorkers:          '${string(max_workers)}'
-                                  machineType:         '${machine_type}'
-                          result: launch_resp
-                      - record_id:
-                          assign:
-                            - chunk_job_ids: '${list.concat(chunk_job_ids, launch_resp.job.id)}'
+              - record_state:
+                  assign:
+                    - all_job_states: '${list.concat(all_job_states, final_state)}'
 
-            # ── 5b. Fan-in: poll every job in the chunk ──
-            - wait_for_chunk:
-                parallel:
-                  shared: [chunk_job_states, all_job_states]
-                  for:
-                    value: jid
-                    in: '${chunk_job_ids}'
-                    steps:
-                      - poll_one:
-                          call: poll_dataflow_until_done
-                          args:
-                            project_id: '${project_id}'
-                            region:     '${region}'
-                            job_id:     '${jid}'
-                          result: final_state
-                      - record_state:
-                          assign:
-                            - chunk_job_states: '${list.concat(chunk_job_states, final_state)}'
-                            - all_job_states:   '${list.concat(all_job_states, final_state)}'
+              - guard_on_failure:
+                  switch:
+                    - condition: '${final_state != "JOB_STATE_DONE"}'
+                      raise: '${"[" + environment + "] run " + run_id + " — job for " + file_path + " ended in state " + final_state}'
 
-            # ── 5c. Scan results; set the chunk_failed flag (no jumps) ──
-            - check_chunk_results:
-                for:
-                  value: state
-                  in: '${chunk_job_states}'
-                  steps:
-                    - guard:
-                        switch:
-                          - condition: '${state != "JOB_STATE_DONE"}'
-                            assign:
-                              - chunk_failed: true
-
-            # ── 5d. If anything failed in this chunk, raise to abort. ──
-            # raise: propagates up through all enclosing for-loops and
-            # marks the workflow execution as FAILED.
-            - check_chunk_failure_flag:
-                switch:
-                  - condition: '${chunk_failed}'
-                    raise: '${"[" + environment + "] run " + run_id + " aborted in chunk " + string(chunk_idx) + ": at least one Dataflow job did not reach JOB_STATE_DONE. states=" + json.encode_to_string(all_job_states)}'
-
-            - log_chunk_done:
-                call: sys.log
-                args:
-                  severity: INFO
-                  text: '${"[" + environment + "] chunk " + string(chunk_idx) + " — all jobs DONE"}'
+    - log_all_done:
+        call: sys.log
+        args:
+          severity: INFO
+          text: '${"[" + environment + "] all " + string(file_count) + " Dataflow jobs DONE"}'
 
     # ── 6. Trigger downstream workflow (snow_sync) ─────────────────────
     - trigger_downstream:
@@ -210,9 +148,9 @@ main:
           - build_payload:
               assign:
                 - downstream_map:
-                    pos_run_id:  '${run_id}'
-                    pos_files:   '${all_files}'
-                    upstream:    "pos_dataflow_workflow"
+                    pos_run_id: '${run_id}'
+                    pos_files: '${all_files}'
+                    upstream: "pos_dataflow_workflow"
                     environment: '${environment}'
           - encode_argument:
               assign:
@@ -248,7 +186,7 @@ main:
           seconds: 15
         next: wait_for_downstream
 
-    # ── 8. Move source files to processed/ (on full chain success) ─────
+    # ── 8. Move source files to processed/ ─────────────────────────────
     - move_files_to_processed:
         parallel:
           for:
@@ -258,14 +196,14 @@ main:
               - parse_path:
                   assign:
                     - bucket_and_object: '${text.split(file_path, "gs://")[1]}'
-                    - bucket_only:       '${text.split(bucket_and_object, "/")[0]}'
-                    - object_only:       '${text.substring(bucket_and_object, len(bucket_only) + 1, len(bucket_and_object))}'
-                    - dest_object:       '${text.replace_all(object_only, incoming_prefix, processed_prefix)}'
+                    - bucket_only: '${text.split(bucket_and_object, "/")[0]}'
+                    - object_only: '${text.substring(bucket_and_object, len(bucket_only) + 1, len(bucket_and_object))}'
+                    - dest_object: '${text.replace_all(object_only, incoming_prefix, processed_prefix)}'
               - rewrite:
                   call: googleapis.storage.v1.objects.rewrite
                   args:
-                    sourceBucket:      '${bucket_only}'
-                    sourceObject:      '${text.url_encode(object_only)}'
+                    sourceBucket: '${bucket_only}'
+                    sourceObject: '${text.url_encode(object_only)}'
                     destinationBucket: '${bucket_only}'
                     destinationObject: '${text.url_encode(dest_object)}'
               - delete_source:
@@ -275,15 +213,13 @@ main:
                     object: '${text.url_encode(object_only)}'
 
     # ── 9. Success terminal ────────────────────────────────────────────
-    # Note: no abort_run step needed. The raise: inside check_chunk_failure_flag
-    # terminates the workflow as FAILED if any Dataflow job didn't reach DONE.
     - done:
         return:
-          status:                "success"
-          environment:           '${environment}'
-          run_id:                '${run_id}'
-          file_count:            '${file_count}'
-          downstream_execution:  '${downstream_execution.name}'
+          status: "success"
+          environment: '${environment}'
+          run_id: '${run_id}'
+          file_count: '${file_count}'
+          downstream_execution: '${downstream_execution.name}'
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -296,8 +232,8 @@ poll_dataflow_until_done:
         call: googleapis.dataflow.v1b3.projects.locations.jobs.get
         args:
           projectId: '${project_id}'
-          location:  '${region}'
-          jobId:     '${job_id}'
+          location: '${region}'
+          jobId: '${job_id}'
           view: "JOB_VIEW_SUMMARY"
         result: job
     - check_terminal:

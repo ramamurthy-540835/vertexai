@@ -4,7 +4,7 @@
   "region":      "us-central1",
 
   "bucket_name":      "gcp-gcs-lead-mgmt-us-adt-pos-raw",
-  "manifest_prefix":  "pos-raw-data/manifests/",
+  "manifest_prefix":  "manifests/",
   "incoming_prefix":  "pos-raw-data/incoming-files/",
   "processed_prefix": "pos-raw-data/processed/",
 
@@ -14,14 +14,14 @@
     "field_map_path":  "gs://gcp-gcs-lead-mgmt-us-adt-pos-raw/config/field_map.json",
     "machine_type":    "n1-standard-2",
     "max_workers":     5,
-    "network":         "default",
+    "subnetwork":      "https://www.googleapis.com/compute/v1/projects/gcp-prj-transit-hub/regions/us-central1/subnetworks/gcp-snt-np-usc1-601-cloudrunjobs-np",
     "chunk_size":      2,
     "batch_size":      "2000"
   },
 
   "database": {
-    "instance_connection_name": "p-601-np-bcleadsmgmt-adt:us-central1:lead-mgmt-adt",
-    "db_name":   "lead-mgmt-db",
+    "instance_connection_name": "p-601-np-bcleadsmgmt-adt:us-central1:lead-mgmt-db",
+    "db_name":   "postgres",
     "db_schema": "lead-mgmt-adt",
     "db_table":  "pos_transactions"
   },
