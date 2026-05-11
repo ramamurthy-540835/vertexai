@@ -131,6 +131,12 @@ main:
                     value: file_path
                     in: '${chunk_files}'
                     steps:
+                      - log_pre_launch:
+                          call: sys.log
+                          args:
+                            severity: INFO
+                            text: '${"PARAMS: file_path=[" + file_path + "] | instance_conn=[" + instance_conn + "] | db_name=[" + db_name + "] | db_schema=[" + db_schema + "] | db_table=[" + db_table + "] | field_map_gcs=[" + field_map_gcs + "] | batch_size=[" + batch_size + "]"}'
+                    
                       - launch_one:
                           call: googleapis.dataflow.v1b3.projects.locations.flexTemplates.launch
                           args:
