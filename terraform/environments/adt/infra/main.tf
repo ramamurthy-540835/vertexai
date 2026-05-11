@@ -181,7 +181,7 @@ module "pos_ingestion_workflow" {
   project_id            = var.projectId
   region                = var.region
   service_account_email = module.project_init.service_account_email
-  workflow_name = "lead_match_workflow"
+  workflow_name = "pos_ingestion_workflow"
   workflow_path = "../../../modules/workflows/pos_dataflow_workflow.yaml"
   workflow_description = "Ingestion of point of sales data"
 }

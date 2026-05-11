@@ -83,33 +83,33 @@ jobs:
 
       - name: Validate config file exists
         run: |
-          if [ ! -f "config/${ENV_NAME}.json" ]; then
-            echo "❌ config/${ENV_NAME}.json not found"
+          if [ ! -f "dataflow_config/${ENV_NAME}.json" ]; then
+            echo "❌ dataflow_config/${ENV_NAME}.json not found"
             exit 1
           fi
 
       - name: Validate JSON syntax and environment field
         run: |
-          if ! jq empty "config/${ENV_NAME}.json"; then
-            echo "❌ Invalid JSON in config/${ENV_NAME}.json"
+          if ! jq empty "dataflow_config/${ENV_NAME}.json"; then
+            echo "❌ Invalid JSON in dataflow_config/${ENV_NAME}.json"
             exit 1
           fi
-          DECLARED=$(jq -r .environment "config/${ENV_NAME}.json")
+          DECLARED=$(jq -r .environment "dataflow_config/${ENV_NAME}.json")
           if [ "$DECLARED" != "${ENV_NAME}" ]; then
-            echo "❌ config/${ENV_NAME}.json declares environment='$DECLARED' but filename says '${ENV_NAME}'"
+            echo "❌ dataflow_config/${ENV_NAME}.json declares environment='$DECLARED' but filename says '${ENV_NAME}'"
             exit 1
           fi
           echo "✅ Validation passed"
 
       - name: Display config to be uploaded
-        run: jq . "config/${ENV_NAME}.json"
+        run: jq . "dataflow_config/${ENV_NAME}.json"
 
       - name: Upload to env bucket
         run: |
           unset CLOUDSDK_CORE_PROJECT CLOUDSDK_PROJECT GCLOUD_PROJECT GCP_PROJECT GOOGLE_CLOUD_PROJECT
           DEST="gs://${BUCKET_NAME}/config/workflow-config.json"
           gcloud storage cp \
-            "config/${ENV_NAME}.json" \
+            "dataflow_config/${ENV_NAME}.json" \
             "${DEST}" \
             --project="${PROJECT_ID}"
           echo "✅ Uploaded to ${DEST}"
@@ -131,6 +131,6 @@ jobs:
           {
             echo "## Workflow Config Deployment — ${ENV_NAME}"
             echo "- **Trigger:** ${{ github.event_name }} on ${{ github.ref }}"
-            echo "- **Source:** \`config/${ENV_NAME}.json\`"
+            echo "- **Source:** \`dataflow_config/${ENV_NAME}.json\`"
             echo "- **Destination:** \`gs://${BUCKET_NAME}/config/workflow-config.json\`"
           } >> $GITHUB_STEP_SUMMARY
