@@ -1,0 +1,136 @@
+name: deploy_workflow_config
+
+# ─────────────────────────────────────────────────────────────
+# Uploads config/<env>.json to gs://<env-bucket>/config/workflow-config.json
+# Branch routing matches dataflow_image_creation:
+#   feature*     → adt
+#   main         → qat
+#   release-spt* → spt
+# ─────────────────────────────────────────────────────────────
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy config to'
+        required: true
+        type: choice
+        options: ['adt', 'qat', 'spt']
+
+  push:
+    branches:
+      - 'feature*'
+      - 'main'
+    tags:
+      - 'release-spt*'
+    paths:
+      - 'dataflow_config/**'
+      - '.github/workflows/deploy_workflow_config.yml'
+
+concurrency:
+  group: deploy-config
+  cancel-in-progress: false
+
+jobs:
+  determine-target:
+    name: Determine target environment
+    runs-on: ubuntu-latest
+    outputs:
+      target_env: ${{ steps.targets.outputs.target_env }}
+    steps:
+      - id: targets
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            TARGET="${{ github.event.inputs.environment }}"
+          elif [[ "${{ github.ref_type }}" == "branch" && "${{ github.ref_name }}" == feature* ]]; then
+            TARGET="adt"
+          elif [[ "${{ github.ref_type }}" == "branch" && "${{ github.ref_name }}" == "main" ]]; then
+            TARGET="qat"
+          elif [[ "${{ github.ref_type }}" == "tag" && "${{ github.ref_name }}" == release-spt* ]]; then
+            TARGET="spt"
+          else
+            echo "❌ Unrecognized trigger"
+            exit 1
+          fi
+          echo "Target env: $TARGET"
+          echo "target_env=$TARGET" >> $GITHUB_OUTPUT
+
+  deploy:
+    name: "Deploy config to ${{ needs.determine-target.outputs.target_env }}"
+    needs: determine-target
+    runs-on:
+      - self-hosted
+      - us-central1
+    permissions:
+      id-token: write
+      contents: read
+
+    env:
+      ENV_NAME:    ${{ needs.determine-target.outputs.target_env }}
+      PROJECT_ID:  'p-601-np-bcleadsmgmt-${{ needs.determine-target.outputs.target_env }}'
+      BUCKET_NAME: 'gcp-gcs-lead-mgmt-us-${{ needs.determine-target.outputs.target_env }}-pos-raw'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
+          service_account: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Validate config file exists
+        run: |
+          if [ ! -f "config/${ENV_NAME}.json" ]; then
+            echo "❌ config/${ENV_NAME}.json not found"
+            exit 1
+          fi
+
+      - name: Validate JSON syntax and environment field
+        run: |
+          if ! jq empty "config/${ENV_NAME}.json"; then
+            echo "❌ Invalid JSON in config/${ENV_NAME}.json"
+            exit 1
+          fi
+          DECLARED=$(jq -r .environment "config/${ENV_NAME}.json")
+          if [ "$DECLARED" != "${ENV_NAME}" ]; then
+            echo "❌ config/${ENV_NAME}.json declares environment='$DECLARED' but filename says '${ENV_NAME}'"
+            exit 1
+          fi
+          echo "✅ Validation passed"
+
+      - name: Display config to be uploaded
+        run: jq . "config/${ENV_NAME}.json"
+
+      - name: Upload to env bucket
+        run: |
+          unset CLOUDSDK_CORE_PROJECT CLOUDSDK_PROJECT GCLOUD_PROJECT GCP_PROJECT GOOGLE_CLOUD_PROJECT
+          DEST="gs://${BUCKET_NAME}/config/workflow-config.json"
+          gcloud storage cp \
+            "config/${ENV_NAME}.json" \
+            "${DEST}" \
+            --project="${PROJECT_ID}"
+          echo "✅ Uploaded to ${DEST}"
+
+      - name: Verify upload
+        run: |
+          unset CLOUDSDK_CORE_PROJECT CLOUDSDK_PROJECT GCLOUD_PROJECT GCP_PROJECT GOOGLE_CLOUD_PROJECT
+          DEST="gs://${BUCKET_NAME}/config/workflow-config.json"
+          UPLOADED_ENV=$(gcloud storage cat "${DEST}" --project="${PROJECT_ID}" | jq -r .environment)
+          if [ "$UPLOADED_ENV" != "${ENV_NAME}" ]; then
+            echo "❌ Verification failed: uploaded env='$UPLOADED_ENV', expected '${ENV_NAME}'"
+            exit 1
+          fi
+          echo "✅ Verified"
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "## Workflow Config Deployment — ${ENV_NAME}"
+            echo "- **Trigger:** ${{ github.event_name }} on ${{ github.ref }}"
+            echo "- **Source:** \`config/${ENV_NAME}.json\`"
+            echo "- **Destination:** \`gs://${BUCKET_NAME}/config/workflow-config.json\`"
+          } >> $GITHUB_STEP_SUMMARY

@@ -1,0 +1,33 @@
+{
+  "environment": "adt",
+  "project_id":  "p-601-np-bcleadsmgmt-adt",
+  "region":      "us-central1",
+
+  "bucket_name":      "gcp-gcs-lead-mgmt-us-adt-pos-raw",
+  "manifest_prefix":  "pos-raw-data/manifests/",
+  "incoming_prefix":  "pos-raw-data/incoming-files/",
+  "processed_prefix": "pos-raw-data/processed/",
+
+  "dataflow": {
+    "template_path":   "gs://gcp-gcs-lead-mgmt-us-adt-pos-raw/templates/pos-pipeline-flex-adt.json",
+    "service_account": "gco-iam-svc-lead-mgmt-bc-adt@p-601-np-bcleadsmgmt-adt.iam.gserviceaccount.com",
+    "field_map_path":  "gs://gcp-gcs-lead-mgmt-us-adt-pos-raw/config/field_map.json",
+    "machine_type":    "n1-standard-2",
+    "max_workers":     5,
+    "network":         "default",
+    "chunk_size":      2,
+    "batch_size":      "2000"
+  },
+
+  "database": {
+    "instance_connection_name": "p-601-np-bcleadsmgmt-adt:us-central1:lead-mgmt-adt",
+    "db_name":   "lead-mgmt-db",
+    "db_schema": "lead-mgmt-adt",
+    "db_table":  "pos_transactions"
+  },
+
+  "downstream": {
+    "next_workflow":          "snow_sync_workflow",
+    "next_workflow_location": "us-central1"
+  }
+}

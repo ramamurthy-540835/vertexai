@@ -4,11 +4,11 @@ CREATE TABLE IF NOT EXISTS
   batch_id uuid,
   account_number bigint,
   type varchar(50),
-    business_name VARCHAR(75),
+    business_name VARCHAR(150),
     address_line_one VARCHAR(100),
 	address_line_two VARCHAR(100),
     city VARCHAR(50),
-    state VARCHAR(2), 
+    state VARCHAR(50), 
     zip_code VARCHAR(10),
     phone VARCHAR(40) NULL,
 	email VARCHAR(100) NULL,
@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS
 	account_number bigint NULL,
     lead_status VARCHAR(100) NULL,
     confidence_level VARCHAR(100) NULL,
+    match_result VARCHAR(10),
     membership_number bigint NULL,
     warehouse_number int NULL,
 	fiscal_period int,
@@ -57,7 +58,7 @@ CREATE TABLE IF NOT EXISTS
     first_name VARCHAR(100),
     last_name VARCHAR(100),
     email VARCHAR(100) NULL,
-    phone VARCHAR(20) NULL,
+    phone VARCHAR(100) NULL,
 	membership_number bigint NULL,
     job_title VARCHAR(100) NULL,
 	batch_id uuid,
@@ -99,6 +100,7 @@ CREATE TABLE IF NOT EXISTS
     email varchar(50) NULL,
 	sic_code bigint,
 	sic_description VARCHAR(1000),
+    primary_transaction BOOLEAN,
 	load_date TIMESTAMP WITH TIME ZONE  DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'),
     updated_by varchar(20) NULL,
     updated_date TIMESTAMP WITH TIME ZONE  DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'),
@@ -154,12 +156,14 @@ CREATE TABLE IF NOT EXISTS
 CREATE TABLE IF NOT EXISTS
   "$SCHEMA_NAME".error_audit(
     error_log_id   uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+    batch_id uuid,
     entity_type    VARCHAR(50) NOT NULL,
     entity_id      varchar(20) NOT NULL,
     error_message  TEXT,
     created_at     TIMESTAMP WITH TIME ZONE DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'),
     is_processed      BOOLEAN DEFAULT false,
     processed_at   TIMESTAMP WITH TIME ZONE DEFAULT NULL
+   
 );
 	
 CREATE TABLE IF NOT EXISTS
@@ -223,10 +227,55 @@ CREATE TABLE IF NOT EXISTS "$SCHEMA_NAME".match_configuration(
 confidence_level varchar(20),
 min_score float,
 max_score float,
+match_result VARCHAR(10),
 CONSTRAINT unique_confidence_level UNIQUE (confidence_level)
 ) ;
 
  GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA  "$SCHEMA_NAME" TO "$NEW_IAM_USER";
 
+ CREATE SEQUENCE IF NOT EXISTS "$SCHEMA_NAME".transaction_pos_id_seq START 168029;
 
- 
+ CREATE TABLE IF NOT EXISTS
+  "$SCHEMA_NAME".pos_transactions ( 
+    pos_id varchar(120) PRIMARY KEY DEFAULT ('POS' || LPAD(nextval('"$SCHEMA_NAME".transaction_pos_id_seq')::text, 8, '0')), 
+    sales_reference_id  varchar(130),
+	account_number bigint,
+    lead_id varchar(20) NULL,
+	match_score float,
+	match_type varchar(20),
+    batch_id uuid,
+    membership_number bigint,
+    order_amount float,
+	transaction_count int, 
+    fiscal_period int,
+    fiscal_year int,
+	week int,
+    shop_type varchar(40),
+	warehouse_number bigint,
+	bd_industry varchar(200),
+    business_name varchar(100),
+    address_line_one VARCHAR(100),
+	address_line_two VARCHAR(100),
+    city varchar(30),
+    state varchar(50),
+    zip_code varchar(100),
+    phone varchar(30) NULL,
+    first_name varchar(100) NULL,
+    last_name varchar(100),
+    email varchar(50) NULL,
+	sic_code bigint,
+	sic_description VARCHAR(1000),
+    primary_transaction BOOLEAN,
+	load_date TIMESTAMP WITH TIME ZONE  DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'),
+    updated_by varchar(20) NULL,
+    updated_date TIMESTAMP WITH TIME ZONE  DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'),
+  FOREIGN KEY
+    (lead_id)
+  REFERENCES
+    "$SCHEMA_NAME".lead (lead_id) ) ;
+	
+CREATE UNIQUE index IF NOT EXISTS txn_uniq_sales_reference_id_idx  ON "$SCHEMA_NAME".transaction ( sales_reference_id);
+CREATE index IF NOT EXISTS txn_fiscal_year_period_idx  ON "$SCHEMA_NAME".transaction ( fiscal_year,fiscal_period);
+
+GRANT ALL PRIVILEGES ON TABLE "$SCHEMA_NAME".pos_transactions TO "$NEW_IAM_USER";
+GRANT USAGE, SELECT ON SEQUENCE "$SCHEMA_NAME".transaction_pos_id_seq TO "$NEW_IAM_USER";

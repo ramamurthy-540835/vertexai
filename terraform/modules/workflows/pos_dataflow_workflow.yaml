@@ -1,58 +1,90 @@
 # pos_dataflow_workflow.yaml
-# Triggered by Eventarc → Pub/Sub when a manifest.json lands in
-# pos-raw-data/manifests/.
+# Triggered by Eventarc → Pub/Sub when a manifest.json lands in the
+# configured manifests folder.
+#
+# All env-specific values come from config/workflow-config.json in the
+# same bucket as the triggering event. This workflow YAML is identical
+# across all environments (adt/qat/spt) — only the config differs.
 #
 # Flow:
-#   1. Decode the Pub/Sub event → get manifest path
-#   2. Read manifest from GCS
-#   3. Process its files in chunks of 2 via Dataflow Flex Template
-#   4. On full success: trigger snow_sync_workflow
-#      (snow_sync handles snow→gcs, gcs→db, then triggers lead_match_workflow)
-#   5. Wait for snow_sync to finish
-#   6. Move source files from incoming-files/ to processed/
+#   1. Decode the Pub/Sub event → get manifest path + bucket
+#   2. Read env config from gs://<bucket>/config/workflow-config.json
+#   3. Read manifest from GCS
+#   4. Process its files in chunks (size from config) via Dataflow Flex Template
+#   5. On full success: trigger downstream workflow (snow_sync_workflow)
+#   6. Wait for it to complete (it triggers lead_match_workflow itself)
+#   7. Move source files from incoming-files/ to processed/
 
 main:
   params: [event]
   steps:
-    # ── 1. Init: decode the Pub/Sub-wrapped GCS event ──────────────────
-    - init:
+    # ── 1. Decode the Pub/Sub-wrapped GCS event ────────────────────────
+    - init_event:
         assign:
-          - project_id:        ${sys.get_env("GOOGLE_CLOUD_PROJECT_ID")}
-          - job_location:      "us-central1"
-          - region:            "us-central1"
-          - chunk_size:        2
+          - project_id:      ${sys.get_env("GOOGLE_CLOUD_PROJECT_ID")}
+          - raw_b64:         ${event.data.message.data}
+          - raw_json:        ${text.decode(base64.decode(raw_b64))}
+          - gcs_event:       ${json.decode(raw_json)}
+          - bucket:          ${gcs_event.bucket}
+          - manifest_object: ${gcs_event.name}
 
-          # Decode the Pub/Sub envelope to get the GCS event payload
-          - raw_b64:           ${event.data.message.data}
-          - raw_json:          ${text.decode(base64.decode(raw_b64))}
-          - gcs_event:         ${json.decode(raw_json)}
-          - bucket:            ${gcs_event.bucket}
-          - manifest_object:   ${gcs_event.name}
+    # ── 2. Read env config from the same bucket ────────────────────────
+    - read_config:
+        call: googleapis.storage.v1.objects.get
+        args:
+          bucket: ${bucket}
+          object: ${text.url_encode("config/workflow-config.json")}
+          alt:    media
+        result: cfg
 
-          # Configurable constants
-          - template_path:     ${"gs://" + bucket + "/templates/pos-pipeline-flex-adt.json"}
-          - instance_conn:     ${project_id + ":" + region + ":pos-db"}
-          - sa_email:          ${"gco-iam-svc-lead-mgmt-bc-adt@" + project_id + ".iam.gserviceaccount.com"}
-          - field_map_gcs:     ${"gs://" + bucket + "/config/field_map.json"}
-          - db_name:           "postgres"
-          - db_schema:         "pos_raw"
-          - db_table:          "pos_transactions"
+    - extract_config:
+        assign:
+          # Top-level
+          - environment:       ${cfg.environment}
+          - region:            ${cfg.region}
+
+          # Dataflow tuning + template
+          - chunk_size:        ${cfg.dataflow.chunk_size}
+          - template_path:     ${cfg.dataflow.template_path}
+          - sa_email:          ${cfg.dataflow.service_account}
+          - field_map_gcs:     ${cfg.dataflow.field_map_path}
+          - machine_type:      ${cfg.dataflow.machine_type}
+          - max_workers:       ${cfg.dataflow.max_workers}
+          - network:           ${cfg.dataflow.network}
+          - batch_size:        ${cfg.dataflow.batch_size}
+
+          # Database (passed to each Dataflow job)
+          - instance_conn:     ${cfg.database.instance_connection_name}
+          - db_name:           ${cfg.database.db_name}
+          - db_schema:         ${cfg.database.db_schema}
+          - db_table:          ${cfg.database.db_table}
+
+          # Folder layout
+          - manifest_prefix:   ${cfg.manifest_prefix}
+          - incoming_prefix:   ${cfg.incoming_prefix}
+          - processed_prefix:  ${cfg.processed_prefix}
+
+          # Downstream chain
+          - next_workflow:     ${cfg.downstream.next_workflow}
+          - next_wf_location:  ${cfg.downstream.next_workflow_location}
+
+          # Run state
           - all_job_states:    []
 
-    # ── 2. Defensive: ignore non-manifest uploads ──────────────────────
+    # ── 3. Defensive: ignore non-manifest uploads ──────────────────────
     - validate_manifest_path:
         switch:
-          - condition: ${not(text.match_regex(manifest_object, "^pos-raw-data/manifests/.*\\.json$"))}
-            return: ${"Skipped: " + manifest_object + " is not a manifest"}
+          - condition: ${not(text.match_regex(manifest_object, "^" + manifest_prefix + ".*\\.json$"))}
+            return: ${"Skipped: " + manifest_object + " is not under " + manifest_prefix}
         next: read_manifest
 
-    # ── 3. Read the manifest from GCS ──────────────────────────────────
+    # ── 4. Read the manifest from GCS ──────────────────────────────────
     - read_manifest:
         call: googleapis.storage.v1.objects.get
         args:
           bucket: ${bucket}
           object: ${text.url_encode(manifest_object)}
-          alt: media
+          alt:    media
         result: manifest
 
     - extract_run_metadata:
@@ -66,9 +98,9 @@ main:
         call: sys.log
         args:
           severity: INFO
-          text: ${"Run " + run_id + ": " + string(file_count) + " files in " + string(num_chunks) + " chunks of " + string(chunk_size)}
+          text: ${"[" + environment + "] run " + run_id + ": " + string(file_count) + " files in " + string(num_chunks) + " chunks of " + string(chunk_size) + " (sa=" + sa_email + ")"}
 
-    # ── 4. Sequential outer loop: 2 files at a time ────────────────────
+    # ── 5. Sequential outer loop: chunk_size files at a time ───────────
     - process_chunks:
         for:
           value: chunk_idx
@@ -86,9 +118,9 @@ main:
                 call: sys.log
                 args:
                   severity: INFO
-                  text: ${"Chunk " + string(chunk_idx) + "/" + string(num_chunks - 1) + " — launching " + string(len(chunk_files)) + " jobs"}
+                  text: ${"[" + environment + "] chunk " + string(chunk_idx) + "/" + string(num_chunks - 1) + " — launching " + string(len(chunk_files)) + " jobs"}
 
-            # ── 4a. Fan-out: launch up to chunk_size Dataflow jobs ──
+            # ── 5a. Fan-out: launch up to chunk_size Dataflow jobs ──
             - launch_chunk_jobs:
                 parallel:
                   shared: [chunk_job_ids]
@@ -112,18 +144,18 @@ main:
                                   db_schema:                ${db_schema}
                                   db_table:                 ${db_table}
                                   field_map_path:           ${field_map_gcs}
-                                  batch_size:               "2000"
+                                  batch_size:               ${batch_size}
                                 environment:
                                   serviceAccountEmail: ${sa_email}
-                                  network:             "default"
-                                  maxWorkers:          "5"
-                                  machineType:         "n1-standard-2"
+                                  network:             ${network}
+                                  maxWorkers:          ${string(max_workers)}
+                                  machineType:         ${machine_type}
                           result: launch_resp
                       - record_id:
                           assign:
                             - chunk_job_ids: ${list.concat(chunk_job_ids, launch_resp.job.id)}
 
-            # ── 4b. Fan-in: poll every job in the chunk ──
+            # ── 5b. Fan-in: poll every job in the chunk ──
             - wait_for_chunk:
                 parallel:
                   shared: [chunk_job_states]
@@ -143,7 +175,7 @@ main:
                             - chunk_job_states: ${list.concat(chunk_job_states, final_state)}
                             - all_job_states:   ${list.concat(all_job_states, final_state)}
 
-            # ── 4c. Abort if any job in this chunk failed ──
+            # ── 5c. Abort if any job in this chunk failed ──
             - check_chunk_results:
                 for:
                   value: state
@@ -158,43 +190,45 @@ main:
                 call: sys.log
                 args:
                   severity: INFO
-                  text: ${"Chunk " + string(chunk_idx) + " — all jobs DONE"}
+                  text: ${"[" + environment + "] chunk " + string(chunk_idx) + " — all jobs DONE"}
 
-    # ── 5. Trigger snow_sync_workflow (the linear-chain handoff) ───────
-    # snow_sync handles snow→gcs, gcs→db, and triggers lead_match itself.
-    - trigger_snow_sync_workflow:
+    # ── 6. Trigger downstream workflow (config-driven; usually snow_sync) ─
+    # snow_sync_workflow handles snow→gcs, gcs→db, and triggers
+    # lead_match_workflow itself.
+    - trigger_downstream:
         steps:
-          - build_snow_sync_payload:
+          - build_payload:
               assign:
-                - snow_sync_map:
-                    pos_run_id:   ${run_id}
-                    pos_files:    ${all_files}
-                    upstream:     "pos_dataflow_workflow"
+                - downstream_map:
+                    pos_run_id:  ${run_id}
+                    pos_files:   ${all_files}
+                    upstream:    "pos_dataflow_workflow"
+                    environment: ${environment}
           - encode_argument:
               assign:
-                - snow_sync_args: ${json.encode_to_string(snow_sync_map)}
+                - downstream_args: ${json.encode_to_string(downstream_map)}
           - create_execution:
               call: googleapis.workflowexecutions.v1.projects.locations.workflows.executions.create
               args:
-                parent: ${"projects/" + project_id + "/locations/" + job_location + "/workflows/snow_sync_workflow"}
+                parent: ${"projects/" + project_id + "/locations/" + next_wf_location + "/workflows/" + next_workflow}
                 body:
-                  argument: ${snow_sync_args}
-              result: snow_sync_execution
+                  argument: ${downstream_args}
+              result: downstream_execution
 
-    # ── 6. Wait for snow_sync to complete (it triggers lead_match itself) ─
-    - wait_for_snow_sync:
+    # ── 7. Wait for downstream to complete ─────────────────────────────
+    - wait_for_downstream:
         call: googleapis.workflowexecutions.v1.projects.locations.workflows.executions.get
         args:
-          name: ${snow_sync_execution.name}
-        result: snow_sync_result
-        next: check_snow_sync_status
+          name: ${downstream_execution.name}
+        result: downstream_result
+        next: check_downstream_status
 
-    - check_snow_sync_status:
+    - check_downstream_status:
         switch:
-          - condition: ${snow_sync_result.state == "SUCCEEDED"}
+          - condition: ${downstream_result.state == "SUCCEEDED"}
             next: move_files_to_processed
-          - condition: ${snow_sync_result.state == "FAILED"}
-            raise: ${snow_sync_result.error}
+          - condition: ${downstream_result.state == "FAILED"}
+            raise: ${downstream_result.error}
           - condition: true
             next: poll_delay
 
@@ -202,12 +236,12 @@ main:
         call: sys.sleep
         args:
           seconds: 15
-        next: wait_for_snow_sync
+        next: wait_for_downstream
 
-    # ── 7. Move source files to processed/ (only on full success) ──────
-    # This includes BOTH the dataflow jobs succeeding AND snow_sync (which
-    # itself includes lead_match) succeeding. Files only move when the
-    # entire chain has reported success.
+    # ── 8. Move source files to processed/ (only on full chain success) ─
+    # This includes BOTH the dataflow jobs succeeding AND the downstream
+    # workflow (snow_sync → lead_match) succeeding. Files only move when
+    # the entire chain has reported success.
     - move_files_to_processed:
         parallel:
           for:
@@ -219,7 +253,7 @@ main:
                     - bucket_and_object: ${text.split(file_path, "gs://")[1]}
                     - bucket_only:       ${text.split(bucket_and_object, "/")[0]}
                     - object_only:       ${text.substring(bucket_and_object, len(bucket_only) + 1, len(bucket_and_object))}
-                    - dest_object:       ${text.replace_all(object_only, "incoming-files/", "processed/")}
+                    - dest_object:       ${text.replace_all(object_only, incoming_prefix, processed_prefix)}
               - rewrite:
                   call: googleapis.storage.v1.objects.rewrite
                   args:
@@ -233,20 +267,21 @@ main:
                     bucket: ${bucket_only}
                     object: ${text.url_encode(object_only)}
 
-    # ── 8. Terminal states ─────────────────────────────────────────────
+    # ── 9. Terminal states ─────────────────────────────────────────────
     - abort_run:
-        raise: ${"Run " + run_id + " aborted: at least one Dataflow job did not reach JOB_STATE_DONE. states=" + json.encode_to_string(all_job_states)}
+        raise: ${"[" + environment + "] run " + run_id + " aborted: at least one Dataflow job did not reach JOB_STATE_DONE. states=" + json.encode_to_string(all_job_states)}
 
     - done:
         return:
           status:                "success"
+          environment:           ${environment}
           run_id:                ${run_id}
           file_count:            ${file_count}
-          snow_sync_execution:   ${snow_sync_execution.name}
+          downstream_execution:  ${downstream_execution.name}
 
 
 # ─────────────────────────────────────────────────────────────────────
-# Subworkflow — poll one Dataflow job until terminal state
+# Subworkflow — poll one Dataflow job until it reaches a terminal state
 # ─────────────────────────────────────────────────────────────────────
 poll_dataflow_until_done:
   params: [project_id, region, job_id]

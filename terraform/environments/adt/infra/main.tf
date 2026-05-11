@@ -176,6 +176,17 @@ module "lead_match_workflow" {
   workflow_description = "Exact matching between leads and sales data"
 }
 
+module "pos_ingestion_workflow" {
+  source                = "../../../modules/workflows"
+  project_id            = var.projectId
+  region                = var.region
+  service_account_email = module.project_init.service_account_email
+  workflow_name = "lead_match_workflow"
+  workflow_path = "../../../modules/workflows/pos_dataflow_workflow.yaml"
+  workflow_description = "Ingestion of point of sales data"
+}
+
+
 module "security_monitoring" {
   source                = "../../../modules/security_monitoring"
   project_id            = var.projectId
