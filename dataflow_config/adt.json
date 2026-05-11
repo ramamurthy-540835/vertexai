@@ -4,7 +4,7 @@
   "region":      "us-central1",
 
   "bucket_name":      "gcp-gcs-lead-mgmt-us-adt-pos-raw",
-  "manifest_prefix":  "pos-raw-data/manifests/",
+  "manifest_prefix":  "manifests/",
   "incoming_prefix":  "pos-raw-data/incoming-files/",
   "processed_prefix": "pos-raw-data/processed/",
 
