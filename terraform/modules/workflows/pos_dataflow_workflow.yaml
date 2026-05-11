@@ -102,6 +102,7 @@ main:
                   - chunk_files:      []
                   - chunk_job_ids:    []
                   - chunk_job_states: []
+                  - chunk_failed:     false
 
             - build_chunk_files:
                 for:
@@ -173,7 +174,7 @@ main:
                             - chunk_job_states: '${list.concat(chunk_job_states, final_state)}'
                             - all_job_states:   '${list.concat(all_job_states, final_state)}'
 
-            # ── 5c. Abort if any job in this chunk failed ──
+            # ── 5c. Scan chunk results; set chunk_failed flag (no early exit) ──
             - check_chunk_results:
                 for:
                   value: state
@@ -182,7 +183,14 @@ main:
                     - guard:
                         switch:
                           - condition: '${state != "JOB_STATE_DONE"}'
-                            next: abort_run
+                            assign:
+                              - chunk_failed: true
+
+            # ── 5d. After the for-loop: act on the flag ──
+            - check_chunk_failure_flag:
+                switch:
+                  - condition: '${chunk_failed}'
+                    next: abort_run
 
             - log_chunk_done:
                 call: sys.log
