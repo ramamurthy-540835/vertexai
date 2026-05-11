@@ -83,12 +83,21 @@ main:
           range: [0, '${num_chunks - 1}']
           steps:
             - compute_chunk_bounds:
-                assign:
-                  - start_idx:        '${chunk_idx * chunk_size}'
-                  - end_idx:          '${if((chunk_idx + 1) * chunk_size > file_count, file_count, (chunk_idx + 1) * chunk_size)}'
-                  - chunk_files: '${list.slice(all_files, start_idx, end_idx)}'
-                  - chunk_job_ids:    []
-                  - chunk_job_states: []
+              assign:
+                - start_idx:        '${chunk_idx * chunk_size}'
+                - end_idx:          '${if((chunk_idx + 1) * chunk_size > file_count, file_count, (chunk_idx + 1) * chunk_size)}'
+                - chunk_files:      []
+                - chunk_job_ids:    []
+                - chunk_job_states: []
+
+            - build_chunk_files:
+                for:
+                  value: i
+                  range: ['${start_idx}', '${end_idx - 1}']
+                  steps:
+                    - append_file:
+                        assign:
+                          - chunk_files: '${list.concat(chunk_files, [all_files[i]])}'
 
             - log_chunk_start:
                 call: sys.log
