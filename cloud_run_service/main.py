@@ -10,7 +10,7 @@ app = Flask(__name__)
 def trigger_workflow():
     project_id = os.environ.get("PROJECT_ID")
     location = "us-central1"
-    workflow_id = "snow_sync_workflow"  # 👈 update with your workflow name
+    workflow_id = "snow_sync_workflow"  
 
     # Create Workflows Executions client
     execution_client = executions_v1.ExecutionsClient()
@@ -32,6 +32,15 @@ def trigger_workflow():
     print(f"Execution result: {updated_execution.result}")
 
     return f"Workflow execution started: {execution.name}", 200
+
+@app.route('/health', methods=["GET"])
+def health():
+    return jsonify({
+        "status": "success",
+        "message": "Network reachable. API is healthy.",
+        "service": "leadmgmt-workflow-api"
+    }), 200
+
 
 
 if __name__ == '__main__':
