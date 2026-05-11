@@ -109,7 +109,7 @@ main:
                           batch_size: '${batch_size}'
                         environment:
                           serviceAccountEmail: '${sa_email}'
-                          network: '${network}'
+                          subnetwork: '${subnetwork}' 
                           maxWorkers: '${string(max_workers)}'
                           machineType: '${machine_type}'
                           tempLocation: '${"gs://" + bucket + "/dataflow/temp"}'
