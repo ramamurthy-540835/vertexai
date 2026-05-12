@@ -127,7 +127,7 @@ class WriteToPostgresIAM(beam.DoFn):
 
     def _flush(self):
         """Insert all buffered rows in a single multi-row INSERT."""
-        if not self.buffer:
+        if not self._buffer:
             return
         
         conn = self._get_conn()
@@ -136,12 +136,12 @@ class WriteToPostgresIAM(beam.DoFn):
         try:
             # Use the keys from the first row as the column list (all rows
             # should have the same keys after field_map applies them).
-            columns = list(self.buffer[0].keys())
+            columns = list(self._buffer[0].keys())
             col_list = ", ".join(columns)
             
             # Build (%s, %s, ...) for one row, repeated for each row in batch
             row_ph = "(" + ", ".join(["%s"] * len(columns)) + ")"
-            values_ph = ", ".join([row_ph] * len(self.buffer))
+            values_ph = ", ".join([row_ph] * len(self._buffer))
             
             sql = (
                 f'INSERT INTO "{self.db_schema}".{self.db_table} ({col_list}) '
@@ -152,19 +152,19 @@ class WriteToPostgresIAM(beam.DoFn):
             # Flatten: [row1.col1, row1.col2, ..., row2.col1, row2.col2, ...]
             flat_values = tuple(
                 row.get(col)
-                for row in self.buffer
+                for row in self._buffer
                 for col in columns
             )
             
             cur.execute(sql, flat_values)
             conn.commit()
-            logger.info(f"Inserted {len(self.buffer)} rows into {self.db_table}")
+            logger.info(f"Inserted {len(self._buffer)} rows into {self.db_table}")
         except Exception:
             conn.rollback()
             raise
         finally:
             cur.close()
-            self.buffer.clear()
+            self._buffer.clear()
 
 
 # ─────────────────────────────────────────────────────────────
