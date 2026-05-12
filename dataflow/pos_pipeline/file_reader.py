@@ -156,7 +156,11 @@ def _read_excel(content: bytes) -> List[Dict[str, Any]]:
     for row in rows_iter:
         if all(v is None or v == "" for v in row):
             continue  # skip blank rows
-        out.append({headers[i]: row[i] for i in range(len(headers)) if headers[i]})
+        out.append({
+    headers[i]: (row[i] if i < len(row) else None)
+    for i in range(len(headers))
+    if headers[i]
+})
     logger.info(f"Excel read: {len(out)} rows")
     return out
 
