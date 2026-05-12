@@ -106,7 +106,6 @@ class WriteToPostgresIAM(beam.DoFn):
             mapped = apply_field_map(raw_row, self.field_map)
             if mapped is None:
                 continue
-            mapped["_gcs_source"] = gcs_path
             self._buffer.append(mapped)
             if len(self._buffer) >= self.batch_size:
                 self._flush()
