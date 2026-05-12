@@ -1,7 +1,4 @@
 {
-    "_comment": "Source file column header → PostgreSQL target column name.",
-    "_comment2": "Keys = file headers (will be lowercased+stripped before lookup).",
-    "_comment3": "Values = exact Postgres column names. Only mapped columns are inserted.",
     "whse": "warehouse_number",
     "fy": "fiscal_year",
     "period": "fiscal_period",
