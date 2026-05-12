@@ -126,30 +126,45 @@ class WriteToPostgresIAM(beam.DoFn):
             pass
 
     def _flush(self):
-        if not self._buffer:
+        """Insert all buffered rows in a single multi-row INSERT."""
+        if not self.buffer:
             return
-
-        all_cols = sorted({c for r in self._buffer for c in r.keys()})
-        col_list = ", ".join(f'"{c}"' for c in all_cols)
-        tuples = [tuple(r.get(c) for c in all_cols) for r in self._buffer]
-
-        sql = (
-            f"INSERT INTO {self.db_schema}.{self.db_table} ({col_list}) "
-            f"VALUES %s ON CONFLICT DO NOTHING"
-        )
-
-        cur = self._conn.cursor()
+        
+        conn = self._get_conn()
+        cur = conn.cursor()
+        
         try:
-            execute_values(cur, sql, tuples, page_size=self.batch_size)
-            self._conn.commit()
-            logger.info(f"Inserted {len(tuples)} rows from buffer")
-            self._buffer = []
-        except Exception as e:
-            self._conn.rollback()
-            logger.error(f"DB flush error: {e}")
+            # Use the keys from the first row as the column list (all rows
+            # should have the same keys after field_map applies them).
+            columns = list(self.buffer[0].keys())
+            col_list = ", ".join(columns)
+            
+            # Build (%s, %s, ...) for one row, repeated for each row in batch
+            row_ph = "(" + ", ".join(["%s"] * len(columns)) + ")"
+            values_ph = ", ".join([row_ph] * len(self.buffer))
+            
+            sql = (
+                f'INSERT INTO "{self.db_schema}".{self.db_table} ({col_list}) '
+                f'VALUES {values_ph} '
+                f'ON CONFLICT DO NOTHING'
+            )
+            
+            # Flatten: [row1.col1, row1.col2, ..., row2.col1, row2.col2, ...]
+            flat_values = tuple(
+                row.get(col)
+                for row in self.buffer
+                for col in columns
+            )
+            
+            cur.execute(sql, flat_values)
+            conn.commit()
+            logger.info(f"Inserted {len(self.buffer)} rows into {self.db_table}")
+        except Exception:
+            conn.rollback()
             raise
         finally:
             cur.close()
+            self.buffer.clear()
 
 
 # ─────────────────────────────────────────────────────────────
