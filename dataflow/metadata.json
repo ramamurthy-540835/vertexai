@@ -24,6 +24,12 @@
       "helpText": "Schema containing the target table"
     },
     {
+      "name": "db_user",
+      "label": "Postgres IAM username",
+      "helpText": "SA email without .gserviceaccount.com suffix",
+      "isOptional": false
+    },
+    {
       "name": "db_table",
       "label": "Database table",
       "helpText": "Target table for INSERT"

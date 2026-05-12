@@ -38,6 +38,7 @@ main:
           - batch_size: '${cfg.dataflow.batch_size}'
           - instance_conn: '${cfg.database.instance_connection_name}'
           - db_name: '${cfg.database.db_name}'
+          - db_user: '${cfg.database.db_user}'
           - db_schema: '${cfg.database.db_schema}'
           - db_table: '${cfg.database.db_table}'
           - manifest_prefix: '${cfg.manifest_prefix}'
@@ -105,6 +106,7 @@ main:
                           db_name: '${db_name}'
                           db_schema: '${db_schema}'
                           db_table: '${db_table}'
+                          db_user: '${db_user}' 
                           field_map_path: '${field_map_gcs}'
                           batch_size: '${batch_size}'
                         environment:

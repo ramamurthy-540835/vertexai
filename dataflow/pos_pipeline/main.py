@@ -69,6 +69,7 @@ class WriteToPostgresIAM(beam.DoFn):
         instance_connection_name: str,
         db_name: str,
         db_schema: str,
+        db_user: str,
         db_table: str,
         field_map: dict,
         batch_size: int = 2000,
@@ -77,6 +78,7 @@ class WriteToPostgresIAM(beam.DoFn):
         self.db_name = db_name
         self.db_schema = db_schema
         self.db_table = db_table
+        self.db_user = db_user
         self.field_map = field_map
         self.batch_size = batch_size
 
@@ -88,6 +90,7 @@ class WriteToPostgresIAM(beam.DoFn):
             self.instance_connection_name,
             "pg8000",
             db=self.db_name,
+            user=self.db_user,
             enable_iam_auth=True,
             ip_type=IPTypes.PRIVATE,
         )
@@ -168,6 +171,8 @@ def run():
     parser.add_argument("--db_name", required=True)
     parser.add_argument("--db_schema", required=True)
     parser.add_argument("--db_table", required=True)
+    parser.add_argument("--db_user", required=True,
+                    help="Postgres IAM username (SA email minus .gserviceaccount.com)")
 
     # ── Field mapping ───────────────────────────────────────────────────
     parser.add_argument(
@@ -205,6 +210,7 @@ def run():
                     db_name=known_args.db_name,
                     db_schema=known_args.db_schema,
                     db_table=known_args.db_table,
+                    db_user=known_args.db_user,  
                     field_map=field_map,
                     batch_size=known_args.batch_size,
                 )
