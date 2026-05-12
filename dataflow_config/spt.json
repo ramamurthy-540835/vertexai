@@ -19,7 +19,7 @@
   "database": {
     "instance_connection_name": "p-601-np-bcleadsmgmt-spt:us-central1:lead-mgmt-spt",
     "db_name":   "lead-mgmt-db",
-    "db_schema": "lead-mgmt-spt",
+    "db_schema": "lead_mgmt_spt",
     "db_table":  "pos_transactions",
     "db_user":   "gco-iam-svc-lead-mgmt-bc-spt@p-601-np-bcleadsmgmt-spt.iam"
   },

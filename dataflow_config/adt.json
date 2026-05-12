@@ -22,7 +22,7 @@
   "database": {
     "instance_connection_name": "p-601-np-bcleadsmgmt-adt:us-central1:lead-mgmt-adt",
     "db_name":   "lead-mgmt-db",
-    "db_schema": "lead-mgmt-adt",
+    "db_schema": "lead_mgmt_adt",
     "db_table":  "pos_transactions",
     "db_user":   "gco-iam-svc-lead-mgmt-bc-adt@p-601-np-bcleadsmgmt-adt.iam"
   },
