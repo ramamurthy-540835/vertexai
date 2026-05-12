@@ -76,7 +76,7 @@ def _read_excel(content: bytes) -> List[Dict[str, Any]]:
         headers = next(rows_iter, None)
         if not headers:
             return []
-        headers = [str(h).strip() if h is not None else "" for h in headers]
+        headers = [str(h).strip().lower() if h is not None else "" for h in headers]
 
         out: List[Dict[str, Any]] = []
         for row in rows_iter:
