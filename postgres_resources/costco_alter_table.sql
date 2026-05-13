@@ -41,18 +41,22 @@
 
 
 
-GRANT SELECT, INSERT, UPDATE, DELETE ON 
-    "$SCHEMA_NAME".lead,
-    "$SCHEMA_NAME".transaction,
-    "$SCHEMA_NAME".leads_embeddings,
-    "$SCHEMA_NAME".pos_embeddings,
-    "$SCHEMA_NAME".account,
-    "$SCHEMA_NAME".contact,
-    "$SCHEMA_NAME".error_Audit,
-    "$SCHEMA_NAME".batch_audit,
-    "$SCHEMA_NAME".pos_transactions
-TO "postgres";
+-- GRANT SELECT, INSERT, UPDATE, DELETE ON 
+--     "$SCHEMA_NAME".lead,
+--     "$SCHEMA_NAME".transaction,
+--     "$SCHEMA_NAME".leads_embeddings,
+--     "$SCHEMA_NAME".pos_embeddings,
+--     "$SCHEMA_NAME".account,
+--     "$SCHEMA_NAME".contact,
+--     "$SCHEMA_NAME".error_Audit,
+--     "$SCHEMA_NAME".batch_audit,
+--     "$SCHEMA_NAME".pos_transactions
+-- TO "postgres";
 
-ALTER TABLE "$SCHEMA_NAME".transaction
-ALTER COLUMN pos_id
-SET DEFAULT 'POS' || LPAD(nextval('"$SCHEMA_NAME".transaction_pos_id_seq')::text, 8, '0');
+-- ALTER TABLE "$SCHEMA_NAME".transaction
+-- ALTER COLUMN pos_id
+-- SET DEFAULT 'POS' || LPAD(nextval('"$SCHEMA_NAME".transaction_pos_id_seq')::text, 8, '0');
+
+
+Alter table  "$SCHEMA_NAME".transaction
+rename column sic_description to industry_description;

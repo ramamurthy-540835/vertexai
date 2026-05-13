@@ -7,7 +7,7 @@
     "member number": "membership_number",
     "customer id": "sales_reference_id",
     "bd industry": "bd_industry",
-    "industry description": "sic_description",
+    "industry description": "industry_description",
     "first name": "first_name",
     "last name": "last_name",
     "business name": "business_name",

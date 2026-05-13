@@ -244,10 +244,6 @@ def load_and_preprocess_data_cloud_sql(base_name: str, config_file_path: str) ->
             chunk_df = validate_combined_field(chunk_df)
             chunk_df = clean_required_columns(chunk_df, clean_cols)
 
-            # Reorder to match the canonical column list (consistent CSV schema)
-            existing_cols = [c for c in clean_cols if c in chunk_df.columns]
-            chunk_df = chunk_df[existing_cols]
-
             # Write to CSV stream. Write header only on the first chunk so the
             # final file has exactly one header row at the top.
             chunk_df.to_csv(

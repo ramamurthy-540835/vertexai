@@ -367,6 +367,7 @@ def classify_matches(
             "zip_code",
             "email",
             "phone",
+            "industry_description"
         ]]
     )
 
@@ -468,6 +469,7 @@ def classify_matches(
         "shop_type",
         "bd_industry",
         "order_amount",
+        "industry_description",
 
         # POS customer details
         "first_name",
