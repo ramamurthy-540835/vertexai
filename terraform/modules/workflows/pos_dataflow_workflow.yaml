@@ -111,7 +111,7 @@ main:
                     location: '${region}'
                     body:
                       launchParameter:
-                        jobName: '${"pos-etl-" + run_id + "-" + string(file_idx) + "-" + string(int(sys.now()))}'
+                        jobName: '${"pos-etl-" + run_id + "-" + text.substring(hash.sha1(file_path), 0, 8)}'
                         containerSpecGcsPath: '${template_path}'
                         parameters:
                           input_file: '${file_path}'
