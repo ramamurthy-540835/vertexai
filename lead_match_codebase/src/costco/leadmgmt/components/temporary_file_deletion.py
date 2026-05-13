@@ -34,7 +34,7 @@ def delete_temp_files_from_gcs(match_id: str, config_file_path: str, file_path: 
     final_df = load_file_from_gcs(file_path)
 
     # Filter rows with High, Medium, or Low confidence level
-    high_medium_low_df = final_df[final_df['match_result'].isin(['Complete','Potential'])]
+    high_medium_low_df = final_df[final_df['match_result'].isin(['Match','Potential'])]
     # Filter rows with No Match confidence level
     no_match_df = final_df[final_df['match_result'] == 'No Match']
     # Remove duplicates based on lead_id between the two dataframes
@@ -44,7 +44,7 @@ def delete_temp_files_from_gcs(match_id: str, config_file_path: str, file_path: 
 
     match_count = final_df[final_df['match_result'] != 'No Match']['lead_id'].nunique()
     no_match_count = final_df[final_df['match_result'] == 'No Match']['lead_id'].nunique()
-    high_match_count = final_df[final_df['match_result'] == 'Complete']['lead_id'].nunique()
+    high_match_count = final_df[final_df['match_result'] == 'Match']['lead_id'].nunique()
     medium_match_count = final_df[final_df['match_result'] == 'Potential']['lead_id'].nunique()
     # low_match_count = final_df[final_df['match_result'] == 'Low']['lead_id'].nunique()
     end_date = datetime.now()

@@ -67,7 +67,7 @@ def build_matching_comment(row: pd.Series) -> str:
     parts = []
 
     # -- Result classification --------------------------------
-    if result == "Complete":
+    if result == "Match":
         parts.append(
             f"Complete match (score {score}/{MAX_POSSIBLE_SCORE}): "
             f"sufficient key and supplementary fields aligned."
@@ -75,7 +75,7 @@ def build_matching_comment(row: pd.Series) -> str:
     else:
         parts.append(
             f"Potential match (score {score}/{MAX_POSSIBLE_SCORE}): "
-            f"partial field alignment; agent review recommended."
+            f"partial field alignment; Marketer review recommended."
         )
 
     # -- Key fields that matched ------------------------------
@@ -133,6 +133,22 @@ def classify_matches(
 
     leads = preprocess(file_leads)
     sales = preprocess(file_sales)
+    
+    # sales data prefilter
+    lead_warehouses = leads["warehouse_number"].dropna().unique()
+    sales_before = len(sales)
+    sales = sales[sales["warehouse_number"].isin(lead_warehouses)].copy()
+    log.info(
+        "Warehouse pre-filter: %d → %d POS rows (%d dropped)",
+        sales_before, len(sales), sales_before - len(sales),
+    )
+
+    if sales.empty:
+        log.warning("No POS rows share a warehouse with any lead.")
+        return pd.DataFrame(columns=[
+            "lead_id", "pos_id", "match_result",
+            "similarity_score", "matching_comments",
+        ])
 
     leads_small = leads[
         ["lead_id", "warehouse_number"] + ALL_FIELDS
@@ -386,7 +402,7 @@ def classify_matches(
     # ASSIGN MATCH RESULT
     # ==========================================================
     matched_df["match_result"] = matched_df["similarity_score"].apply(
-        lambda x: "Complete" if x >= COMPLETE_SCORE else "Potential"
+        lambda x: "Match" if x >= COMPLETE_SCORE else "Potential"
     )
     matched_df["match_type"] = "Exact"
     matched_df["matched_by"] = "System"
