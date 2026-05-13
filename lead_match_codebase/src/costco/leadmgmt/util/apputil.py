@@ -114,10 +114,13 @@ def process_and_archive_files(source_bucket_name, source_folder, destination_buc
 
     # Step 3: Upload new files to the input folder for the matching process
     # destination_path = f"{source_folder}"
-    file_name = f"{source_folder}/{base_name}.csv"
-    bucket = storage_client.get_bucket(source_bucket_name)
-    new_blob = bucket.blob(file_name)
-    new_blob.upload_from_string(new_file.to_csv(index=False), 'text/csv')  # Upload the file from local system
-    app_logger.debug(f"Uploaded new file {base_name}.csv to {source_folder}.")
-
-    return f"gs://{source_bucket_name}/{file_name}"
+    if new_file is not None:
+        file_name = f"{source_folder}/{base_name}.csv"
+        bucket = storage_client.get_bucket(source_bucket_name)
+        new_blob = bucket.blob(file_name)
+        new_blob.upload_from_string(new_file.to_csv(index=False), 'text/csv')
+        app_logger.debug(f"Uploaded new file {base_name}.csv to {source_folder}.")
+        return f"gs://{source_bucket_name}/{file_name}"
+    else:
+        app_logger.debug("No DataFrame provided — skipping upload step.")
+        return None
