@@ -52,3 +52,7 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON
     "$SCHEMA_NAME".batch_audit,
     "$SCHEMA_NAME".pos_transactions
 TO "postgres";
+
+ALTER TABLE "$SCHEMA_NAME".transaction
+ALTER COLUMN pos_id
+SET DEFAULT 'POS' || LPAD(nextval('"$SCHEMA_NAME".transaction_pos_id_seq')::text, 8, '0');
