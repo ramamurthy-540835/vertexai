@@ -5,7 +5,8 @@ from costco.leadmgmt.components.update_source_data import update_cloud_sql
 from costco.leadmgmt.components.update_servicenow import update_servicenow
 from costco.leadmgmt.components.data_ingestion_cloud_sql import load_and_preprocess_data_cloud_sql
 from costco.leadmgmt.components.lead_matching import primary_classification
-from costco.leadmgmt.components.temporary_file_deletion import delete_temp_files_from_gcs
+#from costco.leadmgmt.components.temporary_file_deletion import delete_temp_files_from_gcs
+from costco.leadmgmt.components.validation_del_temp_files import delete_temp_files_from_gcs
 import sys
 import os
 
