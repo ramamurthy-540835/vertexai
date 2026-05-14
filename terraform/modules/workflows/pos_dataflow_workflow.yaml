@@ -82,6 +82,7 @@ main:
           - run_id: '${default(map.get(manifest, "run_id"), manifest_object)}'
           - all_files: '${manifest.files}'
           - file_count: '${len(all_files)}'
+          - batch_id: '${uuid.generate()}' 
 
     - log_run_start:
         call: sys.log
@@ -122,6 +123,8 @@ main:
                           db_user: '${db_user}'
                           field_map_path: '${field_map_gcs}'
                           batch_size: '${batch_size}'
+                          batch_id: '${batch_id}'            
+                          manifest_run_id: '${run_id}'
                         environment:
                           serviceAccountEmail: '${sa_email}'
                           subnetwork: '${subnetwork}'

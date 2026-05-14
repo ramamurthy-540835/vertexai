@@ -7,10 +7,14 @@ column mapping, and batch-INSERTs into Cloud SQL Postgres via IAM auth.
 Pipeline exits when the file is fully loaded. One Dataflow job per file —
 the orchestrator (Cloud Workflow) launches multiple jobs in parallel for
 runs that contain multiple files.
+
+At end of pipeline, writes one row to batch_audit summarizing the run.
 """
 
 import argparse
+import json
 import logging
+from datetime import datetime, timezone
 
 import apache_beam as beam
 from apache_beam.options.pipeline_options import PipelineOptions, SetupOptions
@@ -62,7 +66,10 @@ class ReadFileFromGCS(beam.DoFn):
 # Step 2 — Apply column mapping and batch-INSERT into Postgres via IAM
 # ─────────────────────────────────────────────────────────────
 class WriteToPostgresIAM(beam.DoFn):
-    """Maps each row through field_map.json and batch-INSERTs into Postgres."""
+    """Maps each row through field_map.json and batch-INSERTs into Postgres.
+
+    At teardown, writes a single batch_audit row summarizing this run.
+    """
 
     def __init__(
         self,
@@ -72,6 +79,9 @@ class WriteToPostgresIAM(beam.DoFn):
         db_user: str,
         db_table: str,
         field_map: dict,
+        batch_id: str,
+        manifest_run_id: str,
+        input_file: str,
         batch_size: int = 2000,
     ):
         self.instance_connection_name = instance_connection_name
@@ -81,6 +91,14 @@ class WriteToPostgresIAM(beam.DoFn):
         self.db_user = db_user
         self.field_map = field_map
         self.batch_size = batch_size
+
+        # Audit tracking
+        self.batch_id = batch_id
+        self.manifest_run_id = manifest_run_id
+        self.input_file = input_file
+        self.total_rows_written = 0
+        self.start_time = None
+        self._had_error = False
 
     def setup(self):
         self._connector = Connector()
@@ -98,6 +116,8 @@ class WriteToPostgresIAM(beam.DoFn):
     def start_bundle(self):
         self._conn = self._get_conn()
         self._buffer = []
+        if self.start_time is None:
+            self.start_time = datetime.now(timezone.utc)
 
     def process(self, element):
         rows = element["rows"]
@@ -119,47 +139,104 @@ class WriteToPostgresIAM(beam.DoFn):
             pass
 
     def teardown(self):
+        """Write a single batch_audit row at end of pipeline.
+
+        Soft-fails: an audit-write failure must NOT fail the pipeline, since
+        the data is already committed. This is observability, not correctness.
+        """
+        # If no batch_id was passed (e.g., a manual/standalone run), skip the
+        # audit row rather than inserting a NULL batch_id.
+        if not self.batch_id:
+            logger.warning("No batch_id provided — skipping batch_audit row.")
+            return
+
+        status = "failed" if self._had_error else "succeeded"
+
         try:
-            self._connector.close()
-        except Exception:
-            pass
+            conn = self._get_conn()
+            cur = conn.cursor()
+
+            audit_sql = f'''
+                INSERT INTO "{self.db_schema}".batch_audit
+                    (batch_id, data_type, total_volume, success_count,
+                     stage, status, start_date, end_date, comments)
+                VALUES
+                    (%s, 'pos', %s, %s,
+                     'ingestion', %s, %s, %s, %s)
+            '''
+
+            comments = json.dumps({
+                "file": self.input_file,
+                "manifest_run_id": self.manifest_run_id,
+                "db_schema": self.db_schema,
+                "db_table": self.db_table,
+            })
+
+            cur.execute(audit_sql, (
+                self.batch_id,                      # batch_id (uuid)
+                self.total_rows_written,            # total_volume
+                self.total_rows_written,            # success_count
+                status,                             # status (succeeded / failed)
+                self.start_time,                    # start_date
+                datetime.now(timezone.utc),         # end_date
+                comments,                           # comments (JSON string)
+            ))
+            conn.commit()
+            cur.close()
+            conn.close()
+
+            logger.info(
+                f"Audit row written: file={self.input_file}, "
+                f"batch_id={self.batch_id}, rows={self.total_rows_written}, "
+                f"status={status}"
+            )
+        except Exception as e:
+            # Audit failures should NOT fail the pipeline.
+            logger.error(f"Failed to write audit row (non-fatal): {e}")
 
     def _flush(self):
-        """Insert all buffered rows in a single multi-row INSERT."""
+        """Insert all buffered rows in a single multi-row INSERT.
+
+        Reuses the bundle-level connection (self._conn) rather than opening
+        a new connection per flush — opening per flush leaks connections.
+        """
         if not self._buffer:
             return
-        
-        conn = self._get_conn()
-        cur = conn.cursor()
-        
+
+        cur = self._conn.cursor()
+
         try:
             # Use the keys from the first row as the column list (all rows
             # should have the same keys after field_map applies them).
             columns = list(self._buffer[0].keys())
             col_list = ", ".join(columns)
-            
+
             # Build (%s, %s, ...) for one row, repeated for each row in batch
             row_ph = "(" + ", ".join(["%s"] * len(columns)) + ")"
             values_ph = ", ".join([row_ph] * len(self._buffer))
-            
+
             sql = (
                 f'INSERT INTO "{self.db_schema}".{self.db_table} ({col_list}) '
                 f'VALUES {values_ph} '
                 f'ON CONFLICT DO NOTHING'
             )
-            
+
             # Flatten: [row1.col1, row1.col2, ..., row2.col1, row2.col2, ...]
             flat_values = tuple(
                 row.get(col)
                 for row in self._buffer
                 for col in columns
             )
-            
+
             cur.execute(sql, flat_values)
-            conn.commit()
+            self._conn.commit()
+
+            # Only count rows after a successful commit.
+            self.total_rows_written += len(self._buffer)
             logger.info(f"Inserted {len(self._buffer)} rows into {self.db_table}")
         except Exception:
-            conn.rollback()
+            self._conn.rollback()
+            self._had_error = True
             raise
         finally:
             cur.close()
@@ -186,7 +263,7 @@ def run():
     parser.add_argument("--db_schema", required=True)
     parser.add_argument("--db_table", required=True)
     parser.add_argument("--db_user", required=True,
-                    help="Postgres IAM username (SA email minus .gserviceaccount.com)")
+                        help="Postgres IAM username (SA email minus .gserviceaccount.com)")
 
     # ── Field mapping ───────────────────────────────────────────────────
     parser.add_argument(
@@ -199,6 +276,12 @@ def run():
     parser.add_argument("--batch_size", default=2000, type=int)
     parser.add_argument("--chunk_size", default=10000, type=int)
 
+    # ── Audit / correlation ─────────────────────────────────────────────
+    parser.add_argument("--batch_id", required=False, default=None,
+                        help="UUID identifying this batch run (for audit table)")
+    parser.add_argument("--manifest_run_id", required=False, default=None,
+                        help="Human-readable run identifier from manifest")
+
     known_args, pipeline_args = parser.parse_known_args()
 
     field_map = load_field_map(known_args.field_map_path)
@@ -208,6 +291,7 @@ def run():
         )
     logger.info(f"Field map loaded: {len(field_map)} column mappings")
     logger.info(f"Processing single file: {known_args.input_file}")
+    logger.info(f"batch_id={known_args.batch_id}, manifest_run_id={known_args.manifest_run_id}")
 
     # streaming=False → batch pipeline. Beam exits when input is exhausted.
     options = PipelineOptions(pipeline_args, streaming=False)
@@ -224,9 +308,12 @@ def run():
                     db_name=known_args.db_name,
                     db_schema=known_args.db_schema,
                     db_table=known_args.db_table,
-                    db_user=known_args.db_user,  
+                    db_user=known_args.db_user,
                     field_map=field_map,
                     batch_size=known_args.batch_size,
+                    batch_id=known_args.batch_id,
+                    manifest_run_id=known_args.manifest_run_id,
+                    input_file=known_args.input_file,
                 )
             )
         )
