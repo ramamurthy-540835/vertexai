@@ -50,6 +50,18 @@
       "label": "Read chunk size",
       "helpText": "Rows per Beam bundle (default: 10000)",
       "isOptional": true
+    },
+    {
+      "name": "batch_id",
+      "label": "Batch ID",
+      "helpText": "UUID identifying this batch run, for the audit table",
+      "isOptional": true
+    },
+    {
+      "name": "manifest_run_id",
+      "label": "Manifest run ID",
+      "helpText": "Human-readable run identifier from the manifest",
+      "isOptional": true
     }
   ]
 }
