@@ -27,6 +27,9 @@ from pos_pipeline.schema_utils import load_field_map, apply_field_map
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Postgres bind-parameter hard limit is 65535. Stay safely under it.
+MAX_PG_PARAMS = 60000
+
 
 # ─────────────────────────────────────────────────────────────
 # Step 1 — Read the single input file from GCS, yield row chunks
@@ -194,8 +197,7 @@ class WriteToPostgresIAM(beam.DoFn):
             # Audit failures should NOT fail the pipeline.
             logger.error(f"Failed to write audit row (non-fatal): {e}")
 
-    # Postgres bind-parameter hard limit is 65535. Stay safely under it.
-    MAX_PG_PARAMS = 60000
+    
 
     def _flush(self):
         """Insert buffered rows, sub-batching to respect Postgres's 65535-parameter limit."""
