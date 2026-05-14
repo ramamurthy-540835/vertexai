@@ -194,46 +194,48 @@ class WriteToPostgresIAM(beam.DoFn):
             # Audit failures should NOT fail the pipeline.
             logger.error(f"Failed to write audit row (non-fatal): {e}")
 
-    def _flush(self):
-        """Insert all buffered rows in a single multi-row INSERT.
+    # Postgres bind-parameter hard limit is 65535. Stay safely under it.
+    MAX_PG_PARAMS = 60000
 
-        Reuses the bundle-level connection (self._conn) rather than opening
-        a new connection per flush — opening per flush leaks connections.
-        """
+    def _flush(self):
+        """Insert buffered rows, sub-batching to respect Postgres's 65535-parameter limit."""
         if not self._buffer:
             return
 
+        columns = list(self._buffer[0].keys())
+        num_cols = len(columns)
+        col_list = ", ".join(columns)
+
+        # Max rows per INSERT so that rows * cols stays under the param limit
+        max_rows_per_insert = max(1, MAX_PG_PARAMS // num_cols)
+
         cur = self._conn.cursor()
-
         try:
-            # Use the keys from the first row as the column list (all rows
-            # should have the same keys after field_map applies them).
-            columns = list(self._buffer[0].keys())
-            col_list = ", ".join(columns)
+            # Split the buffer into sub-batches
+            for start in range(0, len(self._buffer), max_rows_per_insert):
+                sub_batch = self._buffer[start:start + max_rows_per_insert]
 
-            # Build (%s, %s, ...) for one row, repeated for each row in batch
-            row_ph = "(" + ", ".join(["%s"] * len(columns)) + ")"
-            values_ph = ", ".join([row_ph] * len(self._buffer))
+                row_ph = "(" + ", ".join(["%s"] * num_cols) + ")"
+                values_ph = ", ".join([row_ph] * len(sub_batch))
 
-            sql = (
-                f'INSERT INTO "{self.db_schema}".{self.db_table} ({col_list}) '
-                f'VALUES {values_ph} '
-                f'ON CONFLICT DO NOTHING'
-            )
+                sql = (
+                    f'INSERT INTO "{self.db_schema}".{self.db_table} ({col_list}) '
+                    f'VALUES {values_ph} '
+                    f'ON CONFLICT DO NOTHING'
+                )
 
-            # Flatten: [row1.col1, row1.col2, ..., row2.col1, row2.col2, ...]
-            flat_values = tuple(
-                row.get(col)
-                for row in self._buffer
-                for col in columns
-            )
+                flat_values = tuple(
+                    row.get(col)
+                    for row in sub_batch
+                    for col in columns
+                )
 
-            cur.execute(sql, flat_values)
+                cur.execute(sql, flat_values)
+
             self._conn.commit()
-
-            # Only count rows after a successful commit.
             self.total_rows_written += len(self._buffer)
-            logger.info(f"Inserted {len(self._buffer)} rows into {self.db_table}")
+            logger.info(f"Inserted {len(self._buffer)} rows into {self.db_table} "
+                        f"({num_cols} cols, sub-batches of {max_rows_per_insert})")
         except Exception:
             self._conn.rollback()
             self._had_error = True
