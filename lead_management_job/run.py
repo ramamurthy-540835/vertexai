@@ -9,7 +9,8 @@ from costco.leadmgmt.components.temporary_file_deletion import delete_temp_files
 import sys
 import os
 
-match_id = str(match_id_creation())
+match_id = os.environ.get("MATCH_ID") or str(match_id_creation())
+print(f"Using match_id: {match_id}")
 
 def run_pipeline(config_file_path,match_id):
 

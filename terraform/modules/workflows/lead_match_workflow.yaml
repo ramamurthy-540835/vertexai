@@ -8,6 +8,7 @@ main:
           - job_location: us-central1
           - job_name: lead-match-job
           - job_name_par: lead-match-job-par
+          - match_id: ${uuid.generate()}
 
     # Run lead + POS ingestion in parallel
     - load_data_parallel:
@@ -68,6 +69,9 @@ main:
                 args:
                   - run.py
                   - primary_matching
+                env:
+                  - name: MATCH_ID
+                    value: ${match_id}
           connector_params:
             timeout: 72000
             polling_policy:
@@ -135,6 +139,9 @@ main:
                 args:
                   - run.py
                   - temporary_file_deletion
+                env:
+                  - name: MATCH_ID
+                    value: ${match_id}
           connector_params:
             timeout: 72000
             polling_policy:
@@ -146,3 +153,4 @@ main:
     - success:
         return:
           status: "success"
+          match_id: ${match_id}
