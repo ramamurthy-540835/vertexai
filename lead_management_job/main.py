@@ -4,7 +4,7 @@ import os
 from costco.leadmgmt.config.Configuration import JobConfig,SnowConfig
 from costco.leadmgmt.sync_snow_gcp import get_data_from_snow, load_data_to_db, write_lead_data_to_db, \
     write_pos_data_to_db, read_lead_data, read_pos_data, get_record_snow_to_gcs, trigger_match_job
-
+from costco.leadmgmt.util.drive_to_gcs import run
 if __name__ == "__main__":
     config_path = os.environ.get("CONFIG_FILE_PATH")
     job_config = JobConfig(config_path)
@@ -186,6 +186,8 @@ if __name__ == "__main__":
             print("Error happened during trigger_match_job process")
             print(ex)
             raise ex
+    elif stage.lower() == "drive_to_gcs":
+        run()
     else:
         print("Invalid Argument - Valid arguments are [snow_to_gcs,gcs_to_db ,snow_to_db]")
         raise Exception("Invalid Arguments - Valid arguments are snow_to_gcs,gcs_to_db ,snow_to_db")

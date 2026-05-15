@@ -100,7 +100,6 @@ CREATE TABLE IF NOT EXISTS
     lead_count int,
 	pos_count int ,
 	match_count int,
-	no_match_count int,
 	stats varchar(100) NULL,
 	status VARCHAR(10) ,
 	start_date TIMESTAMP WITH TIME ZONE DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'),

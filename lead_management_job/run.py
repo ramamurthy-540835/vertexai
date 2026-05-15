@@ -6,7 +6,7 @@ from costco.leadmgmt.components.update_servicenow import update_servicenow
 from costco.leadmgmt.components.data_ingestion_cloud_sql import load_and_preprocess_data_cloud_sql
 from costco.leadmgmt.components.lead_matching import primary_classification
 #from costco.leadmgmt.components.temporary_file_deletion import delete_temp_files_from_gcs
-from costco.leadmgmt.components.validation_del_temp_files import delete_temp_files_from_gcs
+from costco.leadmgmt.components.validation_del_temp_files import delete_temp_files_from_gcs,mark_match_failed
 import sys
 import os
 
@@ -65,3 +65,5 @@ if __name__ == "__main__":
         primary_classification(match_id,config_file_path)
     elif stage.lower() == "temporary_file_deletion":
         delete_temp_files_from_gcs(match_id,config_file_path)
+    elif stage.lower() == "mark_match_failed":
+        mark_match_failed(match_id, config_file_path)

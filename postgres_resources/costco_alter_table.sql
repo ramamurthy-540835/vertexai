@@ -61,35 +61,37 @@
 -- Alter table  "$SCHEMA_NAME".transaction
 -- rename column sic_description to industry_description;
 
-ALTER TABLE "$SCHEMA_NAME".transaction
-    ADD COLUMN IF NOT EXISTS oms_company           VARCHAR(200),
-    ADD COLUMN IF NOT EXISTS oms_company_2         VARCHAR(200),
-    ADD COLUMN IF NOT EXISTS oms_email_1           VARCHAR(150),
-    ADD COLUMN IF NOT EXISTS oms_email_2           VARCHAR(150),
-    ADD COLUMN IF NOT EXISTS oms_email_3           VARCHAR(150),
-    ADD COLUMN IF NOT EXISTS oms_phone_1           VARCHAR(40),
-    ADD COLUMN IF NOT EXISTS oms_phone_2           VARCHAR(40),
-    ADD COLUMN IF NOT EXISTS oms_phone_3           VARCHAR(40),
-    ADD COLUMN IF NOT EXISTS oms_cell_1            VARCHAR(40),
-    ADD COLUMN IF NOT EXISTS oms_cell_2            VARCHAR(40),
-    ADD COLUMN IF NOT EXISTS oms_first_name        VARCHAR(100),
-    ADD COLUMN IF NOT EXISTS oms_middle_name       VARCHAR(100),
-    ADD COLUMN IF NOT EXISTS oms_last_name         VARCHAR(100),
-    ADD COLUMN IF NOT EXISTS oms_address_line_1    VARCHAR(150),
-    ADD COLUMN IF NOT EXISTS oms_city              VARCHAR(80),
-    ADD COLUMN IF NOT EXISTS oms_state             VARCHAR(50),
-    ADD COLUMN IF NOT EXISTS oms_zip               VARCHAR(20),
-    ADD COLUMN IF NOT EXISTS oms_address_line_1_v2 VARCHAR(150),
-    ADD COLUMN IF NOT EXISTS oms_address_line_2    VARCHAR(150),
-    ADD COLUMN IF NOT EXISTS oms_address_line_3    VARCHAR(150),
-    ADD COLUMN IF NOT EXISTS oms_address_line_4    VARCHAR(150),
-    ADD COLUMN IF NOT EXISTS oms_address_line_5    VARCHAR(150),
-    ADD COLUMN IF NOT EXISTS oms_address_line_6    VARCHAR(150),
-    ADD COLUMN IF NOT EXISTS oms_city_2            VARCHAR(80),
-    ADD COLUMN IF NOT EXISTS oms_state_2           VARCHAR(50),
-    ADD COLUMN IF NOT EXISTS oms_zip_2             VARCHAR(20),
-    ADD COLUMN IF NOT EXISTS oms_zip_3             VARCHAR(20),
-    ADD COLUMN IF NOT EXISTS oms_zip_4             VARCHAR(20);
+ALTER TABLE "$SCHEMA_NAME".match_audit DROP COLUMN IF EXISTS no_match_count;
+
+-- ALTER TABLE "$SCHEMA_NAME".transaction
+--     ADD COLUMN IF NOT EXISTS oms_company           VARCHAR(200),
+--     ADD COLUMN IF NOT EXISTS oms_company_2         VARCHAR(200),
+--     ADD COLUMN IF NOT EXISTS oms_email_1           VARCHAR(150),
+--     ADD COLUMN IF NOT EXISTS oms_email_2           VARCHAR(150),
+--     ADD COLUMN IF NOT EXISTS oms_email_3           VARCHAR(150),
+--     ADD COLUMN IF NOT EXISTS oms_phone_1           VARCHAR(40),
+--     ADD COLUMN IF NOT EXISTS oms_phone_2           VARCHAR(40),
+--     ADD COLUMN IF NOT EXISTS oms_phone_3           VARCHAR(40),
+--     ADD COLUMN IF NOT EXISTS oms_cell_1            VARCHAR(40),
+--     ADD COLUMN IF NOT EXISTS oms_cell_2            VARCHAR(40),
+--     ADD COLUMN IF NOT EXISTS oms_first_name        VARCHAR(100),
+--     ADD COLUMN IF NOT EXISTS oms_middle_name       VARCHAR(100),
+--     ADD COLUMN IF NOT EXISTS oms_last_name         VARCHAR(100),
+--     ADD COLUMN IF NOT EXISTS oms_address_line_1    VARCHAR(150),
+--     ADD COLUMN IF NOT EXISTS oms_city              VARCHAR(80),
+--     ADD COLUMN IF NOT EXISTS oms_state             VARCHAR(50),
+--     ADD COLUMN IF NOT EXISTS oms_zip               VARCHAR(20),
+--     ADD COLUMN IF NOT EXISTS oms_address_line_1_v2 VARCHAR(150),
+--     ADD COLUMN IF NOT EXISTS oms_address_line_2    VARCHAR(150),
+--     ADD COLUMN IF NOT EXISTS oms_address_line_3    VARCHAR(150),
+--     ADD COLUMN IF NOT EXISTS oms_address_line_4    VARCHAR(150),
+--     ADD COLUMN IF NOT EXISTS oms_address_line_5    VARCHAR(150),
+--     ADD COLUMN IF NOT EXISTS oms_address_line_6    VARCHAR(150),
+--     ADD COLUMN IF NOT EXISTS oms_city_2            VARCHAR(80),
+--     ADD COLUMN IF NOT EXISTS oms_state_2           VARCHAR(50),
+--     ADD COLUMN IF NOT EXISTS oms_zip_2             VARCHAR(20),
+--     ADD COLUMN IF NOT EXISTS oms_zip_3             VARCHAR(20),
+--     ADD COLUMN IF NOT EXISTS oms_zip_4             VARCHAR(20);
 
 
-DROP INDEX IF EXISTS "$SCHEMA_NAME".txn_uniq_sales_reference_id_idx;
+-- DROP INDEX IF EXISTS "$SCHEMA_NAME".txn_uniq_sales_reference_id_idx;

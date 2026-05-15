@@ -133,47 +133,47 @@ jobs:
             --memory=8Gi
             --cpu=2
 
-      - name: Deploy cloud run service
-        if: env.DEPLOY == 'true'
-        uses: google-github-actions/deploy-cloudrun@v2
-        with:
-          service: cloud-scheduler-service
-          image: 'us-docker.pkg.dev/gcp-prj-images/gcp-gar-repo-mbrshp/cloud-run-service:latest'
-          project_id: ${{ env.PROJECT_ID }}
-          flags: |
-            --service-account=${{ env.SERVICE_ACCOUNT }}
-            --vpc-egress=all-traffic
-            --ingress=internal
-            --network=projects/gcp-prj-transit-hub/global/networks/gcp-vpc-np-host
-            --subnet=projects/gcp-prj-transit-hub/regions/us-central1/subnetworks/gcp-snt-np-usc1-601-cloudrunjobs-np
-            --set-env-vars="PROJECT_ID=${{ env.PROJECT_ID }}"
+      # - name: Deploy cloud run service
+      #   if: env.DEPLOY == 'true'
+      #   uses: google-github-actions/deploy-cloudrun@v2
+      #   with:
+      #     service: cloud-scheduler-service
+      #     image: 'us-docker.pkg.dev/gcp-prj-images/gcp-gar-repo-mbrshp/cloud-run-service:latest'
+      #     project_id: ${{ env.PROJECT_ID }}
+      #     flags: |
+      #       --service-account=${{ env.SERVICE_ACCOUNT }}
+      #       --vpc-egress=all-traffic
+      #       --ingress=internal
+      #       --network=projects/gcp-prj-transit-hub/global/networks/gcp-vpc-np-host
+      #       --subnet=projects/gcp-prj-transit-hub/regions/us-central1/subnetworks/gcp-snt-np-usc1-601-cloudrunjobs-np
+      #       --set-env-vars="PROJECT_ID=${{ env.PROJECT_ID }}"
 
-      - name: Set SERVICE_URL output
-        if: env.DEPLOY == 'true'
-        id: get-service-url
-        run: |
-          SERVICE_URL=$(gcloud run services describe cloud-scheduler-service \
-          --project ${{ env.PROJECT_ID }} --region us-central1 --format 'value(status.uri)')
-          echo "SERVICE_URL=$SERVICE_URL"
-          echo "service_url=$SERVICE_URL" >> $GITHUB_OUTPUT
+      # - name: Set SERVICE_URL output
+      #   if: env.DEPLOY == 'true'
+      #   id: get-service-url
+      #   run: |
+      #     SERVICE_URL=$(gcloud run services describe cloud-scheduler-service \
+      #     --project ${{ env.PROJECT_ID }} --region us-central1 --format 'value(status.uri)')
+      #     echo "SERVICE_URL=$SERVICE_URL"
+      #     echo "service_url=$SERVICE_URL" >> $GITHUB_OUTPUT
 
-      - name: Add schedule to Cloud Run Job
-        if: env.DEPLOY == 'true'
-        run: |
-          if gcloud scheduler jobs describe snow-sync-job-scheduler \
-            --project ${{ env.PROJECT_ID }} \
-            --location us-central1 > /dev/null 2>&1; then
-            echo "Scheduler job already exists. Skipping creation."
-          else
-            echo "Creating scheduler job..."
-            gcloud scheduler jobs create http snow-sync-job-scheduler \
-              --project ${{ env.PROJECT_ID }} \
-              --location us-central1 \
-              --schedule="0 0 * * *" \
-              --uri=${{ steps.get-service-url.outputs.service_url }} \
-              --http-method=GET \
-              --oidc-service-account-email=${{ env.SERVICE_ACCOUNT }}
-          fi
+      # - name: Add schedule to Cloud Run Job
+      #   if: env.DEPLOY == 'true'
+      #   run: |
+      #     if gcloud scheduler jobs describe snow-sync-job-scheduler \
+      #       --project ${{ env.PROJECT_ID }} \
+      #       --location us-central1 > /dev/null 2>&1; then
+      #       echo "Scheduler job already exists. Skipping creation."
+      #     else
+      #       echo "Creating scheduler job..."
+      #       gcloud scheduler jobs create http snow-sync-job-scheduler \
+      #         --project ${{ env.PROJECT_ID }} \
+      #         --location us-central1 \
+      #         --schedule="0 0 * * *" \
+      #         --uri=${{ steps.get-service-url.outputs.service_url }} \
+      #         --http-method=GET \
+      #         --oidc-service-account-email=${{ env.SERVICE_ACCOUNT }}
+      #     fi
 
       - name: Describe deployed job
         if: env.DEPLOY == 'true'

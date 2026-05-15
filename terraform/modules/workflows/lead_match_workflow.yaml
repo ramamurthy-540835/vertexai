@@ -7,148 +7,235 @@ main:
           - project_id: ${sys.get_env("GOOGLE_CLOUD_PROJECT_ID")}
           - job_location: us-central1
           - job_name: lead-match-job
-          - job_name_par: lead-match-job-par
           - match_id: ${uuid.generate()}
 
-    # Run lead + POS ingestion in parallel
+    # ── Ingestion (parallel) ──
+    # These stages don't use match_id — no audit failure write needed,
+    # but the overall workflow should still mark failed if these die.
     - load_data_parallel:
-        parallel:
-          branches:
+        try:
+          parallel:
+            branches:
+              - load_leads_branch:
+                  steps:
+                    - load_lead_from_cloud_sql:
+                        call: googleapis.run.v1.namespaces.jobs.run
+                        args:
+                          name: ${"namespaces/" + project_id + "/jobs/" + job_name}
+                          location: ${job_location}
+                          body:
+                            overrides:
+                              containerOverrides:
+                                args:
+                                  - run.py
+                                  - ingest_leads_from_cloud_sql
+                          connector_params:
+                            timeout: 72000
+                            polling_policy:
+                              initial_delay: 5
+                              multiplier: 1.5
+                              max_delay: 60
+                            skip_polling: false
 
-            - load_leads_branch:
-                steps:
-                  - load_lead_from_cloud_sql:
-                      call: googleapis.run.v1.namespaces.jobs.run
-                      args:
-                        name: ${"namespaces/" + project_id + "/jobs/" + job_name}
-                        location: ${job_location}
-                        body:
-                          overrides:
-                            containerOverrides:
-                              args:
-                                - run.py
-                                - ingest_leads_from_cloud_sql
-                        connector_params:
-                          timeout: 72000
-                          polling_policy:
-                            initial_delay: 5
-                            multiplier: 1.5
-                            max_delay: 60
-                          skip_polling: false
+              - load_pos_branch:
+                  steps:
+                    - load_pos_from_cloud_sql:
+                        call: googleapis.run.v1.namespaces.jobs.run
+                        args:
+                          name: ${"namespaces/" + project_id + "/jobs/" + job_name}
+                          location: ${job_location}
+                          body:
+                            overrides:
+                              containerOverrides:
+                                args:
+                                  - run.py
+                                  - ingest_pos_from_cloud_sql
+                          connector_params:
+                            timeout: 72000
+                            polling_policy:
+                              initial_delay: 5
+                              multiplier: 1.5
+                              max_delay: 60
+                            skip_polling: false
+        except:
+          as: ingest_error
+          steps:
+            - mark_failed_ingest:
+                call: googleapis.run.v1.namespaces.jobs.run
+                args:
+                  name: ${"namespaces/" + project_id + "/jobs/" + job_name}
+                  location: ${job_location}
+                  body:
+                    overrides:
+                      containerOverrides:
+                        args:
+                          - run.py
+                          - mark_match_failed
+                        env:
+                          - name: MATCH_ID
+                            value: ${match_id}
+                          - name: FAILURE_STAGE
+                            value: "ingestion"
+            - raise_ingest_error:
+                raise: ${ingest_error}
 
-            - load_pos_branch:
-                steps:
-                  - load_pos_from_cloud_sql:
-                      call: googleapis.run.v1.namespaces.jobs.run
-                      args:
-                        name: ${"namespaces/" + project_id + "/jobs/" + job_name}
-                        location: ${job_location}
-                        body:
-                          overrides:
-                            containerOverrides:
-                              args:
-                                - run.py
-                                - ingest_pos_from_cloud_sql
-                        connector_params:
-                          timeout: 72000
-                          polling_policy:
-                            initial_delay: 5
-                            multiplier: 1.5
-                            max_delay: 60
-                          skip_polling: false
-
-    # Runs only after BOTH parallel branches complete
+    # ── Lead matching ──
     - lead_matching:
-        call: googleapis.run.v1.namespaces.jobs.run
-        args:
-          name: ${"namespaces/" + project_id + "/jobs/" + job_name}
-          location: ${job_location}
-          body:
-            overrides:
-              containerOverrides:
+        try:
+          call: googleapis.run.v1.namespaces.jobs.run
+          args:
+            name: ${"namespaces/" + project_id + "/jobs/" + job_name}
+            location: ${job_location}
+            body:
+              overrides:
+                containerOverrides:
+                  args:
+                    - run.py
+                    - primary_matching
+                  env:
+                    - name: MATCH_ID
+                      value: ${match_id}
+            connector_params:
+              timeout: 72000
+              polling_policy:
+                initial_delay: 5
+                multiplier: 1.5
+                max_delay: 60
+              skip_polling: false
+        except:
+          as: match_error
+          steps:
+            - mark_failed_match:
+                call: googleapis.run.v1.namespaces.jobs.run
                 args:
-                  - run.py
-                  - primary_matching
-                env:
-                  - name: MATCH_ID
-                    value: ${match_id}
-          connector_params:
-            timeout: 72000
-            polling_policy:
-              initial_delay: 5
-              multiplier: 1.5
-              max_delay: 60
-            skip_polling: false
+                  name: ${"namespaces/" + project_id + "/jobs/" + job_name}
+                  location: ${job_location}
+                  body:
+                    overrides:
+                      containerOverrides:
+                        args:
+                          - run.py
+                          - mark_match_failed
+                        env:
+                          - name: MATCH_ID
+                            value: ${match_id}
+                          - name: FAILURE_STAGE
+                            value: "primary_matching"
+            - raise_match_error:
+                raise: ${match_error}
 
-    # Run ServiceNow update + DB update in parallel
+    # ── Updates (parallel) ──
     - update_parallel:
-        parallel:
-          branches:
+        try:
+          parallel:
+            branches:
+              - update_servicenow_branch:
+                  steps:
+                    - update_service_now:
+                        call: googleapis.run.v1.namespaces.jobs.run
+                        args:
+                          name: ${"namespaces/" + project_id + "/jobs/" + job_name}
+                          location: ${job_location}
+                          body:
+                            overrides:
+                              containerOverrides:
+                                args:
+                                  - run.py
+                                  - update_service_now
+                          connector_params:
+                            timeout: 72000
+                            polling_policy:
+                              initial_delay: 5
+                              multiplier: 1.5
+                              max_delay: 60
+                            skip_polling: false
 
-            - update_servicenow_branch:
-                steps:
-                  - update_service_now:
-                      call: googleapis.run.v1.namespaces.jobs.run
-                      args:
-                        name: ${"namespaces/" + project_id + "/jobs/" + job_name}
-                        location: ${job_location}
-                        body:
-                          overrides:
-                            containerOverrides:
-                              args:
-                                - run.py
-                                - update_service_now
-                        connector_params:
-                          timeout: 72000
-                          polling_policy:
-                            initial_delay: 5
-                            multiplier: 1.5
-                            max_delay: 60
-                          skip_polling: false
-
-            - update_database_branch:
-                steps:
-                  - update_cloud_sql:
-                      call: googleapis.run.v1.namespaces.jobs.run
-                      args:
-                        name: ${"namespaces/" + project_id + "/jobs/" + job_name}
-                        location: ${job_location}
-                        body:
-                          overrides:
-                            containerOverrides:
-                              args:
-                                - run.py
-                                - update_database
-                        connector_params:
-                          timeout: 72000
-                          polling_policy:
-                            initial_delay: 5
-                            multiplier: 1.5
-                            max_delay: 60
-                          skip_polling: false
-
-    # Runs only after BOTH updates complete
-    - temporary_file_deletion:
-        call: googleapis.run.v1.namespaces.jobs.run
-        args:
-          name: ${"namespaces/" + project_id + "/jobs/" + job_name}
-          location: ${job_location}
-          body:
-            overrides:
-              containerOverrides:
+              - update_database_branch:
+                  steps:
+                    - update_cloud_sql:
+                        call: googleapis.run.v1.namespaces.jobs.run
+                        args:
+                          name: ${"namespaces/" + project_id + "/jobs/" + job_name}
+                          location: ${job_location}
+                          body:
+                            overrides:
+                              containerOverrides:
+                                args:
+                                  - run.py
+                                  - update_database
+                          connector_params:
+                            timeout: 72000
+                            polling_policy:
+                              initial_delay: 5
+                              multiplier: 1.5
+                              max_delay: 60
+                            skip_polling: false
+        except:
+          as: update_error
+          steps:
+            - mark_failed_update:
+                call: googleapis.run.v1.namespaces.jobs.run
                 args:
-                  - run.py
-                  - temporary_file_deletion
-                env:
-                  - name: MATCH_ID
-                    value: ${match_id}
-          connector_params:
-            timeout: 72000
-            polling_policy:
-              initial_delay: 5
-              multiplier: 1.5
-              max_delay: 60
-            skip_polling: false
+                  name: ${"namespaces/" + project_id + "/jobs/" + job_name}
+                  location: ${job_location}
+                  body:
+                    overrides:
+                      containerOverrides:
+                        args:
+                          - run.py
+                          - mark_match_failed
+                        env:
+                          - name: MATCH_ID
+                            value: ${match_id}
+                          - name: FAILURE_STAGE
+                            value: "update"
+            - raise_update_error:
+                raise: ${update_error}
+
+    # ── Cleanup ──
+    - temporary_file_deletion:
+        try:
+          call: googleapis.run.v1.namespaces.jobs.run
+          args:
+            name: ${"namespaces/" + project_id + "/jobs/" + job_name}
+            location: ${job_location}
+            body:
+              overrides:
+                containerOverrides:
+                  args:
+                    - run.py
+                    - temporary_file_deletion
+                  env:
+                    - name: MATCH_ID
+                      value: ${match_id}
+            connector_params:
+              timeout: 72000
+              polling_policy:
+                initial_delay: 5
+                multiplier: 1.5
+                max_delay: 60
+              skip_polling: false
+        except:
+          as: cleanup_error
+          steps:
+            - mark_failed_cleanup:
+                call: googleapis.run.v1.namespaces.jobs.run
+                args:
+                  name: ${"namespaces/" + project_id + "/jobs/" + job_name}
+                  location: ${job_location}
+                  body:
+                    overrides:
+                      containerOverrides:
+                        args:
+                          - run.py
+                          - mark_match_failed
+                        env:
+                          - name: MATCH_ID
+                            value: ${match_id}
+                          - name: FAILURE_STAGE
+                            value: "cleanup"
+            - raise_cleanup_error:
+                raise: ${cleanup_error}
 
     - success:
         return:

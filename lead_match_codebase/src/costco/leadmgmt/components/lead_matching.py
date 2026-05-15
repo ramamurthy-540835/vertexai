@@ -280,7 +280,6 @@ def classify_matches(
     # VECTORIZED MATCHED FIELD TRACKING
     # Build one tall DataFrame per field group, then groupby to
     # get a list of matched fields per (lead_id, pos_id) pair.
-    # Avoids iterrows() entirely — scales to millions of pairs.
     # ==========================================================
 
     # Key fields
@@ -411,18 +410,20 @@ def classify_matches(
     # ==========================================================
     # PRIMARY TRANSACTION LOGIC
     # ==========================================================
-    matched_df = matched_df.sort_values(
-        by=[
-            "lead_id",
-            "fiscal_year_transaction",
-            "fiscal_period_transaction",
-            "week",
-        ],
+    # Default everyone to False
+    matched_df["primary_transaction"] = False
+
+    # Only rank Match rows
+    match_only = matched_df[matched_df["match_result"] == "Match"].copy()
+    match_only = match_only.sort_values(
+        by=["lead_id", "fiscal_year_transaction", "fiscal_period_transaction", "week"],
         ascending=True,
     )
-    matched_df["rank"] = matched_df.groupby("lead_id").cumcount() + 1
-    matched_df["primary_transaction"] = matched_df["rank"] == 1
-    matched_df.drop(columns=["rank"], inplace=True)
+    match_only["rank"] = match_only.groupby("lead_id").cumcount() + 1
+
+    # Mark primary on the earliest Match row, using its index
+    primary_idx = match_only[match_only["rank"] == 1].index
+    matched_df.loc[primary_idx, "primary_transaction"] = True
 
     # ==========================================================
     # MATCHING COMMENTS
@@ -489,6 +490,14 @@ def classify_matches(
         "updated_date",
     ]].copy()
 
+    final_df = (
+    final_df
+    .sort_values(
+        by=["similarity_score", "primary_transaction", "match_result"],
+        ascending=[False, False, True],   # score↓, primary↓, "Match" < "Potential" alphabetically
+    )
+    .drop_duplicates(subset=["lead_id", "pos_id"], keep="first")
+)
     log.info("Final matched records: %d", len(final_df))
     return final_df
 
