@@ -71,13 +71,13 @@ jobs:
       #       --project=p-601-np-bcleadsmgmt-qat \
       #       --region=us-central1
 
-      # - name: "Run cloud run job in qat"
-      #   run: | 
-      #      unset CLOUDSDK_CORE_PROJECT
-      #      gcloud config set project p-601-np-bcleadsmgmt-qat
-      #      gcloud run jobs execute snow-sync-job --region=us-central1 \
-      #      --project=p-601-np-bcleadsmgmt-qat \
-      #      --args="main.py,match_job"
+      - name: "Run cloud run job in adt -drive to gcs"
+        run: | 
+           unset CLOUDSDK_CORE_PROJECT
+           gcloud config set project p-601-np-bcleadsmgmt-adt
+           gcloud run jobs execute snow-sync-job --region=us-central1 \
+           --project=p-601-np-bcleadsmgmt-adt \
+           --args="main.py,drive_to_gcs"
 
       # - name: "Test service now connectivity in ADT"
       #   run: | 
@@ -124,11 +124,11 @@ jobs:
       #       --location=us-central1 \
       #       --project=$PROJECT_ID \
       #       --data="$JSON_DATA"
-      - name: "run lead match workflow"
-        run: |
-          unset CLOUDSDK_CORE_PROJECT
-          gcloud config set project p-601-np-bcleadsmgmt-adt
-          gcloud workflows execute lead_match_workflow --location=us-central1 \
+      # - name: "run lead match"
+      #   run: |
+      #     unset CLOUDSDK_CORE_PROJECT
+      #     gcloud config set project p-601-np-bcleadsmgmt-adt
+      #     gcloud workflows execute lead_match_workflow --location=us-central1 \
       #   #--data='{"batch_id":"7bd759e8-cde4-44a1-9c4b-3689d199ada3","start_at":"leads_to_db"}'
 
       # #- name: "Check address space"
