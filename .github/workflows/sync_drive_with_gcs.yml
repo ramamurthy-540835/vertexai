@@ -1,0 +1,111 @@
+name: drive_to_gcs_sync
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'adt'
+        type: choice
+        options: ['adt', 'qat', 'spt']
+
+      drive_folder_id:
+        description: 'Google Drive folder ID (the part after /folders/ in the URL)'
+        required: true
+        type: string
+
+      create_manifest_after:
+        description: 'Automatically create manifest after sync completes'
+        required: true
+        default: true
+        type: boolean
+
+jobs:
+  trigger_sync:
+    name: "Drive → GCS sync (${{ github.event.inputs.environment }})"
+    runs-on:
+      - self-hosted
+      - us-central1
+    environment: ${{ github.event.inputs.environment }}
+
+    permissions:
+      id-token: write
+      contents: read
+      actions: write   # needed to dispatch the manifest workflow
+
+    env:
+      ENV_NAME:        ${{ github.event.inputs.environment }}
+      DRIVE_FOLDER_ID: ${{ github.event.inputs.drive_folder_id }}
+      PROJECT_ID:      'p-601-np-bcleadsmgmt-${{ github.event.inputs.environment }}'
+      JOB_NAME:        'snow-sync-job'
+      REGION:          'us-central1'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Auth to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
+          service_account: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Trigger Drive → GCS Cloud Run job
+        run: |
+          set -euo pipefail
+          unset CLOUDSDK_CORE_PROJECT CLOUDSDK_PROJECT GCLOUD_PROJECT GCP_PROJECT GOOGLE_CLOUD_PROJECT
+          gcloud config set project "${PROJECT_ID}"
+
+          echo "Triggering job: ${JOB_NAME}"
+          echo "  Environment:     ${ENV_NAME}"
+          echo "  Drive folder ID: ${DRIVE_FOLDER_ID}"
+
+          gcloud run jobs execute "${JOB_NAME}" \
+            --region="${REGION}" \
+            --project="${PROJECT_ID}" \
+            --args="main.py,drive_to_gcs" \
+            --update-env-vars="DRIVE_FOLDER_ID=${DRIVE_FOLDER_ID}" \
+            --wait
+
+          echo ""
+          echo "✅ Drive sync complete"
+
+      - name: Trigger manifest creation
+        if: ${{ github.event.inputs.create_manifest_after == 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          echo "Dispatching create_manifest workflow for environment: ${ENV_NAME}"
+
+          gh workflow run create_manifest.yml \
+            --ref "${GITHUB_REF_NAME}" \
+            -f environment="${ENV_NAME}" \
+            -f dry_run="false" \
+            -f allow_empty="false"
+
+          echo "✅ create_manifest dispatched"
+          echo ""
+          echo "Note: This is a fire-and-forget dispatch. The manifest workflow runs"
+          echo "independently. Check Actions tab to monitor its progress."
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "## Drive → GCS Sync — ${ENV_NAME}"
+            echo ""
+            echo "- **Environment:** \`${ENV_NAME}\`"
+            echo "- **Drive folder ID:** \`${DRIVE_FOLDER_ID}\`"
+            echo "- **Manifest created:** ${{ github.event.inputs.create_manifest_after }}"
+            echo ""
+            if [ "${{ github.event.inputs.create_manifest_after }}" = "true" ]; then
+              echo "### Manifest workflow status"
+              echo ""
+              echo "Check the [\`create_manifest\` workflow runs](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/workflows/create_manifest.yml) to see if it completed."
+            fi
+          } >> $GITHUB_STEP_SUMMARY
