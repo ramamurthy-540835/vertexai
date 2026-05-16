@@ -10,15 +10,6 @@ on:
       - 'postgres_resources/**.sql'
       - '.github/workflows/provision_qat_schema.yml'
 
-  pull_request:
-    branches:
-      - "main"
-    paths:
-     - 'terraform/environments/qat/schema/**.tf'
-     - 'postgres_resources/**.sql'
-     - '.github/workflows/provision_qat_schema.yml'
-
-
 jobs:
   run:
     name: "Provision schema"

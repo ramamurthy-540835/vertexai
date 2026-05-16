@@ -20,7 +20,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 log = logging.getLogger(__name__)
 
 PROJECT_ID  = os.environ["GCP_PROJECT_ID"]
-BUCKET_NAME = os.environ["INPUT_BUCKET_NAME"]
+BUCKET_NAME = os.environ["POS_BUCKET_NAME"]
 FOLDER_ID   = os.environ["DRIVE_FOLDER_ID"]
 DEST_PREFIX = os.environ.get("GCS_DESTINATION_PREFIX", "").rstrip("/")
 

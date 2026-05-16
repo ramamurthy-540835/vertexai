@@ -1,0 +1,93 @@
+name: cleanup_scheduler_jobs
+
+# ─────────────────────────────────────────────────────────────
+# One-time cleanup workflow to delete legacy scheduler jobs
+# from all three environments (adt, qat, spt).
+#
+# Manual trigger only. Remove this workflow file after running
+# successfully — it's not meant to be a recurring operation.
+# ─────────────────────────────────────────────────────────────
+
+on:
+  workflow_dispatch:
+    inputs:
+      job_name:
+        description: 'Cloud Scheduler job name to delete'
+        required: true
+        default: 'snow-sync-job-scheduler'
+        type: string
+      region:
+        description: 'Region where the scheduler job lives'
+        required: true
+        default: 'us-central1'
+        type: string
+
+jobs:
+  delete_scheduler_jobs:
+    name: "Delete scheduler job in all environments"
+    runs-on:
+      - self-hosted
+      - us-central1
+
+    permissions:
+      id-token: write
+      contents: read
+
+    strategy:
+      fail-fast: false   # don't stop if one env fails — try all three
+      matrix:
+        environment: [adt, qat, spt]
+
+    env:
+      JOB_NAME:   ${{ github.event.inputs.job_name }}
+      REGION:     ${{ github.event.inputs.region }}
+      PROJECT_ID: 'p-601-np-bcleadsmgmt-${{ matrix.environment }}'
+
+    steps:
+      - name: Auth to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
+          service_account: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Delete scheduler job in ${{ matrix.environment }}
+        run: |
+          set +e
+          unset CLOUDSDK_CORE_PROJECT CLOUDSDK_PROJECT GCLOUD_PROJECT GCP_PROJECT GOOGLE_CLOUD_PROJECT
+
+          echo "─── ${PROJECT_ID} ───"
+          echo "Checking if '${JOB_NAME}' exists in ${PROJECT_ID}..."
+
+          if gcloud scheduler jobs describe "${JOB_NAME}" \
+               --location="${REGION}" \
+               --project="${PROJECT_ID}" >/dev/null 2>&1; then
+
+            echo "Found. Deleting..."
+            gcloud scheduler jobs delete "${JOB_NAME}" \
+              --location="${REGION}" \
+              --project="${PROJECT_ID}" \
+              --quiet
+
+            if [ $? -eq 0 ]; then
+              echo "✅ Deleted ${JOB_NAME} from ${PROJECT_ID}"
+            else
+              echo "❌ Failed to delete (likely permission issue)"
+              exit 1
+            fi
+          else
+            echo "ℹ️  Not found in ${PROJECT_ID} (already deleted or never existed)"
+          fi
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "## Scheduler Cleanup — ${{ matrix.environment }}"
+            echo ""
+            echo "- **Project:** \`${PROJECT_ID}\`"
+            echo "- **Job:** \`${JOB_NAME}\`"
+            echo "- **Region:** \`${REGION}\`"
+          } >> $GITHUB_STEP_SUMMARY
