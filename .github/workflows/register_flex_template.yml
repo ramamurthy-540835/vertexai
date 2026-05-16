@@ -2,8 +2,10 @@ name: register_flex_template
 
 # ─────────────────────────────────────────────────────────────
 # Registers a Dataflow Flex Template spec in the target env's
-# bucket. Each env's template points to its own image tag
-# (:adt, :qat, :spt) so envs are independent.
+# bucket. All environments register their template against the
+# SAME image (:latest) — environment-specific behavior comes from
+# the template's runtime parameters (project, region, bucket, etc.),
+# not from per-environment image tags.
 # ─────────────────────────────────────────────────────────────
 
 on:
@@ -64,8 +66,10 @@ jobs:
           PROJECT_ID="p-601-np-bcleadsmgmt-${ENVIRONMENT}"
           BUCKET_NAME="gcp-gcs-lead-mgmt-us-${ENVIRONMENT}-pos-raw"
 
-          # Each env points to its own image tag
-          IMAGE_URI="us-docker.pkg.dev/gcp-prj-images/gcp-gar-repo-mbrshp/pos-pipeline-flex:${ENVIRONMENT}"
+          # Single shared image — all environments use :latest.
+          # Environment-specific values come from runtime parameters,
+          # not from a per-env image tag.
+          IMAGE_URI="us-docker.pkg.dev/gcp-prj-images/gcp-gar-repo-mbrshp/pos-pipeline-flex:latest"
 
           # Per-env template spec lives in the env's own bucket
           TEMPLATE_GCS="gs://${BUCKET_NAME}/templates/pos-pipeline-flex-${ENVIRONMENT}.json"
