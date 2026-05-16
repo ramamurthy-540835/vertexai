@@ -1,5 +1,4 @@
 apache-beam[gcp]==2.59.0
-psycopg2-binary==2.9.9
 cloud-sql-python-connector[pg8000]>=1.7.0
 google-auth>=2.29.0
 google-cloud-pubsub>=2.21.1

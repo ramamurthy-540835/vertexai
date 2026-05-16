@@ -1,6 +1,19 @@
 # pos_dataflow_workflow.yaml
 # Triggered by Eventarc → Pub/Sub when a manifest.json lands in the
 # configured manifests folder.
+#
+# Flow:
+#   1. Decode the Pub/Sub event → get manifest path + bucket
+#   2. Read env config from gs://<bucket>/config/workflow-config.json
+#   3. Validate manifest path matches expected prefix
+#   4. Read the manifest from GCS
+#   5. Launch Dataflow Flex Template jobs in parallel (bounded concurrency)
+#   6. After Dataflow succeeds: MOVE source files to processed/ (decoupled
+#      from downstream so files don't pile up if downstream is flaky)
+#   7. Trigger downstream snow_sync_workflow
+#   8. Wait for downstream to complete
+#   9. Done — workflow SUCCEEDED if downstream also succeeded, FAILED otherwise
+#      (but files are already moved and data is already in DB by step 6)
 
 main:
   params: [event]
@@ -38,6 +51,7 @@ main:
           - batch_size: '${cfg.dataflow.batch_size}'
           - instance_conn: '${cfg.database.instance_connection_name}'
           - db_name: '${cfg.database.db_name}'
+          - db_user: '${cfg.database.db_user}'
           - db_schema: '${cfg.database.db_schema}'
           - db_table: '${cfg.database.db_table}'
           - manifest_prefix: '${cfg.manifest_prefix}'
@@ -68,6 +82,7 @@ main:
           - run_id: '${default(map.get(manifest, "run_id"), manifest_object)}'
           - all_files: '${manifest.files}'
           - file_count: '${len(all_files)}'
+          - batch_id: '${uuid.generate()}' 
 
     - log_run_start:
         call: sys.log
@@ -97,7 +112,7 @@ main:
                     location: '${region}'
                     body:
                       launchParameter:
-                        jobName: '${"pos-etl-" + run_id + "-" + string(int(sys.now()))}'
+                        jobName: '${"pos-etl-" + run_id + "-" + string(int(sys.now() * 1000000))}'
                         containerSpecGcsPath: '${template_path}'
                         parameters:
                           input_file: '${file_path}'
@@ -105,11 +120,14 @@ main:
                           db_name: '${db_name}'
                           db_schema: '${db_schema}'
                           db_table: '${db_table}'
+                          db_user: '${db_user}'
                           field_map_path: '${field_map_gcs}'
                           batch_size: '${batch_size}'
+                          batch_id: '${batch_id}'            
+                          manifest_run_id: '${run_id}'
                         environment:
                           serviceAccountEmail: '${sa_email}'
-                          subnetwork: '${subnetwork}' 
+                          subnetwork: '${subnetwork}'
                           maxWorkers: '${string(max_workers)}'
                           machineType: '${machine_type}'
                           tempLocation: '${"gs://" + bucket + "/dataflow/temp"}'
@@ -142,51 +160,11 @@ main:
           severity: INFO
           text: '${"[" + environment + "] all " + string(file_count) + " Dataflow jobs DONE"}'
 
-    # ── 6. Trigger downstream workflow (snow_sync) ─────────────────────
-    - trigger_downstream:
-        steps:
-          - build_payload:
-              assign:
-                - downstream_map:
-                    pos_run_id: '${run_id}'
-                    pos_files: '${all_files}'
-                    upstream: "pos_dataflow_workflow"
-                    environment: '${environment}'
-          - encode_argument:
-              assign:
-                - downstream_args: '${json.encode_to_string(downstream_map)}'
-          - create_execution:
-              call: googleapis.workflowexecutions.v1.projects.locations.workflows.executions.create
-              args:
-                parent: '${"projects/" + project_id + "/locations/" + next_wf_location + "/workflows/" + next_workflow}'
-                body:
-                  argument: '${downstream_args}'
-              result: downstream_execution
-
-    # ── 7. Wait for downstream to complete ─────────────────────────────
-    - wait_for_downstream:
-        call: googleapis.workflowexecutions.v1.projects.locations.workflows.executions.get
-        args:
-          name: '${downstream_execution.name}'
-        result: downstream_result
-        next: check_downstream_status
-
-    - check_downstream_status:
-        switch:
-          - condition: '${downstream_result.state == "SUCCEEDED"}'
-            next: move_files_to_processed
-          - condition: '${downstream_result.state == "FAILED"}'
-            raise: '${downstream_result.error}'
-          - condition: true
-            next: poll_delay
-
-    - poll_delay:
-        call: sys.sleep
-        args:
-          seconds: 15
-        next: wait_for_downstream
-
-    # ── 8. Move source files to processed/ ─────────────────────────────
+    # ── 6. Move source files to processed/ (decoupled from downstream) ──
+    # Files move as soon as Dataflow ingestion succeeds. This way, if
+    # downstream (snow_sync / lead_match) fails, files don't pile up in
+    # incoming/ — the data is already in the DB and the file has been
+    # processed.
     - move_files_to_processed:
         parallel:
           for:
@@ -211,6 +189,56 @@ main:
                   args:
                     bucket: '${bucket_only}'
                     object: '${text.url_encode(object_only)}'
+
+    - log_files_moved:
+        call: sys.log
+        args:
+          severity: INFO
+          text: '${"[" + environment + "] " + string(file_count) + " files moved to processed/"}'
+
+    # ── 7. Trigger downstream workflow (snow_sync) ─────────────────────
+    - trigger_downstream:
+        steps:
+          - build_payload:
+              assign:
+                - downstream_map:
+                    pos_run_id: '${run_id}'
+                    pos_files: '${all_files}'
+                    upstream: "pos_dataflow_workflow"
+                    environment: '${environment}'
+          - encode_argument:
+              assign:
+                - downstream_args: '${json.encode_to_string(downstream_map)}'
+          - create_execution:
+              call: googleapis.workflowexecutions.v1.projects.locations.workflows.executions.create
+              args:
+                parent: '${"projects/" + project_id + "/locations/" + next_wf_location + "/workflows/" + next_workflow}'
+                body:
+                  argument: '${downstream_args}'
+              result: downstream_execution
+
+    # ── 8. Wait for downstream to complete ─────────────────────────────
+    - wait_for_downstream:
+        call: googleapis.workflowexecutions.v1.projects.locations.workflows.executions.get
+        args:
+          name: '${downstream_execution.name}'
+        result: downstream_result
+        next: check_downstream_status
+
+    - check_downstream_status:
+        switch:
+          - condition: '${downstream_result.state == "SUCCEEDED"}'
+            next: done
+          - condition: '${downstream_result.state == "FAILED"}'
+            raise: '${downstream_result.error}'
+          - condition: true
+            next: poll_delay
+
+    - poll_delay:
+        call: sys.sleep
+        args:
+          seconds: 15
+        next: wait_for_downstream
 
     # ── 9. Success terminal ────────────────────────────────────────────
     - done:

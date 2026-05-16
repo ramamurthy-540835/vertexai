@@ -10,17 +10,18 @@
     "template_path":   "gs://gcp-gcs-lead-mgmt-us-spt-pos-raw/templates/pos-pipeline-flex-spt.json",
     "service_account": "gco-iam-svc-lead-mgmt-bc-spt@p-601-np-bcleadsmgmt-spt.iam.gserviceaccount.com",
     "field_map_path":  "gs://gcp-gcs-lead-mgmt-us-spt-pos-raw/config/field_map.json",
-    "machine_type":    "n1-standard-2",
+    "machine_type":    "n2d-standard-2",
     "max_workers":     5,
     "subnetwork":      "https://www.googleapis.com/compute/v1/projects/gcp-prj-transit-hub/regions/us-central1/subnetworks/gcp-snt-np-usc1-601-cloudrunjobs-np",
     "chunk_size":      2,
     "batch_size":      "2000"
   },
   "database": {
-    "instance_connection_name": "p-601-np-bcleadsmgmt-spt:us-central1:lead-mgmt-db",
-    "db_name":   "postgres",
-    "db_schema": "lead-mgmt-spt",
-    "db_table":  "pos_transactions"
+    "instance_connection_name": "p-601-np-bcleadsmgmt-spt:us-central1:lead-mgmt-spt",
+    "db_name":   "lead-mgmt-db",
+    "db_schema": "lead_mgmt_spt",
+    "db_table":  "transaction",
+    "db_user":   "gco-iam-svc-lead-mgmt-bc-spt@p-601-np-bcleadsmgmt-spt.iam"
   },
   "downstream": {
     "next_workflow":          "snow_sync_workflow",

@@ -1,21 +1,31 @@
 """
 Field-map loader and per-row mapping logic.
 
-field_map.json shape:
-{
-  "<source_column_name>": {
-    "target": "<db_column_name>",
-    "type":   "string" | "int" | "float" | "bool" | "date" | "datetime",
-    "default": <optional default if source value is null/empty>,
-    "required": true | false   (default false)
-  },
-  ...
-}
+field_map.json supports TWO shapes:
+
+  Flat (simple rename only):
+    {
+      "<source_column_name>": "<db_column_name>",
+      ...
+    }
+
+  Nested (with optional type / default / required):
+    {
+      "<source_column_name>": {
+        "target":   "<db_column_name>",
+        "type":     "string" | "int" | "float" | "bool" | "date" | "datetime",
+        "default":  <optional default if source value is null/empty>,
+        "required": true | false   (default false)
+      },
+      ...
+    }
+
+You can mix the two shapes in one file — entries that need type coercion
+use the nested form; everything else can stay flat.
 
 apply_field_map returns a dict whose keys are DB column names. Returns None
 if a required field is missing — caller should drop that row.
 """
-
 import json
 import logging
 from datetime import date, datetime
@@ -24,7 +34,7 @@ from typing import Dict, Any, Optional
 logger = logging.getLogger(__name__)
 
 
-def load_field_map(path: str) -> Dict[str, Dict[str, Any]]:
+def load_field_map(path: str) -> Dict[str, Any]:
     """Load field_map.json from a local path or gs:// path."""
     if path.startswith("gs://"):
         return _load_from_gcs(path)
@@ -32,7 +42,7 @@ def load_field_map(path: str) -> Dict[str, Dict[str, Any]]:
         return json.load(f)
 
 
-def _load_from_gcs(gcs_path: str) -> Dict[str, Dict[str, Any]]:
+def _load_from_gcs(gcs_path: str) -> Dict[str, Any]:
     from google.cloud import storage
     _, rest = gcs_path.split("gs://", 1)
     bucket, blob = rest.split("/", 1)
@@ -42,18 +52,27 @@ def _load_from_gcs(gcs_path: str) -> Dict[str, Dict[str, Any]]:
 
 def apply_field_map(
     raw_row: Dict[str, Any],
-    field_map: Dict[str, Dict[str, Any]],
+    field_map: Dict[str, Any],
 ) -> Optional[Dict[str, Any]]:
     """Map one raw row's source columns to DB columns. Returns None on error."""
     out: Dict[str, Any] = {}
     for source_col, spec in field_map.items():
+        # Normalize spec: flat string → {"target": that_string}
+        if isinstance(spec, str):
+            spec = {"target": spec}
+        elif not isinstance(spec, dict):
+            logger.error(
+                f"Invalid field_map entry for '{source_col}': {spec!r} "
+                f"(must be string or dict)"
+            )
+            continue
+
         target_col = spec["target"]
         type_name = spec.get("type", "string")
         default = spec.get("default")
         required = spec.get("required", False)
 
         raw_val = raw_row.get(source_col)
-
         if raw_val is None or (isinstance(raw_val, str) and raw_val.strip() == ""):
             if default is not None:
                 out[target_col] = default

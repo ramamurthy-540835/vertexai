@@ -68,50 +68,6 @@ CREATE TABLE IF NOT EXISTS
     (lead_id)
   REFERENCES
     "$SCHEMA_NAME".lead (lead_id));
-
-
-CREATE TABLE IF NOT EXISTS
-  "$SCHEMA_NAME".transaction ( 
-    pos_id varchar(120) PRIMARY KEY,     
-    sales_reference_id  varchar(130),
-	account_number bigint,
-    lead_id varchar(20) NULL,
-	match_score float,
-	match_type varchar(20),
-    batch_id uuid,
-    membership_number bigint,
-    order_amount float,
-	transaction_count int, 
-    fiscal_period int,
-    fiscal_year int,
-	week int,
-    shop_type varchar(40),
-	warehouse_number bigint,
-	bd_industry varchar(200),
-    business_name varchar(100),
-    address_line_one VARCHAR(100),
-	address_line_two VARCHAR(100),
-    city varchar(30),
-    state varchar(50),
-    zip_code varchar(100),
-    phone varchar(30) NULL,
-    first_name varchar(100) NULL,
-    last_name varchar(100),
-    email varchar(50) NULL,
-	sic_code bigint,
-	sic_description VARCHAR(1000),
-    primary_transaction BOOLEAN,
-	load_date TIMESTAMP WITH TIME ZONE  DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'),
-    updated_by varchar(20) NULL,
-    updated_date TIMESTAMP WITH TIME ZONE  DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'),
-  FOREIGN KEY
-    (lead_id)
-  REFERENCES
-    "$SCHEMA_NAME".lead (lead_id) ) ;
-	
-CREATE UNIQUE index IF NOT EXISTS txn_uniq_sales_reference_id_idx  ON "$SCHEMA_NAME".transaction ( sales_reference_id);
-CREATE index IF NOT EXISTS txn_fiscal_year_period_idx  ON "$SCHEMA_NAME".transaction ( fiscal_year,fiscal_period);
-
   
 
 CREATE UNIQUE INDEX IF NOT EXISTS account_unique_with_nulls_as_value
@@ -144,7 +100,6 @@ CREATE TABLE IF NOT EXISTS
     lead_count int,
 	pos_count int ,
 	match_count int,
-	no_match_count int,
 	stats varchar(100) NULL,
 	status VARCHAR(10) ,
 	start_date TIMESTAMP WITH TIME ZONE DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'),
@@ -231,12 +186,10 @@ match_result VARCHAR(10),
 CONSTRAINT unique_confidence_level UNIQUE (confidence_level)
 ) ;
 
- GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA  "$SCHEMA_NAME" TO "$NEW_IAM_USER";
-
  CREATE SEQUENCE IF NOT EXISTS "$SCHEMA_NAME".transaction_pos_id_seq START 168029;
 
  CREATE TABLE IF NOT EXISTS
-  "$SCHEMA_NAME".pos_transactions ( 
+  "$SCHEMA_NAME".transaction ( 
     pos_id varchar(120) PRIMARY KEY DEFAULT ('POS' || LPAD(nextval('"$SCHEMA_NAME".transaction_pos_id_seq')::text, 8, '0')), 
     sales_reference_id  varchar(130),
 	account_number bigint,
@@ -264,7 +217,7 @@ CONSTRAINT unique_confidence_level UNIQUE (confidence_level)
     last_name varchar(100),
     email varchar(50) NULL,
 	sic_code bigint,
-	sic_description VARCHAR(1000),
+	industry_description VARCHAR(1000),
     primary_transaction BOOLEAN,
 	load_date TIMESTAMP WITH TIME ZONE  DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'),
     updated_by varchar(20) NULL,
@@ -274,8 +227,26 @@ CONSTRAINT unique_confidence_level UNIQUE (confidence_level)
   REFERENCES
     "$SCHEMA_NAME".lead (lead_id) ) ;
 	
-CREATE UNIQUE index IF NOT EXISTS txn_uniq_sales_reference_id_idx  ON "$SCHEMA_NAME".transaction ( sales_reference_id);
+--CREATE UNIQUE index IF NOT EXISTS txn_uniq_sales_reference_id_idx  ON "$SCHEMA_NAME".transaction ( sales_reference_id);
 CREATE index IF NOT EXISTS txn_fiscal_year_period_idx  ON "$SCHEMA_NAME".transaction ( fiscal_year,fiscal_period);
-
-GRANT ALL PRIVILEGES ON TABLE "$SCHEMA_NAME".pos_transactions TO "$NEW_IAM_USER";
+GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA  "$SCHEMA_NAME" TO "$NEW_IAM_USER";
 GRANT USAGE, SELECT ON SEQUENCE "$SCHEMA_NAME".transaction_pos_id_seq TO "$NEW_IAM_USER";
+
+
+-- Additional index 
+
+-- 1. contact.lead_id — used by leads query LEFT JOIN
+CREATE INDEX IF NOT EXISTS contact_lead_id_idx 
+    ON "$SCHEMA_NAME".contact (lead_id);
+
+-- 2. transaction.lead_id — used by FK lookups, pos query LEFT JOIN
+CREATE INDEX IF NOT EXISTS transaction_lead_id_idx 
+    ON "$SCHEMA_NAME".transaction (lead_id);
+
+-- 3. lead.fiscal_year — heavily filtered in every leads query
+CREATE INDEX IF NOT EXISTS lead_fiscal_year_idx 
+    ON "$SCHEMA_NAME".lead (fiscal_year);
+
+-- 4. pos_embeddings composite — used by fuzzy matching queries
+CREATE INDEX IF NOT EXISTS pos_embeddings_warehouse_fiscal_idx 
+    ON "$SCHEMA_NAME".pos_embeddings (warehouse_number, fiscal_year, fiscal_period);

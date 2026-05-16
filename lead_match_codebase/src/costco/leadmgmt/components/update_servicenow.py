@@ -156,7 +156,7 @@ def generate_post_json(df):
             # ==================================================
             # POS INFORMATION
             # ==================================================
-            "number": str(
+            "u_gcp_id": str(
                     row.get(
                         "pos_id",
                         ""
@@ -323,14 +323,6 @@ def generate_post_json(df):
                     )
                 ),
 
-            "u_order_amount":
-                str(
-                    row.get(
-                        "order_amount",
-                        0
-                    )
-                ),
-
             "u_order_amount_rounded":
                 str(
                     round(
@@ -351,14 +343,6 @@ def generate_post_json(df):
                 str(
                     row.get(
                         "matching_comments",
-                        ""
-                    )
-                ),
-
-            "u_match_percentage":
-                str(
-                    row.get(
-                        "similarity_score",
                         ""
                     )
                 ),
@@ -392,15 +376,7 @@ def generate_post_json(df):
                             "lead_id",
                             ""
                         )
-                    ),
-                "value": ""
-            },
-
-            # ==================================================
-            # OPTIONAL EMPTY FIELDS
-            # ==================================================
-            "u_warehouse_ref": {
-                "value": ""
+                    )
             }
 
         }
