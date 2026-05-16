@@ -11,20 +11,25 @@ name: cleanup_scheduler_jobs
 on:
   workflow_dispatch:
     inputs:
-      job_name:
-        description: 'Cloud Scheduler job name to delete'
-        required: true
+      scheduler_job_name:
+        description: 'Cloud Scheduler job name to delete (leave blank to skip)'
+        required: false
         default: 'snow-sync-job-scheduler'
         type: string
+      cloud_run_service_name:
+        description: 'Cloud Run service name to delete (leave blank to skip)'
+        required: false
+        default: 'cloud-scheduler-service'
+        type: string
       region:
-        description: 'Region where the scheduler job lives'
+        description: 'Region where the resources live'
         required: true
         default: 'us-central1'
         type: string
 
 jobs:
-  delete_scheduler_jobs:
-    name: "Delete scheduler job in all environments"
+  cleanup:
+    name: "Cleanup in ${{ matrix.environment }}"
     runs-on:
       - self-hosted
       - us-central1
@@ -39,9 +44,10 @@ jobs:
         environment: [adt, qat, spt]
 
     env:
-      JOB_NAME:   ${{ github.event.inputs.job_name }}
-      REGION:     ${{ github.event.inputs.region }}
-      PROJECT_ID: 'p-601-np-bcleadsmgmt-${{ matrix.environment }}'
+      SCHEDULER_JOB_NAME:     ${{ github.event.inputs.scheduler_job_name }}
+      CLOUD_RUN_SERVICE_NAME: ${{ github.event.inputs.cloud_run_service_name }}
+      REGION:                 ${{ github.event.inputs.region }}
+      PROJECT_ID:             'p-601-np-bcleadsmgmt-${{ matrix.environment }}'
 
     steps:
       - name: Auth to GCP
@@ -53,41 +59,111 @@ jobs:
       - name: Set up gcloud
         uses: google-github-actions/setup-gcloud@v2
 
-      - name: Delete scheduler job in ${{ matrix.environment }}
+      # ─────────────────────────────────────────────────────────
+      # Delete the Cloud Scheduler job (if name provided)
+      # ─────────────────────────────────────────────────────────
+      - name: Delete Cloud Scheduler job
+        id: scheduler
+        if: ${{ github.event.inputs.scheduler_job_name != '' }}
         run: |
           set +e
           unset CLOUDSDK_CORE_PROJECT CLOUDSDK_PROJECT GCLOUD_PROJECT GCP_PROJECT GOOGLE_CLOUD_PROJECT
 
-          echo "─── ${PROJECT_ID} ───"
-          echo "Checking if '${JOB_NAME}' exists in ${PROJECT_ID}..."
+          echo "─── Scheduler: ${PROJECT_ID} ───"
+          echo "Checking if '${SCHEDULER_JOB_NAME}' exists..."
 
-          if gcloud scheduler jobs describe "${JOB_NAME}" \
+          if gcloud scheduler jobs describe "${SCHEDULER_JOB_NAME}" \
                --location="${REGION}" \
                --project="${PROJECT_ID}" >/dev/null 2>&1; then
 
             echo "Found. Deleting..."
-            gcloud scheduler jobs delete "${JOB_NAME}" \
+            gcloud scheduler jobs delete "${SCHEDULER_JOB_NAME}" \
               --location="${REGION}" \
               --project="${PROJECT_ID}" \
               --quiet
 
             if [ $? -eq 0 ]; then
-              echo "✅ Deleted ${JOB_NAME} from ${PROJECT_ID}"
+              echo "✅ Deleted scheduler job '${SCHEDULER_JOB_NAME}' from ${PROJECT_ID}"
+              echo "result=deleted" >> $GITHUB_OUTPUT
             else
-              echo "❌ Failed to delete (likely permission issue)"
-              exit 1
+              echo "❌ Failed to delete scheduler job (likely permission issue)"
+              echo "result=failed" >> $GITHUB_OUTPUT
             fi
           else
-            echo "ℹ️  Not found in ${PROJECT_ID} (already deleted or never existed)"
+            echo "ℹ️  Scheduler job not found in ${PROJECT_ID} (already deleted or never existed)"
+            echo "result=not_found" >> $GITHUB_OUTPUT
           fi
 
+      # ─────────────────────────────────────────────────────────
+      # Delete the Cloud Run service (if name provided)
+      # ─────────────────────────────────────────────────────────
+      - name: Delete Cloud Run service
+        id: service
+        if: ${{ github.event.inputs.cloud_run_service_name != '' }}
+        run: |
+          set +e
+          unset CLOUDSDK_CORE_PROJECT CLOUDSDK_PROJECT GCLOUD_PROJECT GCP_PROJECT GOOGLE_CLOUD_PROJECT
+
+          echo "─── Cloud Run service: ${PROJECT_ID} ───"
+          echo "Checking if '${CLOUD_RUN_SERVICE_NAME}' exists..."
+
+          # Capture URL before deletion for audit trail
+          SERVICE_URL=$(gcloud run services describe "${CLOUD_RUN_SERVICE_NAME}" \
+            --region="${REGION}" \
+            --project="${PROJECT_ID}" \
+            --format="value(status.url)" 2>/dev/null)
+
+          if [ -z "$SERVICE_URL" ]; then
+            echo "ℹ️  Cloud Run service not found in ${PROJECT_ID}"
+            echo "result=not_found" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          echo "Found at: ${SERVICE_URL}"
+          echo "Deleting..."
+
+          gcloud run services delete "${CLOUD_RUN_SERVICE_NAME}" \
+            --region="${REGION}" \
+            --project="${PROJECT_ID}" \
+            --quiet
+
+          if [ $? -eq 0 ]; then
+            echo "✅ Deleted service '${CLOUD_RUN_SERVICE_NAME}' from ${PROJECT_ID}"
+            echo "result=deleted" >> $GITHUB_OUTPUT
+            echo "url=${SERVICE_URL}" >> $GITHUB_OUTPUT
+          else
+            echo "❌ Failed to delete Cloud Run service (likely permission issue)"
+            echo "result=failed" >> $GITHUB_OUTPUT
+          fi
+
+      # ─────────────────────────────────────────────────────────
+      # Per-environment summary
+      # ─────────────────────────────────────────────────────────
       - name: Summary
         if: always()
         run: |
           {
-            echo "## Scheduler Cleanup — ${{ matrix.environment }}"
+            echo "## Cleanup — ${{ matrix.environment }}"
             echo ""
-            echo "- **Project:** \`${PROJECT_ID}\`"
-            echo "- **Job:** \`${JOB_NAME}\`"
-            echo "- **Region:** \`${REGION}\`"
+            echo "**Project:** \`${PROJECT_ID}\`"
+            echo "**Region:** \`${REGION}\`"
+            echo ""
+            echo "### Scheduler Job"
+            if [ -n "${SCHEDULER_JOB_NAME}" ]; then
+              echo "- Name: \`${SCHEDULER_JOB_NAME}\`"
+              echo "- Result: \`${{ steps.scheduler.outputs.result || 'skipped' }}\`"
+            else
+              echo "- Skipped (no scheduler_job_name input)"
+            fi
+            echo ""
+            echo "### Cloud Run Service"
+            if [ -n "${CLOUD_RUN_SERVICE_NAME}" ]; then
+              echo "- Name: \`${CLOUD_RUN_SERVICE_NAME}\`"
+              echo "- Result: \`${{ steps.service.outputs.result || 'skipped' }}\`"
+              if [ -n "${{ steps.service.outputs.url }}" ]; then
+                echo "- Was deployed at: \`${{ steps.service.outputs.url }}\`"
+              fi
+            else
+              echo "- Skipped (no cloud_run_service_name input)"
+            fi
           } >> $GITHUB_STEP_SUMMARY
