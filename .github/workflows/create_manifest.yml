@@ -19,16 +19,38 @@ on:
         default: false
         type: boolean
 
+  workflow_call:
+    inputs:
+      environment:
+        description: 'Environment to create manifest for'
+        required: true
+        type: string
+      run_label:
+        description: 'Optional label for run_id'
+        required: false
+        type: string
+        default: ''
+      dry_run:
+        description: 'If "true", build manifest but do not upload'
+        required: false
+        type: string
+        default: 'false'
+    secrets:
+      GCP_WORKLOAD_IDENTITY_PROVIDER_ID:
+        required: true
+      GCP_WORKLOAD_IDENTITY_SA_EMAIL:
+        required: true
+
 env:
-  PROJECT_ID:        'p-601-np-bcleadsmgmt-${{ github.event.inputs.environment }}'
-  BUCKET_NAME:       'gcp-gcs-lead-mgmt-us-${{ github.event.inputs.environment }}-pos-raw'
+  PROJECT_ID:        'p-601-np-bcleadsmgmt-${{ inputs.environment }}'
+  BUCKET_NAME:       'gcp-gcs-lead-mgmt-us-${{ inputs.environment }}-pos-raw'
   INCOMING_PREFIX:   'pos-raw-data/incoming-files'
   MANIFESTS_PREFIX:  'manifests'
 
 jobs:
   create_manifest:
     runs-on: ubuntu-latest
-    environment: ${{ github.event.inputs.environment }}
+    environment: ${{ inputs.environment }}
 
     permissions:
       id-token: write
@@ -63,25 +85,22 @@ jobs:
           echo "Found ${#FILES[@]} file(s):"
           printf '  %s\n' "${FILES[@]}"
 
-          # Save as JSON array for the next step
           printf '%s\n' "${FILES[@]}" | jq -R . | jq -s -c . > /tmp/files.json
           cat /tmp/files.json
 
       - name: "2. Build manifest"
         id: build
+        env:
+          RUN_LABEL: ${{ inputs.run_label }}
         run: |
-          # Determine run_id
-          RUN_LABEL="${{ github.event.inputs.run_label }}"
           if [ -z "$RUN_LABEL" ]; then
             RUN_ID="run-$(date -u +%Y%m%d-%H%M%S)"
           else
-            # Sanitize label: lowercase, replace spaces/special with hyphens
             CLEAN=$(echo "$RUN_LABEL" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]/-/g')
             RUN_ID="${CLEAN}-$(date -u +%Y%m%d-%H%M%S)"
           fi
           echo "RUN_ID=$RUN_ID" >> $GITHUB_OUTPUT
 
-          # Build manifest
           jq -n \
             --arg run_id "$RUN_ID" \
             --arg submitted_by "github-actions-${GITHUB_ACTOR}" \
@@ -107,7 +126,7 @@ jobs:
           RUN_ID="${{ steps.build.outputs.RUN_ID }}"
           DEST="gs://${BUCKET_NAME}/${MANIFESTS_PREFIX}/${RUN_ID}.json"
 
-          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
             echo "ℹ️  DRY RUN — would upload to: $DEST"
             echo "   Skipping actual upload. Re-run with dry_run=false to submit."
             exit 0
@@ -121,11 +140,11 @@ jobs:
         if: always()
         run: |
           {
-            echo "## Manifest Creation — ${{ github.event.inputs.environment }}"
+            echo "## Manifest Creation — ${{ inputs.environment }}"
             echo ""
             echo "- **Run ID:** \`${{ steps.build.outputs.RUN_ID }}\`"
             echo "- **Files in manifest:** $(jq '.files | length' /tmp/manifest.json 2>/dev/null || echo '0')"
-            echo "- **Dry run:** ${{ github.event.inputs.dry_run }}"
+            echo "- **Dry run:** ${{ inputs.dry_run }}"
             echo ""
             echo "### Manifest content"
             echo '```json'
