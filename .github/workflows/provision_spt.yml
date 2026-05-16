@@ -1,26 +1,17 @@
 name: "provision_spt"
 
 on:
-  # Triggers the workflow on push or pull request events but only for the "main" branch
   push:
-    # branches:
-    #   - main
     tags:
       - release-spt*
-    paths:
-      - 'terraform/environments/adt/infra/**.tf'
-      - 'terraform/modules/**/**.tf'
-      - '.github/workflows/provision_adt.yml'
 
   pull_request:
-    # branches:
-    #   - main
-    tags:
-      - release-spt*
+    branches:
+      - main
     paths:
-      - 'terraform/environments/adt/infra/**'
+      - 'terraform/environments/spt/infra/**'
       - 'terraform/modules/**/**'
-      - '.github/workflows/provision_adt.yml'
+      - '.github/workflows/provision_spt.yml'
 
 
 jobs:
@@ -30,11 +21,18 @@ jobs:
     environment: ${{ github.event.pull_request.head.ref }}
     strategy:
       matrix:
-        env: ['spt'] #,['adt', 'qat', 'spt'] # Exclude prd from auto-plan
-    
+        env: ['spt']
+
     permissions:
       id-token: write
       contents: read
+
+    env:
+      TF_VAR_gcp_workload_identity_sa_email: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
+      TF_VAR_service_now_client_id: ${{ secrets.SERVICE_NOW_CLIENT_ID }}
+      TF_VAR_service_now_client_secret: ${{ secrets.SERVICE_NOW_CLIENT_SECRET }}
+      TF_VAR_service_now_username: ${{ secrets.SERVICE_NOW_USERNAME }}
+      TF_VAR_service_now_password: ${{ secrets.SERVICE_NOW_PASSWORD }}
 
     steps:
       - name: "Checkout code"
@@ -48,7 +46,7 @@ jobs:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
           service_account: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
           project_id: 'p-601-np-bcleadsmgmt-spt'
-          
+
       - name: "Setup Terraform"
         uses: hashicorp/setup-terraform@v3
 
@@ -59,9 +57,8 @@ jobs:
       - name: "Terraform Plan"
         working-directory: ./terraform/environments/${{ matrix.env }}/infra
         run: terraform plan -out=plan.tfplan -input=false -lock-timeout=10m
-      
+
       - name: "Terraform Apply"
+        if: startsWith(github.ref, 'refs/tags/release-spt')
         working-directory: ./terraform/environments/${{ matrix.env }}/infra
         run: terraform apply -input=false -lock-timeout=10m plan.tfplan
-        env: 
-            TF_VAR_gcp_workload_identity_sa_email: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}

@@ -1,22 +1,17 @@
 name: "provision_spt_schema"
 
 on:
-  # Triggers the workflow on push or pull request events but only for the "main" branch
   push:
     tags:
       - release-spt*
+
+  pull_request:
+    branches:
+      - main
     paths:
       - 'terraform/environments/spt/schema/**.tf'
       - 'postgres_resources/**.sql'
       - '.github/workflows/provision_spt_schema.yml'
-
-  pull_request:
-    tags:
-      - release-spt*
-    paths:
-     - 'terraform/environments/spt/schema/**.tf'
-     - 'postgres_resources/**.sql'
-     - '.github/workflows/provision_spt_schema.yml'
 
 
 jobs:
@@ -28,12 +23,15 @@ jobs:
     environment: ${{ github.event.pull_request.head.ref }}
     strategy:
       matrix:
-        env: ['spt'] #,['adt', 'qat', 'spt'] # Exclude prd from auto-plan
-    
+        env: ['spt']
+
     permissions:
       id-token: write
       contents: read
       packages: write
+
+    env:
+      TF_VAR_gcp_workload_identity_sa_email: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
 
     steps:
       - name: "Checkout code"
@@ -71,11 +69,11 @@ jobs:
           else
             echo "Node.js is already installed"
           fi
+
       - name: "Download and setup Cloud SQL Proxy"
         run: |
           if ! command -v cloud-sql-proxy >/dev/null 2>&1; then
             echo "Installing Cloud SQL Auth Proxy..."
-            # Download Cloud SQL Proxy
             wget https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/v2.8.0/cloud-sql-proxy.linux.amd64 -O cloud-sql-proxy
             chmod +x cloud-sql-proxy
           else
@@ -91,20 +89,15 @@ jobs:
           sleep 10
 
           # Set access token for IAM DB auth
-            export PGPASSWORD=$(gcloud auth print-access-token)
+          export PGPASSWORD=$(gcloud auth print-access-token)
 
           # Verify connection to database with psql (check connection only, no queries)
-            PGPASSWORD="$(gcloud auth print-access-token)" psql \
+          PGPASSWORD="$(gcloud auth print-access-token)" psql \
             "hostaddr=127.0.0.1 port=5432 dbname=lead-mgmt-db user=gco-iam-svc-cicd-mbr-bc-np@gcp-prj-cicd-core.iam sslmode=disable" --no-password -c '\conninfo'
 
-          #  psql \
-          #  "hostaddr=127.0.0.1 port=5432 dbname=lead-mgmt-db user=postgres password=qJoVywHigYGlA1d sslmode=disable" \
-          #  -c 'GRANT ALL PRIVILEGES ON DATABASE "lead-mgmt-db" TO "gco-iam-svc-cicd-mbr-bc-np@gcp-prj-cicd-core.iam";'
-
-          # Verify connection
           echo "Cloud SQL Proxy started successfully"
-          
-      - name: "Setup Terraform" 
+
+      - name: "Setup Terraform"
         uses: hashicorp/setup-terraform@v3
 
       - name: "Terraform Init"
@@ -114,9 +107,8 @@ jobs:
       - name: "Terraform Plan"
         working-directory: ./terraform/environments/${{ matrix.env }}/schema
         run: terraform plan -out=plan.tfplan -input=false -lock-timeout=10m
-      
+
       - name: "Terraform Apply"
+        if: startsWith(github.ref, 'refs/tags/release-spt')
         working-directory: ./terraform/environments/${{ matrix.env }}/schema
         run: terraform apply -input=false -lock-timeout=10m plan.tfplan
-        env: 
-            TF_VAR_gcp_workload_identity_sa_email: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
