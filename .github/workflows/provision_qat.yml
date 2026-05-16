@@ -8,16 +8,7 @@ on:
       - 'terraform/environments/qat/infra/**.tf'
       - 'terraform/modules/**/**'
       - '.github/workflows/provision_qat.yml'
-
-  pull_request:
-    branches:
-      - main
-    paths:
-      - 'terraform/environments/qat/infra/**'
-      - 'terraform/modules/**/**'
-      - '.github/workflows/provision_qat.yml'
-
-
+      
 jobs:
   run:
     name: "Provision infra"
@@ -64,4 +55,4 @@ jobs:
 
       - name: "Terraform Apply"
         working-directory: ./terraform/environments/${{ matrix.env }}/infra
-        run: terraform apply -input=false -lock-timeout=10m plan.tfplan
+        run: terraform apply -input=false -lock-timeout=10m plan.tfplan 

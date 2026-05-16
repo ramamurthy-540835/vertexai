@@ -4,10 +4,6 @@ on:
   push:
     tags:
       - release-spt*
-    paths:
-      - 'terraform/environments/spt/infra/**.tf'
-      - 'terraform/modules/**/**.tf'
-      - '.github/workflows/provision_spt.yml'
 
   pull_request:
     branches:
@@ -63,5 +59,6 @@ jobs:
         run: terraform plan -out=plan.tfplan -input=false -lock-timeout=10m
 
       - name: "Terraform Apply"
+        if: startsWith(github.ref, 'refs/tags/release-spt')
         working-directory: ./terraform/environments/${{ matrix.env }}/infra
         run: terraform apply -input=false -lock-timeout=10m plan.tfplan
