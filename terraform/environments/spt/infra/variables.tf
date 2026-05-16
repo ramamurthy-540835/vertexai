@@ -1,13 +1,13 @@
-variable "projectId" { 
+variable "projectId" {
   description = "The ID of the GCP Project"
-  type = string 
-  default     = "p-601-np-bcleadsmgmt-spt"  # Default for ADT project
+  type        = string
+  default     = "p-601-np-bcleadsmgmt-spt"
 }
 
-variable "environment" { 
+variable "environment" {
   description = "GCP environment"
-  type = string 
-  default     = "spt"  # Default for ADT project
+  type        = string
+  default     = "spt"
 }
 
 variable "location" {
@@ -30,10 +30,10 @@ variable "region" {
   default     = "us-central1"
 }
 
-variable "gcp_workload_identity_sa_email"{
-description = "iam service account for cloud sql"
-type = string
-default = "gco-iam-svc-cicd-mbr-bc-np@gcp-prj-cicd-core.iam.gserviceaccount.com"
+variable "gcp_workload_identity_sa_email" {
+  description = "iam service account for cloud sql"
+  type        = string
+  default     = "gco-iam-svc-cicd-mbr-bc-np@gcp-prj-cicd-core.iam.gserviceaccount.com"
 }
 
 variable "prefix" {
@@ -48,12 +48,36 @@ variable "country" {
   default     = "us"
 }
 
+variable "service_now_client_secret" {
+  description = "ServiceNow client secret"
+  type        = string
+  sensitive   = true
+}
+
+variable "service_now_client_id" {
+  description = "ServiceNow client id"
+  type        = string
+  sensitive   = true
+}
+
+variable "service_now_username" {
+  description = "ServiceNow username"
+  type        = string
+  sensitive   = true
+}
+
+variable "service_now_password" {
+  description = "ServiceNow password"
+  type        = string
+  sensitive   = true
+}
+
 # SQL Scripts Configuration
 variable "sql_scripts" {
   description = "Map of SQL script files to execute"
   type = map(object({
     file_path  = string
-    always_run = bool  # Set to true to run script on every apply
+    always_run = bool
   }))
   default = {}
 }
