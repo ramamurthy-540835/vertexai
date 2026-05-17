@@ -17,8 +17,8 @@ resource "google_service_account" "main" {
 # -------------------------------------------------------
 resource "null_resource" "create_service_identities" {
   for_each = toset([
-    "ml.googleapis.com",           # → service-XXXX@gcp-sa-aiplatform-cc.iam.gserviceaccount.com
-    "aiplatform.googleapis.com",   # → service-XXXX@gcp-sa-aiplatform.iam.gserviceaccount.com
+    "ml.googleapis.com",
+    "aiplatform.googleapis.com",
   ])
 
   triggers = {
@@ -27,16 +27,11 @@ resource "null_resource" "create_service_identities" {
   }
 
   provisioner "local-exec" {
-    command = <<EOT
-      echo "Creating service identity for ${each.value}..."
-      gcloud beta services identity create \
-        --service=${each.value} \
-        --project=${var.project_id}
-      echo "Done for ${each.value}."
-    EOT
+    command     = "gcloud beta services identity create --service=${each.value} --project=${var.project_id}"
+    interpreter = ["/bin/bash", "-c"]
   }
 
   depends_on = [
-    google_project_service.apis  # APIs must be enabled first
+    google_project_service.apis
   ]
 }
