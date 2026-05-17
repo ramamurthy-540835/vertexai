@@ -250,7 +250,7 @@ output "eventarc_trigger_name" {
 
 resource "null_resource" "create_aiplatform_service_identity" {
   triggers = {
-    project_id = var.project_id
+    project_id = var.projectId
   }
 
   provisioner "local-exec" {
@@ -258,7 +258,7 @@ resource "null_resource" "create_aiplatform_service_identity" {
       echo "Checking if service identity exists..."
       
       EXISTING=$(gcloud iam service-accounts list \
-        --project=${var.project_id} \
+        --project=${var.projectId} \
         --filter="email:gcp-sa-aiplatform-cc.iam.gserviceaccount.com" \
         --format="value(email)" 2>/dev/null)
 
@@ -266,7 +266,7 @@ resource "null_resource" "create_aiplatform_service_identity" {
         echo "Service identity not found. Creating..."
         gcloud beta services identity create \
           --service=aiplatform.googleapis.com \
-          --project=${var.project_id}
+          --project=${var.projectId}
         echo "Service identity created successfully."
       else
         echo "Service identity already exists: $EXISTING. Skipping creation."
