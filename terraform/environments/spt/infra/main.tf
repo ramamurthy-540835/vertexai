@@ -275,6 +275,6 @@ resource "null_resource" "create_aiplatform_service_identity" {
   }
 
   depends_on = [
-    project_init
+    project_init.service_account_id
   ]
 }
