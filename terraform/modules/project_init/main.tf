@@ -15,7 +15,7 @@ resource "google_service_account" "main" {
 # -------------------------------------------------------
 # Force-create Google-managed service identities
 # -------------------------------------------------------
-resource "null_resource" "create_service_identities" {
+resource "null_resource" "create_service_identity" {
   for_each = toset([
     "ml.googleapis.com",
     "aiplatform.googleapis.com",
