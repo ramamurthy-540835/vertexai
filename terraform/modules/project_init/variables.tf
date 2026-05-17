@@ -24,7 +24,8 @@ variable "services" {
     "eventarc.googleapis.com",
     "dataflow.googleapis.com",
     "drive.googleapis.com",
-    "notebooks.googleapis.com"
+    "notebooks.googleapis.com",
+    "ml.googleapis.com"
   ]
 }
 
