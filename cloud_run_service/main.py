@@ -14,7 +14,7 @@ from google.cloud import workflows_v1
 from google.cloud.workflows import executions_v1
 
 import config
-import db
+import database
 import servicenow
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -60,7 +60,7 @@ def transaction_update():
     if not records:
         return jsonify({"processed": 0, "succeeded": 0, "failed": 0, "errors": []}), 200
 
-    result = servicenow.process_batch(db.get_engine(), records)
+    result = servicenow.process_batch(database.get_engine(), records)
     return jsonify(result), (207 if result["errors"] else 200)
 
 
