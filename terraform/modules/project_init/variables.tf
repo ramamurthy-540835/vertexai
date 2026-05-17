@@ -23,7 +23,8 @@ variable "services" {
     "aiplatform.googleapis.com",
     "eventarc.googleapis.com",
     "dataflow.googleapis.com",
-    "drive.googleapis.com"
+    "drive.googleapis.com",
+    "notebooks.googleapis.com"
   ]
 }
 
