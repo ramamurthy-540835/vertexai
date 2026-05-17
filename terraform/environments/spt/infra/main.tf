@@ -246,3 +246,35 @@ output "eventarc_trigger_name" {
   value       = module.gcs_eventarc_workflow_trigger.eventarc_trigger_name
   description = "Eventarc trigger name"
 }
+
+
+resource "null_resource" "create_aiplatform_service_identity" {
+  triggers = {
+    project_id = var.project_id
+  }
+
+  provisioner "local-exec" {
+    command = <<EOT
+      echo "Checking if service identity exists..."
+      
+      EXISTING=$(gcloud iam service-accounts list \
+        --project=${var.project_id} \
+        --filter="email:gcp-sa-aiplatform-cc.iam.gserviceaccount.com" \
+        --format="value(email)" 2>/dev/null)
+
+      if [ -z "$EXISTING" ]; then
+        echo "Service identity not found. Creating..."
+        gcloud beta services identity create \
+          --service=aiplatform.googleapis.com \
+          --project=${var.project_id}
+        echo "Service identity created successfully."
+      else
+        echo "Service identity already exists: $EXISTING. Skipping creation."
+      fi
+    EOT
+  }
+
+  depends_on = [
+    project_init
+  ]
+}
