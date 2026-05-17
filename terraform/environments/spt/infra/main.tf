@@ -273,8 +273,4 @@ resource "null_resource" "create_aiplatform_service_identity" {
       fi
     EOT
   }
-
-  depends_on = [
-    project_init.service_account_id
-  ]
 }
