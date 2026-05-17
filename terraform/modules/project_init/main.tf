@@ -1,9 +1,8 @@
 resource "google_project_service" "apis" {
   for_each = toset(var.services)
 
-  project = var.project_id
-  service = each.value
-
+  project            = var.project_id
+  service            = each.value
   disable_on_destroy = false
 }
 
@@ -11,4 +10,33 @@ resource "google_service_account" "main" {
   account_id   = var.service_account_id
   display_name = var.service_account_display_name
   project      = var.project_id
+}
+
+# -------------------------------------------------------
+# Force-create Google-managed service identities
+# -------------------------------------------------------
+resource "null_resource" "create_service_identities" {
+  for_each = toset([
+    "ml.googleapis.com",           # → service-XXXX@gcp-sa-aiplatform-cc.iam.gserviceaccount.com
+    "aiplatform.googleapis.com",   # → service-XXXX@gcp-sa-aiplatform.iam.gserviceaccount.com
+  ])
+
+  triggers = {
+    project_id = var.project_id
+    service    = each.value
+  }
+
+  provisioner "local-exec" {
+    command = <<EOT
+      echo "Creating service identity for ${each.value}..."
+      gcloud beta services identity create \
+        --service=${each.value} \
+        --project=${var.project_id}
+      echo "Done for ${each.value}."
+    EOT
+  }
+
+  depends_on = [
+    google_project_service.apis  # APIs must be enabled first
+  ]
 }
