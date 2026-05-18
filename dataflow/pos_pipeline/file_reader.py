@@ -52,16 +52,52 @@ def read_file_to_dicts(content: bytes, filename: str) -> List[Dict[str, Any]]:
 
 
 def _read_delimited(content: bytes, delimiter: str = ",") -> List[Dict[str, Any]]:
-    """Read CSV/TSV/PSV. Tries multiple encodings to handle BOM / Windows files."""
+    """Read CSV/TSV/PSV. Tries multiple encodings to handle BOM / Windows files.
+
+    Headers are normalized (stripped + lowercased) to match field_map.json keys,
+    consistent with how _read_excel handles them.
+    """
     for enc in ("utf-8-sig", "utf-8", "latin-1", "cp1252"):
         try:
             text = content.decode(enc)
-            reader = csv.DictReader(io.StringIO(text), delimiter=delimiter)
-            rows = [dict(r) for r in reader]
-            logger.info(f"Delimited read: {len(rows)} rows (encoding={enc})")
+            reader = csv.reader(io.StringIO(text), delimiter=delimiter)
+
+            try:
+                raw_headers = next(reader)
+            except StopIteration:
+                logger.warning("CSV file is empty (no header row)")
+                return []
+
+            # Normalize the same way Excel does: str -> strip -> lowercase
+            headers = [
+                str(h).strip().lower() if h is not None else ""
+                for h in raw_headers
+            ]
+            logger.info(f"CSV normalized headers ({len(headers)}): {headers}")
+
+            rows: List[Dict[str, Any]] = []
+            for raw_row in reader:
+                # Skip blank rows
+                if not raw_row or all(
+                    (v is None or str(v).strip() == "") for v in raw_row
+                ):
+                    continue
+
+                row_dict = {
+                    headers[i]: raw_row[i]
+                    for i in range(min(len(headers), len(raw_row)))
+                    if headers[i]  # skip empty header columns
+                }
+                rows.append(row_dict)
+
+            logger.info(
+                f"Delimited read: {len(rows)} rows "
+                f"(encoding={enc}, headers={len([h for h in headers if h])})"
+            )
             return rows
         except UnicodeDecodeError:
             continue
+
     raise ValueError("Could not decode file with any supported encoding")
 
 
