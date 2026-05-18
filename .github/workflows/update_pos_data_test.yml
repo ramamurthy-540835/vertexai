@@ -1,0 +1,256 @@
+name: test_transaction_update
+
+# ─────────────────────────────────────────────────────────────
+# Manually test the /servicenow/transaction-update endpoint
+# of lead-mgmt-service. Supports three test modes:
+#
+#   1. smoke         → empty payload, verifies endpoint is reachable
+#   2. single_match  → match one pos_id to one lead_id
+#   3. single_unmatch→ clear the match on one pos_id
+#   4. custom        → paste arbitrary JSON in `custom_payload`
+#
+# WARNING: This modifies real DB rows in the target environment.
+# Default is adt. Be careful when running against qat/spt.
+# ─────────────────────────────────────────────────────────────
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'adt'
+        type: choice
+        options: ['adt', 'qat', 'spt']
+
+      test_mode:
+        description: 'Type of test to run'
+        required: true
+        default: 'smoke'
+        type: choice
+        options: ['smoke', 'single_match', 'single_unmatch', 'custom']
+
+      pos_id:
+        description: 'pos_id for single_match / single_unmatch (ignored otherwise)'
+        required: false
+        default: ''
+        type: string
+
+      lead_id:
+        description: 'lead_id for single_match (ignored otherwise)'
+        required: false
+        default: ''
+        type: string
+
+      match_value:
+        description: 'Match score for single_match (default: 95)'
+        required: false
+        default: '95'
+        type: string
+
+      match_result:
+        description: 'Match result label for single_match (default: Match)'
+        required: false
+        default: 'Match'
+        type: string
+
+      custom_payload:
+        description: 'For custom mode: paste full JSON body. Must be a JSON object with a "result" array.'
+        required: false
+        default: '{"result":[]}'
+        type: string
+
+jobs:
+  test_endpoint:
+    name: "Test endpoint in ${{ github.event.inputs.environment }}"
+    runs-on:
+      - self-hosted
+      - us-central1
+
+    permissions:
+      id-token: write
+      contents: read
+
+    env:
+      ENV_NAME:     ${{ github.event.inputs.environment }}
+      TEST_MODE:    ${{ github.event.inputs.test_mode }}
+      POS_ID:       ${{ github.event.inputs.pos_id }}
+      LEAD_ID:      ${{ github.event.inputs.lead_id }}
+      MATCH_VALUE:  ${{ github.event.inputs.match_value }}
+      MATCH_RESULT: ${{ github.event.inputs.match_result }}
+      CUSTOM:       ${{ github.event.inputs.custom_payload }}
+      PROJECT_ID:   'p-601-np-bcleadsmgmt-${{ github.event.inputs.environment }}'
+      SERVICE_NAME: 'lead-mgmt-service'
+      REGION:       'us-central1'
+
+    steps:
+      - name: Auth to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
+          service_account: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Get service URL
+        id: url
+        run: |
+          set -euo pipefail
+          unset CLOUDSDK_CORE_PROJECT CLOUDSDK_PROJECT GCLOUD_PROJECT GCP_PROJECT GOOGLE_CLOUD_PROJECT
+
+          SERVICE_URL=$(gcloud run services describe "${SERVICE_NAME}" \
+            --region="${REGION}" \
+            --project="${PROJECT_ID}" \
+            --format='value(status.url)')
+
+          if [ -z "$SERVICE_URL" ]; then
+            echo "❌ Service '${SERVICE_NAME}' not found in ${PROJECT_ID}"
+            exit 1
+          fi
+
+          echo "Service URL: $SERVICE_URL"
+          echo "url=$SERVICE_URL" >> $GITHUB_OUTPUT
+
+      - name: Validate inputs and build payload
+        id: payload
+        run: |
+          set -euo pipefail
+
+          case "${TEST_MODE}" in
+            smoke)
+              echo "Smoke test — empty result array, verifies endpoint reachability and JSON parsing"
+              PAYLOAD='{"result":[]}'
+              ;;
+
+            single_match)
+              if [ -z "${POS_ID}" ] || [ -z "${LEAD_ID}" ]; then
+                echo "❌ single_match requires both pos_id and lead_id inputs"
+                exit 1
+              fi
+              echo "Building match payload: pos_id=${POS_ID}, lead_id=${LEAD_ID}"
+              PAYLOAD=$(jq -n \
+                --arg pos_id     "${POS_ID}" \
+                --arg lead_id    "${LEAD_ID}" \
+                --arg match_val  "${MATCH_VALUE}" \
+                --arg match_res  "${MATCH_RESULT}" \
+                '{
+                  result: [
+                    {
+                      number: "TEST",
+                      u_gcp_id: $pos_id,
+                      u_match_value: $match_val,
+                      u_match_result: $match_res,
+                      u_matched_by: "github-actions-test",
+                      u_matching_comments: "",
+                      u_matched_lead: { number: $lead_id }
+                    }
+                  ]
+                }')
+              ;;
+
+            single_unmatch)
+              if [ -z "${POS_ID}" ]; then
+                echo "❌ single_unmatch requires pos_id input"
+                exit 1
+              fi
+              echo "Building unmatch payload: pos_id=${POS_ID}"
+              PAYLOAD=$(jq -n --arg pos_id "${POS_ID}" \
+                '{
+                  result: [
+                    {
+                      number: "TEST",
+                      u_gcp_id: $pos_id,
+                      u_matched_lead: {}
+                    }
+                  ]
+                }')
+              ;;
+
+            custom)
+              # Validate the custom payload is parseable JSON
+              if ! echo "${CUSTOM}" | jq -e . >/dev/null 2>&1; then
+                echo "❌ custom_payload is not valid JSON"
+                echo "Received:"
+                echo "${CUSTOM}"
+                exit 1
+              fi
+              PAYLOAD="${CUSTOM}"
+              echo "Using custom payload"
+              ;;
+
+            *)
+              echo "❌ Unknown test_mode: ${TEST_MODE}"
+              exit 1
+              ;;
+          esac
+
+          echo "=== Payload to send ==="
+          echo "${PAYLOAD}" | jq .
+
+          # Save to file (avoids shell-quoting issues when calling curl)
+          echo "${PAYLOAD}" > /tmp/payload.json
+
+      - name: Call endpoint
+        id: call
+        run: |
+          set -euo pipefail
+
+          URL="${{ steps.url.outputs.url }}/servicenow/transaction-update"
+          echo "Calling: POST ${URL}"
+          echo ""
+
+          # Get an identity token (since service uses Cloud Run IAM auth)
+          TOKEN=$(gcloud auth print-identity-token)
+
+          # Make the call. -w writes status code at the end on its own line.
+          # -o saves the response body.
+          HTTP_CODE=$(curl -sS \
+            -o /tmp/response.json \
+            -w "%{http_code}" \
+            -X POST "${URL}" \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${TOKEN}" \
+            --data @/tmp/payload.json)
+
+          echo "HTTP status: ${HTTP_CODE}"
+          echo ""
+          echo "=== Response body ==="
+          if jq -e . /tmp/response.json >/dev/null 2>&1; then
+            jq . /tmp/response.json
+          else
+            cat /tmp/response.json
+          fi
+
+          echo "http_code=${HTTP_CODE}" >> $GITHUB_OUTPUT
+
+          # Treat 2xx as success. 207 (Multi-Status) is partial success — still
+          # a valid response.
+          if [[ "${HTTP_CODE}" =~ ^2[0-9][0-9]$ ]]; then
+            echo "✅ Endpoint responded successfully"
+          else
+            echo "❌ Endpoint returned non-2xx status"
+            exit 1
+          fi
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "## Endpoint test — ${ENV_NAME}"
+            echo ""
+            echo "- **Service:** \`${SERVICE_NAME}\`"
+            echo "- **URL:** \`${{ steps.url.outputs.url }}/servicenow/transaction-update\`"
+            echo "- **Mode:** \`${TEST_MODE}\`"
+            echo "- **HTTP status:** \`${{ steps.call.outputs.http_code || 'no_response' }}\`"
+            echo ""
+            echo "### Payload sent"
+            echo '```json'
+            cat /tmp/payload.json 2>/dev/null || echo '(no payload)'
+            echo '```'
+            echo ""
+            echo "### Response received"
+            echo '```json'
+            cat /tmp/response.json 2>/dev/null || echo '(no response)'
+            echo '```'
+          } >> $GITHUB_STEP_SUMMARY

@@ -187,7 +187,7 @@ if __name__ == "__main__":
             print(ex)
             raise ex
     elif stage.lower() == "drive_to_gcs":
-        run()
+        run() 
     else:
         print("Invalid Argument - Valid arguments are [snow_to_gcs,gcs_to_db ,snow_to_db]")
         raise Exception("Invalid Arguments - Valid arguments are snow_to_gcs,gcs_to_db ,snow_to_db")
