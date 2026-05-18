@@ -2,7 +2,7 @@
 
 Endpoints:
   GET  /                              → trigger snow_sync_workflow
-  GET  /health                        → liveness check
+  GET  /health                        → liveness check 
   POST /servicenow/transaction-update → receive match/unmatch updates from ServiceNow
 """
 
