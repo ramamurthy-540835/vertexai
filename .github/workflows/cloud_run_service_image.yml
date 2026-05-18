@@ -77,7 +77,7 @@ jobs:
     needs: build-and-push-container
     uses: ./.github/workflows/cloud_run_service_deployment.yml
     with:
-      workflow_trigger_event: "True"
+      workflow_trigger_event: "True" 
     secrets:
       GCP_WORKLOAD_IDENTITY_PROVIDER_ID: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
       GCP_WORKLOAD_IDENTITY_SA_EMAIL: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
