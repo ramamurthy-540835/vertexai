@@ -98,7 +98,7 @@ jobs:
             echo "BUILD_IMAGE=false" >> $GITHUB_ENV
           fi
         env:
-          WORKFLOW_TRIGGER: ${{ inputs.workflow_trigger_event }}
+          WORKFLOW_TRIGGER: ${{ inputs.workflow_trigger_event }} 
 
          # elif [[ "$REF" == refs/tags/release-prod* ]]; then
           #  echo "ENV=prod" >> $GITHUB_ENV
