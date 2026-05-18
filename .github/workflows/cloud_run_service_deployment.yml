@@ -118,7 +118,7 @@ jobs:
           flags: |
             --service-account=${{ env.SERVICE_ACCOUNT }}
             --vpc-egress=all-traffic
-            --ingress=all
+            --ingress=internal
             --network=projects/gcp-prj-transit-hub/global/networks/gcp-vpc-np-host
             --subnet=projects/gcp-prj-transit-hub/regions/us-central1/subnetworks/gcp-snt-np-usc1-601-cloudrunjobs-np
             --set-env-vars=${{ steps.env.outputs.env_vars }}
