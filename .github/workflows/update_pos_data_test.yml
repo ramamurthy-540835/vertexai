@@ -197,21 +197,18 @@ jobs:
           set -euo pipefail
 
           URL="${{ steps.url.outputs.url }}/servicenow/transaction-update"
+
           echo "Calling: POST ${URL}"
-          echo ""
 
-          # Get an identity token (since service uses Cloud Run IAM auth)
-          TOKEN=$(gcloud auth print-identity-token)
+          TOKEN="${{ steps.auth.outputs.id_token }}"
 
-          # Make the call. -w writes status code at the end on its own line.
-          # -o saves the response body.
           HTTP_CODE=$(curl -sS \
-            -o /tmp/response.json \
-            -w "%{http_code}" \
-            -X POST "${URL}" \
-            -H "Content-Type: application/json" \
-            -H "Authorization: Bearer ${TOKEN}" \
-            --data @/tmp/payload.json)
+          -o /tmp/response.json \
+          -w "%{http_code}" \
+          -X POST "${URL}" \
+          -H "Content-Type: application/json" \
+          -H "Authorization: Bearer ${TOKEN}" \
+          --data @/tmp/payload.json)
 
           echo "HTTP status: ${HTTP_CODE}"
           echo ""
