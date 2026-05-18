@@ -68,7 +68,7 @@ jobs:
           if [[ -z "$WORKFLOW_TRIGGER" ]]; then
             WORKFLOW_TRIGGER="False"
           fi
-          echo "WORKFLOW_TRIGGER=$WORKFLOW_TRIGGER"
+          echo "WORKFLOW_TRIGGER=$WORKFLOW_TRIGGER" 
 
           # adt: only via workflow_call from cloud_run_service_image_creation
           if [[ "$WORKFLOW_TRIGGER" == "True" ]]; then
