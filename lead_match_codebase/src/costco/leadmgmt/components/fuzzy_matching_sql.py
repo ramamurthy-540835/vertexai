@@ -187,7 +187,9 @@ def fuzzy_matching(file_classified_path: str, config_file_path: str) -> str:
 
     # ----------------------------------------------------------
     # MERGE FUZZY RESULTS ONTO EXACT MATCH OUTPUT
-    # Only slim fuzzy cols come in — no customer detail duplication
+    # Only slim fuzzy cols come in — no customer detail duplication.
+    # After this merge, score cols will be suffixed:
+    #   combined_field_score_primary, combined_field_score_fuzzy etc.
     # ----------------------------------------------------------
     merged_df = pd.merge(
         classified_df,
@@ -213,23 +215,44 @@ def fuzzy_matching(file_classified_path: str, config_file_path: str) -> str:
     merged_df.loc[update_mask, "pos_id_primary"]            = merged_df.loc[update_mask, "pos_id_fuzzy"]
     merged_df.loc[update_mask, "similarity_score_primary"]  = merged_df.loc[update_mask, "similarity_score_fuzzy"]
     merged_df.loc[update_mask, "match_type"]                = "Fuzzy"
-    merged_df.loc[update_mask, "account_number_primary"]    = merged_df.loc[update_mask, "account_number_fuzzy"].astype("float64")
-    merged_df.loc[update_mask, "fiscal_year_transaction"]   = merged_df.loc[update_mask, "fiscal_year"].astype("float64")
-    merged_df.loc[update_mask, "fiscal_period_transaction"] = merged_df.loc[update_mask, "fiscal_period"].astype("float64")
-    merged_df.loc[update_mask, "week_primary"]              = merged_df.loc[update_mask, "week_fuzzy"].astype("float64")
-    merged_df.loc[update_mask, "warehouse_number_primary"]  = merged_df.loc[update_mask, "warehouse_number_fuzzy"].astype("float64")
+    merged_df.loc[update_mask, "account_number_primary"]    = pd.to_numeric(merged_df.loc[update_mask, "account_number_fuzzy"], errors="coerce")
+    merged_df.loc[update_mask, "fiscal_year_transaction"]   = pd.to_numeric(merged_df.loc[update_mask, "fiscal_year"], errors="coerce")
+    merged_df.loc[update_mask, "fiscal_period_transaction"] = pd.to_numeric(merged_df.loc[update_mask, "fiscal_period"], errors="coerce")
+    merged_df.loc[update_mask, "week_primary"]              = pd.to_numeric(merged_df.loc[update_mask, "week_fuzzy"], errors="coerce")
+    merged_df.loc[update_mask, "warehouse_number_primary"]  = pd.to_numeric(merged_df.loc[update_mask, "warehouse_number_fuzzy"], errors="coerce")
     merged_df.loc[update_mask, "business_name_transaction"] = merged_df.loc[update_mask, "business_name_fuzzy"]
 
-    # Copy score columns into plain names for comment builder
-    # (after merge they have _fuzzy suffix on the fuzzy side)
+    # ----------------------------------------------------------
+    # FIX SCORE COLUMNS FOR COMMENT BUILDER
+    # After the merge, score cols exist as _fuzzy suffixed float64
+    # columns. Rename them to plain names and clear non-fuzzy rows.
+    # This avoids creating new columns with dtype conflicts.
+    # ----------------------------------------------------------
+    rename_scores = {
+        "combined_field_score_fuzzy": "combined_field_score",
+        "full_address_score_fuzzy":   "full_address_score",
+        "business_name_score_fuzzy":  "business_name_score",
+    }
+    merged_df.rename(columns=rename_scores, inplace=True)
+
+    # Drop the _primary score cols — not needed
+    merged_df.drop(
+        columns=[
+            "combined_field_score_primary",
+            "full_address_score_primary",
+            "business_name_score_primary",
+        ],
+        inplace=True,
+        errors="ignore",
+    )
+
+    # Clear scores on non-fuzzy rows so comment builder skips them
     for score_col in ["combined_field_score", "full_address_score", "business_name_score"]:
-        fuzzy_col = f"{score_col}_fuzzy"
-        merged_df[score_col] = None
-        if fuzzy_col in merged_df.columns:
-            merged_df.loc[update_mask, score_col] = merged_df.loc[update_mask, fuzzy_col]
+        if score_col in merged_df.columns:
+            merged_df.loc[~update_mask, score_col] = None
 
     # ----------------------------------------------------------
-    # DROP ALL _fuzzy COLUMNS + NORMALISE _primary NAMES
+    # DROP ALL REMAINING _fuzzy COLUMNS + NORMALISE _primary NAMES
     # ----------------------------------------------------------
     fuzzy_cols = [c for c in merged_df.columns if c.endswith("_fuzzy")]
     merged_df.drop(
@@ -278,7 +301,7 @@ def fuzzy_matching(file_classified_path: str, config_file_path: str) -> str:
             {"pos_id_list": fuzzy_updated_pos_ids},
         )
 
-        # Merge pos_details with a _new suffix to avoid collision
+        # Merge pos_details with _new suffix to avoid collision
         merged_df = merged_df.merge(
             pos_details, on="pos_id", how="left", suffixes=("", "_new")
         )
