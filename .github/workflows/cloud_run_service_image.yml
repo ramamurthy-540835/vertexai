@@ -9,9 +9,9 @@ name: cloud_run_service_image_creation
 on:
   push:
     branches:
-      - 'feature*'
+      - 'feature*' 
     paths:
-      - .github/workflows/cloud_run_service_image_creation.yml
+      - .github/workflows/cloud_run_service_image.yml
       - cloud_run_service/**
 
 jobs:
@@ -69,7 +69,7 @@ jobs:
           context: ./cloud_run_service
           file: ./cloud_run_service/Dockerfile
           push: true
-          labels: ${{ steps.meta.outputs.labels }}
+          labels: ${{ steps.meta.outputs.labels }} 
           tags: us-docker.pkg.dev/gcp-prj-images/gcp-gar-repo-mbrshp/cloud-run-service:latest
 
   deploy-cloud-run-service:
@@ -77,7 +77,7 @@ jobs:
     needs: build-and-push-container
     uses: ./.github/workflows/cloud_run_service_deployment.yml
     with:
-      workflow_trigger_event: "True"
+      workflow_trigger_event: "True" 
     secrets:
       GCP_WORKLOAD_IDENTITY_PROVIDER_ID: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
       GCP_WORKLOAD_IDENTITY_SA_EMAIL: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}

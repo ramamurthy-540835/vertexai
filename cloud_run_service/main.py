@@ -4,6 +4,7 @@ Endpoints:
   GET  /                              → trigger snow_sync_workflow
   GET  /health                        → liveness check 
   POST /servicenow/transaction-update → receive match/unmatch updates from ServiceNow
+  POST /servicenow/manual-match           → find candidate transactions for a lead
 """
 
 import logging
@@ -15,7 +16,8 @@ from google.cloud.workflows import executions_v1
 
 import config
 import database
-import servicenow
+import update_pos
+import manual_match
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
@@ -60,8 +62,39 @@ def transaction_update():
     if not records:
         return jsonify({"processed": 0, "succeeded": 0, "failed": 0, "errors": []}), 200
 
-    result = servicenow.process_batch(database.get_engine(), records)
+    result = update_pos.process_batch(database.get_engine(), records)
     return jsonify(result), (207 if result["errors"] else 200)
+
+
+@app.route("/servicenow/manual-match", methods=["POST"])
+def manual_match_endpoint():
+    """Find candidate transactions for a lead via contains-style matching.
+
+    Required input:  u_warehouse_number
+    Optional inputs: u_business_name, u_address_1, u_address_2,
+                     u_city, u_state_pos, u_zip_code, u_email
+
+    Fiscal scope is always the last 2 fiscal years (current + previous),
+    computed server-side from today's date. Any u_fiscal_year in the
+    payload is ignored.
+
+    Returns up to 500 candidates in ServiceNow response format, ordered
+    by descending match score. Rows that match no contains fields still
+    appear (score=0), at the bottom of the ranking.
+    """
+    payload = request.get_json(silent=True)
+    if not payload or not isinstance(payload, dict):
+        return jsonify({"error": "Request body must be a JSON object"}), 400
+
+    try:
+        rows = manual_match.find_candidates(db.get_engine(), payload)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        log.exception("Manual match failed")
+        return jsonify({"error": f"Internal error: {e}"}), 500
+    
+    return jsonify(manual_match.to_servicenow_response(rows)), 200
 
 
 if __name__ == "__main__":
