@@ -30,7 +30,7 @@ def build_fuzzy_matching_comment(row: pd.Series) -> str:
     parts = []
 
     # -- Result classification --------------------------------
-    if result == "Match":
+    if result == "Complete":
         parts.append(
             f"Fuzzy match — complete confidence "
             f"(similarity score: {similarity_score})."
@@ -114,6 +114,9 @@ def fuzzy_matching(file_classified_path: str, config_file_path: str) -> str:
 
     # ----------------------------------------------------------
     # LOAD EXACT MATCH OUTPUT
+    # classified_df already has all POS columns from primary_match.
+    # Fuzzy will only override values in place — no new columns
+    # are added from the fuzzy side except scores (for comments).
     # ----------------------------------------------------------
     classified_df = load_file_from_gcs(file_classified_path)
     classified_df["warehouse_number"] = (
@@ -162,16 +165,93 @@ def fuzzy_matching(file_classified_path: str, config_file_path: str) -> str:
     df_fuzzy_result = master_df[master_df["similarity_score"] >= 80].copy()
 
     # ----------------------------------------------------------
-    # JOIN FULL POS TRANSACTION DETAILS ONTO FUZZY RESULTS
-    # The fuzzy query (against pos_embeddings) only returns the
-    # fields needed for similarity scoring.  All customer detail
-    # and transaction fields are fetched here via a single SQL
-    # join against the full POS / transaction table so we don't
-    # need to duplicate those columns in pos_embeddings.
+    # KEEP FUZZY RESULT SLIM — only scoring + core match fields.
+    # classified_df already carries all POS customer detail cols.
+    # Customer details for fuzzy-updated rows are fetched separately
+    # after the mask is applied (see below) to avoid duplicate cols.
     # ----------------------------------------------------------
-    if not df_fuzzy_result.empty:
-        fuzzy_pos_ids = df_fuzzy_result["pos_id"].dropna().unique().tolist()
+    df_fuzzy_result = df_fuzzy_result[[
+        "lead_id",
+        "pos_id",
+        "similarity_score",
+        "combined_field_score",
+        "full_address_score",
+        "business_name_score",
+        "account_number",
+        "fiscal_year",
+        "fiscal_period",
+        "week",
+        "warehouse_number",
+        "business_name",
+    ]].copy()
 
+    # ----------------------------------------------------------
+    # MERGE FUZZY RESULTS ONTO EXACT MATCH OUTPUT
+    # Only slim fuzzy cols come in — no customer detail duplication
+    # ----------------------------------------------------------
+    merged_df = pd.merge(
+        classified_df,
+        df_fuzzy_result,
+        how="left",
+        on="lead_id",
+        suffixes=("_primary", "_fuzzy"),
+    )
+
+    merged_df["similarity_score_primary"] = merged_df["similarity_score_primary"].astype("float64")
+    merged_df["similarity_score_fuzzy"]   = merged_df["similarity_score_fuzzy"].astype("float64")
+
+    # Rows where fuzzy found a better match than exact
+    update_mask = (
+        (merged_df["similarity_score_primary"] < merged_df["similarity_score_fuzzy"])
+        & pd.notna(merged_df["pos_id_fuzzy"])
+        & pd.notna(merged_df["similarity_score_fuzzy"])
+    )
+
+    # ----------------------------------------------------------
+    # UPDATE CORE MATCH FIELDS WHERE FUZZY BEATS EXACT
+    # ----------------------------------------------------------
+    merged_df.loc[update_mask, "pos_id_primary"]            = merged_df.loc[update_mask, "pos_id_fuzzy"]
+    merged_df.loc[update_mask, "similarity_score_primary"]  = merged_df.loc[update_mask, "similarity_score_fuzzy"]
+    merged_df.loc[update_mask, "match_type"]                = "Fuzzy"
+    merged_df.loc[update_mask, "account_number_primary"]    = merged_df.loc[update_mask, "account_number_fuzzy"].astype("float64")
+    merged_df.loc[update_mask, "fiscal_year_transaction"]   = merged_df.loc[update_mask, "fiscal_year"].astype("float64")
+    merged_df.loc[update_mask, "fiscal_period_transaction"] = merged_df.loc[update_mask, "fiscal_period"].astype("float64")
+    merged_df.loc[update_mask, "week_primary"]              = merged_df.loc[update_mask, "week_fuzzy"].astype("float64")
+    merged_df.loc[update_mask, "warehouse_number_primary"]  = merged_df.loc[update_mask, "warehouse_number_fuzzy"].astype("float64")
+    merged_df.loc[update_mask, "business_name_transaction"] = merged_df.loc[update_mask, "business_name_fuzzy"]
+
+    # Copy score columns into plain names for comment builder
+    # (after merge they have _fuzzy suffix on the fuzzy side)
+    for score_col in ["combined_field_score", "full_address_score", "business_name_score"]:
+        fuzzy_col = f"{score_col}_fuzzy"
+        merged_df[score_col] = None
+        if fuzzy_col in merged_df.columns:
+            merged_df.loc[update_mask, score_col] = merged_df.loc[update_mask, fuzzy_col]
+
+    # ----------------------------------------------------------
+    # DROP ALL _fuzzy COLUMNS + NORMALISE _primary NAMES
+    # ----------------------------------------------------------
+    fuzzy_cols = [c for c in merged_df.columns if c.endswith("_fuzzy")]
+    merged_df.drop(
+        columns=fuzzy_cols + ["fiscal_year", "fiscal_period"],
+        inplace=True,
+        errors="ignore",
+    )
+    merged_df.columns = merged_df.columns.str.replace(r"_primary$", "", regex=True)
+
+    # ----------------------------------------------------------
+    # FETCH CUSTOMER DETAIL FIELDS FOR FUZZY-UPDATED ROWS ONLY
+    # Now that pos_id is normalised, join transaction table just
+    # for the rows that were overridden by fuzzy — no duplicates.
+    # ----------------------------------------------------------
+    fuzzy_updated_pos_ids = (
+        merged_df.loc[update_mask, "pos_id"]
+        .dropna()
+        .unique()
+        .tolist()
+    )
+
+    if fuzzy_updated_pos_ids:
         pos_details = execute_select_query(
             engine,
             text(f"""
@@ -195,95 +275,37 @@ def fuzzy_matching(file_classified_path: str, config_file_path: str) -> str:
                 FROM {db_config.schema_name}.transaction
                 WHERE pos_id IN :pos_id_list
             """).bindparams(bindparam("pos_id_list", expanding=True)),
-            {"pos_id_list": fuzzy_pos_ids},
+            {"pos_id_list": fuzzy_updated_pos_ids},
         )
 
-        df_fuzzy_result = df_fuzzy_result.merge(
-            pos_details, on="pos_id", how="left"
+        # Merge pos_details with a _new suffix to avoid collision
+        merged_df = merged_df.merge(
+            pos_details, on="pos_id", how="left", suffixes=("", "_new")
         )
 
-    # ----------------------------------------------------------
-    # MERGE FUZZY RESULTS ONTO EXACT MATCH OUTPUT
-    # ----------------------------------------------------------
-    merged_df = pd.merge(
-        classified_df,
-        df_fuzzy_result,
-        how="left",
-        on="lead_id",
-        suffixes=("_primary", "_fuzzy"),
-    )
-
-    merged_df["similarity_score_primary"] = merged_df["similarity_score_primary"].astype("float64")
-    merged_df["similarity_score_fuzzy"]   = merged_df["similarity_score_fuzzy"].astype("float64")
-
-    # Rows where fuzzy found a better match than exact
-    update_mask = (
-        (merged_df["similarity_score_primary"] < merged_df["similarity_score_fuzzy"])
-        & pd.notna(merged_df["pos_id_fuzzy"])
-        & pd.notna(merged_df["similarity_score_fuzzy"])
-    )
-
-    # ----------------------------------------------------------
-    # UPDATE ALL POS FIELDS WHERE FUZZY BEATS EXACT
-    # Every field in the final output schema that comes from the
-    # POS side must be updated here so the output row is fully
-    # POS-dominant from the winning fuzzy transaction.
-    #
-    # NOTE: your fuzzy SQL query must SELECT all of these columns.
-    # ----------------------------------------------------------
-
-    # Core match
-    merged_df.loc[update_mask, "pos_id_primary"]            = merged_df.loc[update_mask, "pos_id_fuzzy"]
-    merged_df.loc[update_mask, "similarity_score_primary"]  = merged_df.loc[update_mask, "similarity_score_fuzzy"]
-    merged_df.loc[update_mask, "match_type"]                = "Fuzzy"
-
-    # Transaction / fiscal
-    merged_df.loc[update_mask, "account_number_primary"]    = merged_df.loc[update_mask, "account_number_fuzzy"].astype("float64")
-    merged_df.loc[update_mask, "fiscal_year_transaction"]   = merged_df.loc[update_mask, "fiscal_year"].astype("float64")
-    merged_df.loc[update_mask, "fiscal_period_transaction"] = merged_df.loc[update_mask, "fiscal_period"].astype("float64")
-    merged_df.loc[update_mask, "week_primary"]              = merged_df.loc[update_mask, "week_fuzzy"].astype("float64")
-    merged_df.loc[update_mask, "warehouse_number_primary"]  = merged_df.loc[update_mask, "warehouse_number_fuzzy"].astype("float64")
-    merged_df.loc[update_mask, "sales_reference_id"]        = merged_df.loc[update_mask, "sales_reference_id_fuzzy"]
-    merged_df.loc[update_mask, "shop_type"]                 = merged_df.loc[update_mask, "shop_type_fuzzy"]
-    merged_df.loc[update_mask, "membership_number"]         = merged_df.loc[update_mask, "membership_number_fuzzy"]
-    merged_df.loc[update_mask, "order_amount"]              = merged_df.loc[update_mask, "order_amount_fuzzy"]
-    merged_df.loc[update_mask, "bd_industry"]               = merged_df.loc[update_mask, "bd_industry_fuzzy"]
-    merged_df.loc[update_mask, "industry_description"]      = merged_df.loc[update_mask, "industry_description_fuzzy"]
-
-    # POS business name
-    merged_df.loc[update_mask, "business_name_transaction"] = merged_df.loc[update_mask, "business_name_fuzzy"]
-
-    # POS customer details
-    merged_df.loc[update_mask, "first_name"]                = merged_df.loc[update_mask, "first_name_fuzzy"]
-    merged_df.loc[update_mask, "last_name"]                 = merged_df.loc[update_mask, "last_name_fuzzy"]
-    merged_df.loc[update_mask, "address_line_one"]          = merged_df.loc[update_mask, "address_line_one_fuzzy"]
-    merged_df.loc[update_mask, "address_line_two"]          = merged_df.loc[update_mask, "address_line_two_fuzzy"]
-    merged_df.loc[update_mask, "city"]                      = merged_df.loc[update_mask, "city_fuzzy"]
-    merged_df.loc[update_mask, "state"]                     = merged_df.loc[update_mask, "state_fuzzy"]
-    merged_df.loc[update_mask, "zip_code"]                  = merged_df.loc[update_mask, "zip_code_fuzzy"]
-    merged_df.loc[update_mask, "email"]                     = merged_df.loc[update_mask, "email_fuzzy"]
-    merged_df.loc[update_mask, "phone"]                     = merged_df.loc[update_mask, "phone_fuzzy"]
-
-    # After the merge, score columns have _fuzzy suffix on the fuzzy side.
-    # Copy them into plain-named columns for the comment builder:
-    # - fuzzy rows  -> take from the _fuzzy suffixed column
-    # - exact rows  -> set to None (comment builder skips them)
-    for score_col in ["combined_field_score", "full_address_score", "business_name_score"]:
-        fuzzy_col = f"{score_col}_fuzzy"
-        merged_df[score_col] = None
-        if fuzzy_col in merged_df.columns:
-            merged_df.loc[update_mask, score_col] = merged_df.loc[update_mask, fuzzy_col]
-
-    # ----------------------------------------------------------
-    # DROP ALL _fuzzy COLUMNS + NORMALISE _primary NAMES
-    # ----------------------------------------------------------
-    fuzzy_cols = [c for c in merged_df.columns if c.endswith("_fuzzy")]
-    merged_df.drop(
-        columns=fuzzy_cols + ["fiscal_year", "fiscal_period"],
-        inplace=True,
-        errors="ignore",
-    )
-    merged_df.columns = merged_df.columns.str.replace(r"_primary$", "", regex=True)
+        # Update customer detail cols only on fuzzy-overridden rows
+        detail_cols = [
+            "membership_number",
+            "shop_type",
+            "sales_reference_id",
+            "order_amount",
+            "bd_industry",
+            "industry_description",
+            "first_name",
+            "last_name",
+            "address_line_one",
+            "address_line_two",
+            "city",
+            "state",
+            "zip_code",
+            "email",
+            "phone",
+        ]
+        for col in detail_cols:
+            new_col = f"{col}_new"
+            if new_col in merged_df.columns:
+                merged_df.loc[update_mask, col] = merged_df.loc[update_mask, new_col]
+                merged_df.drop(columns=[new_col], inplace=True)
 
     # ----------------------------------------------------------
     # RE-APPLY MATCH RESULT FROM CONFIG TABLE
@@ -298,7 +320,7 @@ def fuzzy_matching(file_classified_path: str, config_file_path: str) -> str:
 
     # ----------------------------------------------------------
     # PRIMARY TRANSACTION LOGIC
-    # Earliest Match transaction per lead is flagged primary
+    # Earliest Complete transaction per lead is flagged primary
     # ----------------------------------------------------------
     merged_df = merged_df.sort_values(
         by=["lead_id", "fiscal_year_transaction", "fiscal_period_transaction", "week"],
@@ -307,7 +329,7 @@ def fuzzy_matching(file_classified_path: str, config_file_path: str) -> str:
     merged_df["primary_transaction"] = False
     merged_df["rank"] = merged_df.groupby("lead_id").cumcount() + 1
 
-    high_conf_df = merged_df[merged_df["match_result"] == "Match"].copy()
+    high_conf_df = merged_df[merged_df["match_result"] == "Complete"].copy()
     high_conf_df["primary_transaction"] = high_conf_df["rank"] == 1
     high_conf_leads = high_conf_df["lead_id"].unique()
 
