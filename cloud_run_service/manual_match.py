@@ -22,7 +22,7 @@ import sqlalchemy
 from sqlalchemy import text
 
 import config
-from fiscal import get_costco_fiscal_info
+from fiscal_year import get_costco_fiscal_info
 
 log = logging.getLogger(__name__)
 
