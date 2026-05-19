@@ -87,7 +87,7 @@ def manual_match_endpoint():
         return jsonify({"error": "Request body must be a JSON object"}), 400
 
     try:
-        rows = manual_match.find_candidates(db.get_engine(), payload)
+        rows = manual_match.find_candidates(database.get_engine(), payload)
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
     except Exception as e:
