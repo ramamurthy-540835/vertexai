@@ -76,6 +76,9 @@ DROP INDEX IF EXISTS "$SCHEMA_NAME".txn_uniq_sales_reference_id_idx;
 
 ALTER TABLE "$SCHEMA_NAME".match_audit DROP COLUMN IF EXISTS no_match_count;
 
+ALTER TABLE "$SCHEMA_NAME".transaction
+ADD COLUMN matching_comments TEXT;
+
 
 -- ============================================================
 -- GRANT STATEMENTS
