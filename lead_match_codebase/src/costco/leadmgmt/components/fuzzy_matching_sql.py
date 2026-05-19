@@ -174,7 +174,7 @@ def fuzzy_matching(file_classified_path: str, config_file_path: str) -> str:
 
         pos_details = execute_select_query(
             engine,
-            text("""
+            text(f"""
                 SELECT
                     pos_id,
                     membership_number,
@@ -192,7 +192,7 @@ def fuzzy_matching(file_classified_path: str, config_file_path: str) -> str:
                     zip_code,
                     email,
                     phone
-                FROM transaction
+                FROM {db_config.schema_name}.transaction
                 WHERE pos_id IN :pos_id_list
             """).bindparams(bindparam("pos_id_list", expanding=True)),
             {"pos_id_list": fuzzy_pos_ids},
