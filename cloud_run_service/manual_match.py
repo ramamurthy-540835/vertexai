@@ -130,7 +130,7 @@ def find_candidates(engine: sqlalchemy.Engine, payload: dict) -> list[dict]:
             ({score_expr}) AS match_score
         FROM {config.DB_SCHEMA}.transaction
         WHERE warehouse_number = :warehouse
-          AND fiscal_year_transaction IN (:fy_current, :fy_prev)
+          AND fiscal_year IN (:fy_current, :fy_prev)
         ORDER BY match_score DESC, sales_reference_id ASC
         LIMIT {MAX_RESULTS}
     """

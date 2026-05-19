@@ -22,7 +22,7 @@ ADD COLUMN match_result VARCHAR(10);
 
 UPDATE "$SCHEMA_NAME".match_configuration
 SET match_result =
-    CASE WHEN confidence_level = 'High' THEN 'Complete'
+    CASE WHEN confidence_level = 'High' THEN 'Match'
          ELSE 'Potential'
     END;
 
