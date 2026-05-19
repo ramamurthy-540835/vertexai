@@ -1,136 +1,211 @@
+import gc
+import logging
+from datetime import datetime
+
+import pandas as pd
 import sqlalchemy
 from google.cloud import storage
-import pandas as pd
-from sqlalchemy import insert,MetaData,Table
-from vertexai.agent_engines import update
+from sqlalchemy import insert, MetaData, Table
+
 from costco.leadmgmt.config.Configuration import JobConfig
 from costco.leadmgmt.util.apputil import load_file_from_gcs
-import gc
+
+log = logging.getLogger(__name__)
+
+# ==============================================================
+# SCORING CONSTANTS
+# ==============================================================
+KEY_FIELDS = {
+    "business_name":    40,
+    "address_line_one": 40,
+    "email":            30,
+    "phone":            20,
+}
+
+SUPPLEMENTARY_FIELDS = {
+    "zip_code": 10,
+    "state":     5,
+    "city":      5,
+}
+
+MINIMUM_SCORE  = 80
+COMPLETE_SCORE = 100
+
+MAX_POSSIBLE_SCORE = (
+    sum(KEY_FIELDS.values()) +
+    sum(SUPPLEMENTARY_FIELDS.values())
+)
+
+ALL_FIELDS = (
+    list(KEY_FIELDS.keys()) +
+    list(SUPPLEMENTARY_FIELDS.keys())
+)
 
 
-# Function to clean data before merging (removes empty or NaN values)
-def filter_for_merge(df, columns):
-    for col in columns:
-        df[col] = df[col].astype(str)
-        df[col] = df[col].replace('nan', pd.NA)
-    # Filter out rows where any of the specified columns are empty or NaN
-    return df.dropna(subset=columns).loc[~df[columns].apply(lambda x: x.str.strip() == '', axis=1).any(axis=1)]
+# ==============================================================
+# MATCHING COMMENT BUILDER
+# ==============================================================
+def build_matching_comment(row: pd.Series) -> str:
+    """
+    Constructs a human-readable comment explaining which fields
+    drove the exact match and what the result classification means.
+    """
+    score        = row["similarity_score"]
+    result       = row["match_result"]
+    matched_keys = row.get("matched_key_fields", [])
+    matched_supp = row.get("matched_supp_fields", [])
+
+    parts = []
+
+    if result == "Match":
+        parts.append(
+            f"Exact match (score {score}/{MAX_POSSIBLE_SCORE}): "
+            f"sufficient key and supplementary fields aligned."
+        )
+    elif result == "Potential":
+        parts.append(
+            f"Potential match (score {score}/{MAX_POSSIBLE_SCORE}): "
+            f"partial field alignment; Marketer review recommended."
+        )
+    else:
+        parts.append(f"No match (score {score}/{MAX_POSSIBLE_SCORE}).")
+
+    if matched_keys:
+        parts.append(f"Key fields matched: {', '.join(matched_keys)}.")
+    else:
+        parts.append(
+            "No individual key fields matched exactly; "
+            "match qualified via supplementary fields only."
+        )
+
+    if matched_supp:
+        parts.append(f"Supplementary fields matched: {', '.join(matched_supp)}.")
+
+    return " ".join(parts)
 
 
-def format_df(df):
-    df.columns = df.columns.str.replace(r'_leads$', '', regex=True)
-    df = df.rename(columns={"business_name_sales":"business_name_transaction"})
-    df = df[[col for col in df.columns if not col.endswith('_sales')]]
-    df = df[['lead_id','membership_number' ,'warehouse_number' ,'updated_date' ,
-             'fiscal_year_lead','fiscal_period_lead','business_name' ,'address_line_one' ,
-             'address_line_two' ,'city' ,'state' ,'zip_code' ,'phone' ,'first_name' ,
-             'last_name' ,'email' ,'COMBINED_FIELD' ,'FULL_ADDRESS' ,'CUSTOMER_NAME' ,
-             'pos_id','account_number','fiscal_year_transaction','fiscal_period_transaction','week',
-             'business_name_transaction']]
+# ==============================================================
+# PREPROCESS
+# ==============================================================
+def preprocess(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    df = df.dropna(subset=["warehouse_number"])
+    df["warehouse_number"] = (
+        pd.to_numeric(df["warehouse_number"], errors="coerce")
+        .astype("Int64")
+        .astype(str)
+    )
+    df = df[df["warehouse_number"] != ""]
+    for col in ALL_FIELDS:
+        df[col] = (
+            df[col]
+            .astype(str)
+            .str.strip()
+            .replace({"nan": pd.NA, "": pd.NA})
+        )
     return df
 
 
-def classify_matches(file_leads, file_sales):
-
-    KEY_FIELDS = {
-        "business_name": 40,
-        "address_line_one": 40,
-        "email": 30,
-        "phone": 20,
-    }
-
-    SUPPLEMENTARY_FIELDS = {
-        "state": 5,
-        "city": 5,
-        "zip_code": 10,
-    }
-
-    MINIMUM_SCORE = 80
-
-    all_fields = list(KEY_FIELDS.keys()) + list(SUPPLEMENTARY_FIELDS.keys())
-
-    def preprocess(df):
-        df = df.copy()
-        df = df.dropna(subset=["warehouse_number"])
-        df["warehouse_number"] = (
-            pd.to_numeric(df["warehouse_number"], errors="coerce")
-            .astype("Int64")
-            .astype(str)
-        )
-        df = df[df["warehouse_number"] != ""]
-        for col in all_fields:
-            df[col] = df[col].astype(str).str.strip().replace({'nan': pd.NA, '': pd.NA})
-        return df
+# ==============================================================
+# CLASSIFY MATCHES
+# ==============================================================
+def classify_matches(
+    file_leads: pd.DataFrame,
+    file_sales: pd.DataFrame,
+) -> pd.DataFrame:
 
     leads = preprocess(file_leads)
     sales = preprocess(file_sales)
 
-    leads_small = leads[["lead_id", "warehouse_number"] + all_fields]
-    sales_small = sales[["pos_id", "warehouse_number"] + all_fields]
+    # ----------------------------------------------------------
+    # WAREHOUSE PRE-FILTER
+    # ----------------------------------------------------------
+    lead_warehouses = leads["warehouse_number"].dropna().unique()
+    sales_before = len(sales)
+    sales = sales[sales["warehouse_number"].isin(lead_warehouses)].copy()
+    log.info(
+        "Warehouse pre-filter: %d → %d POS rows (%d dropped)",
+        sales_before, len(sales), sales_before - len(sales),
+    )
 
-    # -------------------------------
-    # PHASE 1: Key fields only
-    # -------------------------------
-    score_frames = []
+    if sales.empty:
+        log.warning("No POS rows share a warehouse with any lead.")
+        no_match_df = file_leads.copy()
+        no_match_df["match_result"]      = "No Match"
+        no_match_df["similarity_score"]  = 0
+        no_match_df["pos_id"]            = "NA"
+        no_match_df["match_type"]        = "Exact"
+        no_match_df["matching_comments"] = ""
+        return no_match_df
+
+    leads_small = leads[["lead_id", "warehouse_number"] + ALL_FIELDS].copy()
+    sales_small = sales[["pos_id", "warehouse_number"] + ALL_FIELDS].copy()
+
+    # ==========================================================
+    # PHASE 1 — KEY FIELD MATCHING (vectorised merge)
+    # ==========================================================
+    score_frames     = []
+    key_score_frames = {}
 
     for field, score in KEY_FIELDS.items():
-        sales_valid = sales_small.dropna(subset=[field])
-        leads_valid = leads_small.dropna(subset=[field])
+        log.info("Processing key field: %s", field)
+
+        sales_valid = sales_small.dropna(subset=["warehouse_number", field])
+        leads_valid = leads_small.dropna(subset=["warehouse_number", field])
 
         if sales_valid.empty or leads_valid.empty:
             continue
 
-        sales_grouped = (
-            sales_valid
-            .groupby(["warehouse_number", field])["pos_id"]
-            .apply(list)
-            .to_dict()
-        )
+        matched = leads_valid.merge(
+            sales_valid,
+            on=["warehouse_number", field],
+            how="inner",
+            suffixes=("_lead", "_sale"),
+        )[["lead_id", "pos_id"]].drop_duplicates()
 
-        matches = []
-        for _, row in leads_valid.iterrows():
-            key = (row["warehouse_number"], row[field])
-            if key in sales_grouped:
-                for pos_id in sales_grouped[key]:
-                    matches.append((row["lead_id"], pos_id))
-
-        if not matches:
+        if matched.empty:
             continue
 
-        merged = pd.DataFrame(matches, columns=["lead_id", "pos_id"]).drop_duplicates()
-        merged["score"] = score
-        print(f"{field}: {len(merged)} matches")
-        score_frames.append(merged)
+        matched["score"] = score
+        score_frames.append(matched)
+        key_score_frames[field] = matched[["lead_id", "pos_id"]].copy()
 
-    # -------------------------------
-    # Handle no matches early
-    # -------------------------------
+        log.info("%s: %d matches", field, len(matched))
+
+    del leads_small, sales_small
+    gc.collect()
+
     if not score_frames:
+        log.warning("No candidate pairs found after Phase 1.")
         no_match_df = file_leads.copy()
-        no_match_df["match_result"] = "No Match"
-        no_match_df["similarity_score"] = 0
-        no_match_df["pos_id"] = "NA"
-        no_match_df["match_type"] = "Exact"
+        no_match_df["match_result"]      = "No Match"
+        no_match_df["similarity_score"]  = 0
+        no_match_df["pos_id"]            = "NA"
+        no_match_df["match_type"]        = "Exact"
+        no_match_df["matching_comments"] = ""
         return no_match_df
 
-    # Get candidate pairs from Phase 1
+    # ==========================================================
+    # CANDIDATE PAIRS
+    # ==========================================================
     candidate_pairs = (
         pd.concat(score_frames, ignore_index=True)
         [["lead_id", "pos_id"]]
         .drop_duplicates()
     )
+    log.info("Total candidate pairs: %d", len(candidate_pairs))
 
-    print(f"Total candidate pairs: {len(candidate_pairs)}")
-
-    # -------------------------------
-    # PHASE 2: Supplementary fields
-    # only on candidate pairs
-    # -------------------------------
-    leads_supp = leads[["lead_id"] + list(SUPPLEMENTARY_FIELDS.keys())]
-    sales_supp = sales[["pos_id"] + list(SUPPLEMENTARY_FIELDS.keys())]
-
-    leads_supp = leads[["lead_id"] + list(SUPPLEMENTARY_FIELDS.keys())].drop_duplicates(subset=["lead_id"])
-    sales_supp = sales[["pos_id"] + list(SUPPLEMENTARY_FIELDS.keys())].drop_duplicates(subset=["pos_id"])
+    # ==========================================================
+    # PHASE 2 — SUPPLEMENTARY MATCHING
+    # ==========================================================
+    leads_supp = (
+        leads[["lead_id"] + list(SUPPLEMENTARY_FIELDS.keys())]
+        .drop_duplicates(subset=["lead_id"])
+    )
+    sales_supp = (
+        sales[["pos_id"] + list(SUPPLEMENTARY_FIELDS.keys())]
+        .drop_duplicates(subset=["pos_id"])
+    )
 
     candidates_with_data = (
         candidate_pairs
@@ -138,29 +213,33 @@ def classify_matches(file_leads, file_sales):
         .merge(sales_supp, on="pos_id", how="left", suffixes=("_lead", "_sale"))
     )
 
+    supp_score_frames = {}
+
     for field, score in SUPPLEMENTARY_FIELDS.items():
         lead_col = f"{field}_lead"
         sale_col = f"{field}_sale"
 
         mask = (
-            candidates_with_data[lead_col].notna() &
-            candidates_with_data[sale_col].notna() &
-            (candidates_with_data[lead_col] == candidates_with_data[sale_col])
+            candidates_with_data[lead_col].notna()
+            & candidates_with_data[sale_col].notna()
+            & (candidates_with_data[lead_col] == candidates_with_data[sale_col])
         )
+        supp_matches = candidates_with_data.loc[mask, ["lead_id", "pos_id"]].copy()
 
-        if mask.any():
-            supp_frame = candidates_with_data.loc[mask, ["lead_id", "pos_id"]].copy()
-            supp_frame["score"] = score
-            print(f"{field}: {mask.sum()} supplementary matches")
-            score_frames.append(supp_frame)
+        if supp_matches.empty:
+            continue
 
-    # -------------------------------
-    # Aggregate scores
-    # -------------------------------
-    all_scores = pd.concat(score_frames, ignore_index=True)
+        supp_matches["score"] = score
+        score_frames.append(supp_matches)
+        supp_score_frames[field] = supp_matches[["lead_id", "pos_id"]].copy()
 
+        log.info("%s: %d supplementary matches", field, len(supp_matches))
+
+    # ==========================================================
+    # AGGREGATE SCORES
+    # ==========================================================
     pair_scores = (
-        all_scores
+        pd.concat(score_frames, ignore_index=True)
         .groupby(["lead_id", "pos_id"], as_index=False)["score"]
         .sum()
         .rename(columns={"score": "similarity_score"})
@@ -168,147 +247,216 @@ def classify_matches(file_leads, file_sales):
         .drop_duplicates(subset=["pos_id"])
     )
 
-    # -------------------------------
-    # Filter qualified matches
-    # -------------------------------
-    qualified = pair_scores[pair_scores["similarity_score"] >= MINIMUM_SCORE]
+    qualified = pair_scores[pair_scores["similarity_score"] >= MINIMUM_SCORE].copy()
 
-    # -------------------------------
-    # Join back full data
-    # -------------------------------
-    sales = sales.rename(columns={"business_name":"business_name_transaction"})
-    sales_subset = sales[["pos_id", "fiscal_year_transaction", "fiscal_period_transaction","week",
-    "account_number","business_name_transaction"]]
+    # ==========================================================
+    # VECTORIZED MATCHED FIELD TRACKING
+    # ==========================================================
+    if key_score_frames:
+        key_field_df = pd.concat(
+            [frame.assign(field=f) for f, frame in key_score_frames.items()],
+            ignore_index=True,
+        )
+        key_field_map = (
+            key_field_df.groupby(["lead_id", "pos_id"])["field"]
+            .apply(list)
+            .rename("matched_key_fields")
+        )
+        qualified = qualified.merge(key_field_map, on=["lead_id", "pos_id"], how="left")
+        qualified["matched_key_fields"] = qualified["matched_key_fields"].apply(
+            lambda x: x if isinstance(x, list) else []
+        )
+    else:
+        qualified["matched_key_fields"] = [[]] * len(qualified)
+
+    if supp_score_frames:
+        supp_field_df = pd.concat(
+            [frame.assign(field=f) for f, frame in supp_score_frames.items()],
+            ignore_index=True,
+        )
+        supp_field_map = (
+            supp_field_df.groupby(["lead_id", "pos_id"])["field"]
+            .apply(list)
+            .rename("matched_supp_fields")
+        )
+        qualified = qualified.merge(supp_field_map, on=["lead_id", "pos_id"], how="left")
+        qualified["matched_supp_fields"] = qualified["matched_supp_fields"].apply(
+            lambda x: x if isinstance(x, list) else []
+        )
+    else:
+        qualified["matched_supp_fields"] = [[]] * len(qualified)
+
+    # ==========================================================
+    # POS-DOMINANT SUBSETS FOR FINAL MERGE
+    # ==========================================================
+    lead_subset = leads[[
+        "lead_id",
+        "updated_date",
+        "fiscal_year_lead",
+        "fiscal_period_lead",
+    ]]
+
+    sales_subset = (
+        sales
+        .rename(columns={"business_name": "business_name_transaction"})
+        [[
+            "pos_id",
+            "account_number",
+            "business_name_transaction",
+            "membership_number",
+            "warehouse_number",
+            "fiscal_year_transaction",
+            "fiscal_period_transaction",
+            "week",
+            "shop_type",
+            "sales_reference_id",
+            "order_amount",
+            "bd_industry",
+            "first_name",
+            "last_name",
+            "address_line_one",
+            "address_line_two",
+            "city",
+            "state",
+            "zip_code",
+            "email",
+            "phone",
+            "industry_description",
+        ]]
+    )
 
     matched_df = (
         qualified
-        .merge(leads, on="lead_id", how="inner")
+        .merge(lead_subset, on="lead_id", how="inner")
         .merge(sales_subset, on="pos_id", how="inner")
     )
 
-    # -------------------------------
-    # Apply fiscal filter
-    # -------------------------------
-    matched_df = matched_df[
-        (matched_df["fiscal_year_lead"] < matched_df["fiscal_year_transaction"]) |
-        (
-            (matched_df["fiscal_year_lead"] == matched_df["fiscal_year_transaction"]) &
-            (matched_df["fiscal_period_lead"] <= matched_df["fiscal_period_transaction"])
-        )
-    ]
+    # ==========================================================
+    # FISCAL FILTER
+    # ==========================================================
+    later_year = (
+        matched_df["fiscal_year_lead"] < matched_df["fiscal_year_transaction"]
+    )
+    same_year_later_period = (
+        (matched_df["fiscal_year_lead"] == matched_df["fiscal_year_transaction"])
+        & (matched_df["fiscal_period_lead"] <= matched_df["fiscal_period_transaction"])
+    )
+    matched_df = matched_df[later_year | same_year_later_period].copy()
 
-    # -------------------------------
-    # Assign match result
-    # -------------------------------
+    # ==========================================================
+    # ASSIGN MATCH RESULT
+    # ==========================================================
     def assign_confidence(score):
-        if score >= 100:
-            return "Complete"
-        elif score >= 80:
+        if score >= COMPLETE_SCORE:
+            return "Match"
+        elif score >= MINIMUM_SCORE:
             return "Potential"
         else:
             return "No Match"
 
     matched_df["match_result"] = matched_df["similarity_score"].apply(assign_confidence)
-    matched_df["match_type"] = "Exact"
+    matched_df["match_type"]   = "Exact"
+    matched_df["matched_by"]   = "System"
 
-    # -------------------------------
-    # No match records
-    # -------------------------------
+    # ==========================================================
+    # MATCHING COMMENTS
+    # ==========================================================
+    matched_df["matching_comments"] = matched_df.apply(
+        build_matching_comment, axis=1
+    )
+
+    # Drop field-tracking columns — internal use only
+    matched_df.drop(
+        columns=["matched_key_fields", "matched_supp_fields"],
+        errors="ignore",
+        inplace=True,
+    )
+
+    # ==========================================================
+    # NO MATCH RECORDS
+    # ==========================================================
     matched_ids = set(qualified["lead_id"])
     no_match_df = file_leads[~file_leads["lead_id"].isin(matched_ids)].copy()
-    no_match_df["match_result"] = "No Match"
-    no_match_df["similarity_score"] = 0
-    no_match_df["pos_id"] = "NA"
-    no_match_df["match_type"] = "Exact"
+    no_match_df["match_result"]      = "No Match"
+    no_match_df["similarity_score"]  = 0
+    no_match_df["pos_id"]            = "NA"
+    no_match_df["match_type"]        = "Exact"
+    no_match_df["matched_by"]        = "System"
+    no_match_df["matching_comments"] = ""
 
-    # -------------------------------
-    # Final output
-    # -------------------------------
-    return pd.concat([matched_df, no_match_df], ignore_index=True)
+    final_df = pd.concat([matched_df, no_match_df], ignore_index=True)
+
+    log.info(
+        "Final records — matched: %d | no match: %d",
+        len(matched_df), len(no_match_df),
+    )
+    return final_df
 
 
-def primary_classification(match_id: str, config_file_path: str, file_a_path: str = "", file_b_path: str = "") -> str:
-
+# ==============================================================
+# PRIMARY CLASSIFICATION (orchestrator)
+# ==============================================================
+def primary_classification(
+    match_id: str,
+    config_file_path: str,
+    file_a_path: str = "",
+    file_b_path: str = "",
+) -> str:
     """
-    This Kubeflow pipeline component performs primary classification of leads data by matching it with sales data.
-
-    Steps:
-    1. Downloads input CSV files from Google Cloud Storage (GCS).
-    2. Applies exact matching rules:
-    - Score-based matching using warehouse-scoped field merges.
-        Points: business_name=40, address fields=60, email=30, phone=20
-        Warehouse match is mandatory. No null warehouse rows considered.
-    3. Assigns confidence levels and similarity scores to each match.
-    4. Filters out matches where the lead load date is after the order date.
-    5. Writes match audit in cloudsql database
-    6. Saves the classified DataFrame back to GCS and returns its URI.
-
-    Parameters:
-    - file_a_path: GCS path to the leads CSV file
-    - file_b_path: GCS path to the sales CSV file
-    - preprocessed_folder: Output folder path in GCS for processed files
-    - output_bucket: Destination bucket for processed files
-    - leads_classified_file_name: Name of the output file (CSV)
-    - user_table: PostgreSQL target table for logging (format: schema.table)
-    - connection_string: Cloud SQL connection info
-    - secret_user_name / secret_password: Secret Manager keys for DB credentials
-    - database_name: Target database name
-    - project_id: GCP project ID
-    - match_id: Unique identifier for this classification run
-
-"""
-    #initialization
-    job_config = JobConfig(config_file_path)
+    Orchestrates the exact-match leads-to-POS pipeline.
+    Output is passed downstream to fuzzy_matching, which produces
+    the final record sent to ServiceNow.
+    """
+    job_config     = JobConfig(config_file_path)
     storage_config = job_config.storage_config
-    db_config = job_config.db_config
+    db_config      = job_config.db_config
 
     if file_a_path == "":
         file_a_path = storage_config.temp_leads_path
-    
     if file_b_path == "":
         file_b_path = storage_config.temp_pos_path
 
-    #storage
-    preprocessed_folder = storage_config.temporary_folder
-    output_bucket = storage_config.output_bucket_name
+    preprocessed_folder        = storage_config.temporary_folder
+    output_bucket              = storage_config.output_bucket_name
     leads_classified_file_name = storage_config.leads_classified_file_name
 
-    #database details
-    schema=db_config.schema_name
-    table_name=db_config.audit_table_name
+    schema     = db_config.schema_name
+    table_name = db_config.audit_table_name
+    engine     = db_config.get_engine()
+    metadata   = MetaData()
 
-
-    # Initialize GCS client
     storage_client = storage.Client()
-    metadata = MetaData()
 
-    #engine creation
-    engine =job_config.db_config.get_engine()
-
-    # Load both files A and B from GCS
+    log.info("Loading leads file: %s", file_a_path)
     file_a = load_file_from_gcs(file_a_path)
+
+    log.info("Loading POS file: %s", file_b_path)
     file_b = load_file_from_gcs(file_b_path)
 
+    log.info("Lead count: %d | POS count: %d", len(file_a), len(file_b))
 
     user_table_obj = Table(table_name, metadata, autoload_with=engine, schema=schema)
-    stmt = insert(user_table_obj).values(match_id=match_id,lead_count=len(file_a),pos_count=len(file_b),status="InProgress")
-
+    stmt = insert(user_table_obj).values(
+        match_id=match_id,
+        lead_count=len(file_a),
+        pos_count=len(file_b),
+        status="InProgress",
+    )
     with engine.connect() as conn:
-        result = conn.execute(stmt)
+        conn.execute(stmt)
         conn.commit()
 
     df = classify_matches(file_a, file_b)
 
-    new_file_name = leads_classified_file_name  # Append "_temp" before the file extension
-
-    # Save the preprocessed data to the "Temporary Files" folder in GCS
-    output_file = f"{preprocessed_folder}/{new_file_name}"
-    bucket = storage_client.get_bucket(output_bucket)
+    output_file = f"{preprocessed_folder}/{leads_classified_file_name}"
+    bucket      = storage_client.get_bucket(output_bucket)
     output_blob = bucket.blob(output_file)
+    output_blob.upload_from_string(df.to_csv(index=False), "text/csv")
 
-    # Convert DataFrame to CSV and upload to GCS
-    output_blob.upload_from_string(df.to_csv(index=False), 'text/csv')
-    output_bucket_name = bucket.name
+    uri = f"gs://{bucket.name}/{output_file}"
+    log.info("Exact match output written to: %s", uri)
 
-    uri = f"gs://{output_bucket_name}/{output_file}"
+    del file_a, file_b, df
+    gc.collect()
+
     return uri
