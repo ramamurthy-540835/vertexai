@@ -6,7 +6,7 @@ setuptools.setup(
     version='2.0.0',
     packages=setuptools.find_packages(),
     install_requires=[
-        'apache-beam[gcp]==2.59.0',
+        'apache-beam[gcp]==2.73.0',
         'psycopg2-binary==2.9.9',
         'cloud-sql-python-connector[pg8000]>=1.7.0',
         'google-auth>=2.29.0',
