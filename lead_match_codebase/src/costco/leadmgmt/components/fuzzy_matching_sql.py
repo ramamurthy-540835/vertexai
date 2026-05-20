@@ -209,6 +209,15 @@ def fuzzy_matching(file_classified_path: str, config_file_path: str) -> str:
         & pd.notna(merged_df["similarity_score_fuzzy"])
     )
 
+    print("=== COLUMNS AFTER MERGE ===")
+    print(merged_df.columns.tolist())
+
+    print("\n=== DTYPES AFTER MERGE ===")
+    print(merged_df.dtypes)
+
+    print("\n=== update_mask count ===")
+    print(f"Rows to update: {update_mask.sum()}")
+
     # ----------------------------------------------------------
     # UPDATE CORE MATCH FIELDS WHERE FUZZY BEATS EXACT
     # ----------------------------------------------------------
