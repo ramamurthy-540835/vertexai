@@ -593,7 +593,7 @@ def update_servicenow(
 
     final_df = final_df[
         final_df['match_result'].isin(
-            ['Complete', 'Potential']
+            ['Match', 'Potential']
         )
     ]
 

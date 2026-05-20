@@ -118,8 +118,8 @@ def update_cloud_sql(config_file_path: str,file_path: str = ""):
 
     # preprocessing pos_dataframe
     # pos_dataframe = final_df[final_df['pos_id'] != '']
-    pos_dataframe = final_df[final_df['match_result'].isin(['Complete','Potential'])]
-    pos_dataframe = pos_dataframe[['pos_id', 'lead_id', 'match_type', 'match_score', 'updated_by', 'updated_date','primary_transaction']]
+    pos_dataframe = final_df[final_df['match_result'].isin(['Match','Potential'])]
+    pos_dataframe = pos_dataframe[['pos_id', 'lead_id', 'match_type', 'match_score', 'updated_by', 'updated_date','primary_transaction','matching_comments']]
     # Sort by match_score descending so the highest score comes first
     pos_dataframe = pos_dataframe.sort_values(by='match_score', ascending=False)
     # Drop duplicates, keeping the first (i.e., highest match_score)
@@ -127,7 +127,7 @@ def update_cloud_sql(config_file_path: str,file_path: str = ""):
     print('pos confidence dataframe: ', len(pos_dataframe))
 
     # preprocessing leads_dataframe
-    leads_dataframe = final_df[final_df['match_result'].isin(['Complete','Potential'])]
+    leads_dataframe = final_df[final_df['match_result'].isin(['Match','Potential'])]
 
     # Sort by match_score descending so the highest score comes first
     leads_dataframe = leads_dataframe.sort_values(by='match_score', ascending=False)
