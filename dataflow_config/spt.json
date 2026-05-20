@@ -1,7 +1,7 @@
 {
   "environment": "spt",
   "project_id":  "p-601-np-bcleadsmgmt-spt",
-  "region":      "us-central1",
+  "region":       "us-central1",
   "bucket_name":      "gcp-gcs-lead-mgmt-us-spt-pos-raw",
   "manifest_prefix":  "manifests/",
   "incoming_prefix":  "pos-raw-data/incoming-files/",
