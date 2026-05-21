@@ -46,7 +46,7 @@ terraform {
            port=5432 \
            dbname=${var.database_name} \
            user=postgres \
-           password=yI|m6?535*FZ \
+           password=${var.db_password} \
            sslmode=disable" \
            -f /tmp/lead_mgmt_schema_creation.sql
    EOT

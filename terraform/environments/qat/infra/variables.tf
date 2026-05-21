@@ -72,6 +72,12 @@ variable "service_now_password" {
   sensitive   = true
 }
 
+variable "db_password"{
+  description = "database password"
+  type        = string
+  sensitive   = true
+}
+
 # SQL Scripts Configuration
 variable "sql_scripts" {
   description = "Map of SQL script files to execute"
