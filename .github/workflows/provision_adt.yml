@@ -38,6 +38,7 @@ jobs:
       TF_VAR_service_now_client_secret: ${{ secrets.SERVICE_NOW_CLIENT_SECRET }}
       TF_VAR_service_now_username: ${{ secrets.SERVICE_NOW_USERNAME }}
       TF_VAR_service_now_password: ${{ secrets.SERVICE_NOW_PASSWORD }}
+      TF_VAR_db_password: ${{secrets.CLOUD_SQL_ADT_PASSWORD}}
 
     steps:
       - name: "Checkout code"

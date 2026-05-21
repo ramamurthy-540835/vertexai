@@ -127,6 +127,10 @@ def generate_post_json(df):
 
     # ── Normalize types ──
     df = df.fillna("")
+    df = df.replace(
+        to_replace=["nan", "NaN", "None", "none", "NULL", "null", "NaT"],
+        value="",
+    )
 
     numeric_columns = [
         "similarity_score",

@@ -46,7 +46,7 @@ resource "null_resource" "initial_database_setup" {
            port=5432 \
            dbname=${var.database_name} \
            user=postgres \
-           password=RV/0V6@39%jU \
+           password=${var.db_password} \
            sslmode=disable" \
            -f /tmp/lead_mgmt_schema_creation.sql
    EOT
