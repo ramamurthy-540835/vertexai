@@ -61,6 +61,8 @@ jobs:
             --network=projects/gcp-prj-transit-hub/global/networks/gcp-vpc-np-host
             --subnet=projects/gcp-prj-transit-hub/regions/us-central1/subnetworks/gcp-snt-np-usc1-601-cloudrunjobs-np
             --set-cloudsql-instances=p-601-np-bcleadsmgmt-qat:us-central1:lead-mgmt-qat
+            --command=python
+            --args=run_all.py
             --task-timeout=2h
             --max-retries=0
             --memory=2Gi
