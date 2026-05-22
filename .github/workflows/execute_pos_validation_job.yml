@@ -1,0 +1,31 @@
+name: execute-pos-validation-job
+
+on:
+  workflow_dispatch:
+
+jobs:
+
+  run:
+
+    runs-on: ubuntu-latest
+
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+
+      - name: Auth to GCP
+        id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          create_credentials_file: true
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
+          service_account: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
+
+      - name: Execute POS Validation Job
+        run: |
+
+          gcloud run jobs execute pos-validation-job \
+            --region=us-central1 \
+            --project=p-601-np-bcleadsmgmt-qat
