@@ -1,32 +1,26 @@
-# clients/gcp_client.py
-
 import pandas as pd
+
+from costco.leadmgmt.config.Configuration import JobConfig
 
 
 class GCPClient:
 
-    def __init__(self, config):
+    def __init__(self, config_file_path):
 
-        self.config = config
+        self.job_config = JobConfig(config_file_path)
 
-        # TODO
-        # Add DB connection later
-        self.connection = None
+        self.engine = self.job_config.db_config.get_engine()
 
     # ---------------------------------------------------
-    # GENERIC QUERY EXECUTOR
+    # COMMON QUERY EXECUTOR
     # ---------------------------------------------------
 
     def execute_query(self, query):
 
-        print("\nEXECUTING QUERY:")
+        print("\nExecuting Query:")
         print(query)
 
-        # TODO
-        # Execute query using actual DB connection
-        # Return pandas DataFrame
-
-        return pd.DataFrame()
+        return pd.read_sql(query, self.engine)
 
     # ---------------------------------------------------
     # TRANSACTION TABLE
@@ -40,7 +34,7 @@ class GCPClient:
 
         query = """
         SELECT *
-        FROM lead_mgmt_qat.transaction t
+        FROM lead_mgmt_qat.transaction
         WHERE 1=1
         """
 
@@ -78,8 +72,7 @@ class GCPClient:
 
     def fetch_account_data(
         self,
-        account_id=None,
-        business_name=None
+        account_id=None
     ):
 
         query = """
@@ -90,8 +83,5 @@ class GCPClient:
 
         if account_id:
             query += f"\nAND account_id = '{account_id}'"
-
-        if business_name:
-            query += f"\nAND business_name = '{business_name}'"
 
         return self.execute_query(query)

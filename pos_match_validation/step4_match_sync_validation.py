@@ -11,7 +11,7 @@ from clients.servicenow_client import ServiceNowClient
 # LOAD CONFIGS
 # ---------------------------------------------------
 
-with open("POS_MATCH_VALIDATION/config/app_config.json") as f:
+with open("pos_match_validation/config/app_config.json") as f:
     app_config = json.load(f)
 
 
@@ -20,7 +20,7 @@ with open("POS_MATCH_VALIDATION/config/app_config.json") as f:
 # ---------------------------------------------------
 
 mapping_file = (
-    "POS_MATCH_VALIDATION/output/pos_mapping/"
+    "pos_match_validation/output/pos_mapping/"
     "pos_mapping.csv"
 )
 
@@ -33,7 +33,11 @@ print(f"Rows found: {len(mapping_df)}")
 # CLIENTS
 # ---------------------------------------------------
 
-gcp_client = GCPClient(app_config)
+config_file_path = (
+    "pos_match_validation/configuration_qa.ini"
+)
+
+gcp_client = GCPClient(config_file_path)
 
 sn_client = ServiceNowClient(app_config)
 
@@ -56,6 +60,8 @@ for idx, row in mapping_df.iterrows():
 
         oms_company = row.get("Company OMS Info", "")
 
+        pos_number = row.get("POS ID", "")
+
         # ---------------------------------------------------
         # FETCH GCP TRANSACTION
         # ---------------------------------------------------
@@ -74,7 +80,7 @@ for idx, row in mapping_df.iterrows():
 
                 "pos_id": gcp_pos_id,
 
-                "oms_company": oms_company,
+                "pos_number": pos_number,
 
                 "gcp_match_type": "",
 
@@ -110,7 +116,7 @@ for idx, row in mapping_df.iterrows():
         # ---------------------------------------------------
 
         sn_df = sn_client.fetch_pos_record(
-            oms_company=oms_company
+            pos_number=pos_number
         )
 
         # ---------------------------------------------------
@@ -123,7 +129,7 @@ for idx, row in mapping_df.iterrows():
 
                 "pos_id": gcp_pos_id,
 
-                "oms_company": oms_company,
+                "pos_number": pos_number,
 
                 "gcp_match_type": gcp_match_type,
 
@@ -144,16 +150,15 @@ for idx, row in mapping_df.iterrows():
 
         sn_record = sn_df.iloc[0].to_dict()
 
-        # TODO
-        # Replace field names after SN confirmation
+        
 
         sn_match_type = sn_record.get(
-            "u_match_type",
+            "u_match_result",
             ""
         )
 
         sn_match_score = sn_record.get(
-            "u_match_score",
+            "u_match_value",
             ""
         )
 
@@ -161,14 +166,16 @@ for idx, row in mapping_df.iterrows():
         # VALIDATION
         # ---------------------------------------------------
 
+        gcp_score = str(gcp_match_score).split(".")[0]
+
+        sn_score = str(sn_match_score).split(".")[0]
+
         if (
-            str(gcp_match_type).strip()
+            str(gcp_match_type).strip().upper()
             ==
-            str(sn_match_type).strip()
+            str(sn_match_type).strip().upper()
         ) and (
-            str(gcp_match_score).strip()
-            ==
-            str(sn_match_score).strip()
+            gcp_score == sn_score
         ):
 
             pass_fail = "PASS"
@@ -185,7 +192,7 @@ for idx, row in mapping_df.iterrows():
 
             "pos_id": gcp_pos_id,
 
-            "oms_company": oms_company,
+            "pos_number": pos_number,
 
             "gcp_match_type": gcp_match_type,
 
@@ -204,8 +211,8 @@ for idx, row in mapping_df.iterrows():
 
             "pos_id": row.get("GCP_POS_ID", ""),
 
-            "oms_company": row.get(
-                "Company OMS Info",
+            "pos_number": row.get(
+                "POS ID",
                 ""
             ),
 
@@ -235,7 +242,7 @@ output_df = pd.DataFrame(output_rows)
 # ---------------------------------------------------
 
 output_path = (
-    "POS_MATCH_VALIDATION/output/"
+    "pos_match_validation/output/"
     "match_sync_validation.csv"
 )
 

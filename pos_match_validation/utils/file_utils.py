@@ -1,16 +1,28 @@
-# utils/file_utils.py
-
 import os
 import glob
 
 
-def get_latest_file(folder_path, extension="csv"):
+def get_latest_file(folder_path):
 
-    files = glob.glob(f"{folder_path}/*.{extension}")
+    csv_files = glob.glob(
+        f"{folder_path}/*.csv"
+    )
+
+    excel_files = glob.glob(
+        f"{folder_path}/*.xlsx"
+    )
+
+    files = csv_files + excel_files
 
     if not files:
-        raise Exception(f"No {extension} files found in {folder_path}")
 
-    latest_file = max(files, key=os.path.getctime)
+        raise Exception(
+            f"No CSV/XLSX files found in {folder_path}"
+        )
+
+    latest_file = max(
+        files,
+        key=os.path.getctime
+    )
 
     return latest_file

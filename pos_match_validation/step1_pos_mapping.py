@@ -14,10 +14,10 @@ from utils.compare_utils import compare_pos_vs_gcp
 # LOAD CONFIGS
 # ---------------------------------------------------
 
-with open("POS_MATCH_VALIDATION/config/app_config.json") as f:
+with open("pos_match_validation/config/app_config.json") as f:
     app_config = json.load(f)
 
-with open("POS_MATCH_VALIDATION/config/field_mapping.json") as f:
+with open("pos_match_validation/config/field_mapping.json") as f:
     field_mapping_config = json.load(f)
 
 field_mapping = field_mapping_config["pos_to_gcp"]
@@ -28,8 +28,7 @@ field_mapping = field_mapping_config["pos_to_gcp"]
 # ---------------------------------------------------
 
 pos_file = get_latest_file(
-    app_config["paths"]["pos_input"],
-    extension="csv"
+    app_config["paths"]["pos_input"]
 )
 
 print(f"POS file found: {pos_file}")
@@ -39,7 +38,19 @@ print(f"POS file found: {pos_file}")
 # READ POS FILE
 # ---------------------------------------------------
 
-pos_df = pd.read_csv(pos_file)
+if pos_file.endswith(".csv"):
+
+    pos_df = pd.read_csv(pos_file)
+
+elif pos_file.endswith(".xlsx"):
+
+    pos_df = pd.read_excel(pos_file)
+
+else:
+
+    raise Exception(
+        f"Unsupported file format: {pos_file}"
+    )
 
 print(f"Rows found: {len(pos_df)}")
 
@@ -48,7 +59,11 @@ print(f"Rows found: {len(pos_df)}")
 # GCP CLIENT
 # ---------------------------------------------------
 
-gcp_client = GCPClient(app_config)
+config_file_path = (
+    "pos_match_validation/configuration_qa.ini"
+)
+
+gcp_client = GCPClient(config_file_path)
 
 
 # ---------------------------------------------------
@@ -164,7 +179,7 @@ output_df = pd.DataFrame(output_rows)
 # ---------------------------------------------------
 
 output_path = (
-    "POS_MATCH_VALIDATION/output/pos_mapping/"
+    "pos_match_validation/output/pos_mapping/"
     "pos_mapping.csv"
 )
 

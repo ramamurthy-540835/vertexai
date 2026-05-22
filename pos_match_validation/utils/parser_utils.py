@@ -12,3 +12,56 @@ def parse_company_oms_info(oms_id):
         "scenario": parts[3],
         "match_type_label": parts[4]
     }
+
+import re
+
+
+def parse_matching_comments(comment):
+
+    if not comment:
+
+        return {
+            "match_type": "",
+            "match_score": ""
+        }
+
+    comment = str(comment)
+
+    # ---------------------------------------------------
+    # MATCH TYPE
+    # ---------------------------------------------------
+
+    if "Complete match" in comment:
+
+        match_type = "MATCH"
+
+    elif "Potential match" in comment:
+
+        match_type = "FUZZY_MATCH"
+
+    else:
+
+        match_type = "NO_MATCH"
+
+    # ---------------------------------------------------
+    # SCORE
+    # ---------------------------------------------------
+
+    score_match = re.search(
+        r"score\s+(\d+)/150",
+        comment,
+        re.IGNORECASE
+    )
+
+    if score_match:
+
+        match_score = score_match.group(1)
+
+    else:
+
+        match_score = ""
+
+    return {
+        "match_type": match_type,
+        "match_score": match_score
+    }

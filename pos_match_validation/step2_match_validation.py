@@ -10,10 +10,10 @@ from clients.gcp_client import GCPClient
 # LOAD CONFIGS
 # ---------------------------------------------------
 
-with open("POS_MATCH_VALIDATION/config/app_config.json") as f:
+with open("pos_match_validation/config/app_config.json") as f:
     app_config = json.load(f)
 
-with open("POS_MATCH_VALIDATION/config/expected_results.json") as f:
+with open("pos_match_validation/config/expected_results.json") as f:
     expected_config = json.load(f)
 
 
@@ -22,7 +22,7 @@ with open("POS_MATCH_VALIDATION/config/expected_results.json") as f:
 # ---------------------------------------------------
 
 mapping_file = (
-    "POS_MATCH_VALIDATION/output/pos_mapping/"
+    "pos_match_validation/output/pos_mapping/"
     "pos_mapping.csv"
 )
 
@@ -35,7 +35,11 @@ print(f"Rows found: {len(mapping_df)}")
 # GCP CLIENT
 # ---------------------------------------------------
 
-gcp_client = GCPClient(app_config)
+config_file_path = (
+    "pos_match_validation/configuration_qa.ini"
+)
+
+gcp_client = GCPClient(config_file_path)
 
 
 # ---------------------------------------------------
@@ -229,7 +233,7 @@ output_df = pd.DataFrame(output_rows)
 # ---------------------------------------------------
 
 output_path = (
-    "POS_MATCH_VALIDATION/output/match_validation/"
+    "pos_match_validation/output/match_validation/"
     "match_validation.csv"
 )
 

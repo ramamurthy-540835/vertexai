@@ -11,10 +11,10 @@ from clients.servicenow_client import ServiceNowClient
 # LOAD CONFIGS
 # ---------------------------------------------------
 
-with open("POS_MATCH_VALIDATION/config/app_config.json") as f:
+with open("pos_match_validation/config/app_config.json") as f:
     app_config = json.load(f)
 
-with open("POS_MATCH_VALIDATION/config/field_mapping.json") as f:
+with open("pos_match_validation/config/field_mapping.json") as f:
     field_mapping_config = json.load(f)
 
 lead_mapping = field_mapping_config["lead_fields"]
@@ -28,7 +28,11 @@ account_mapping = field_mapping_config["account_fields"]
 
 sn_client = ServiceNowClient(app_config)
 
-gcp_client = GCPClient(app_config)
+config_file_path = (
+    "pos_match_validation/configuration_qa.ini"
+)
+
+gcp_client = GCPClient(config_file_path)
 
 
 # ---------------------------------------------------
@@ -214,7 +218,7 @@ output_df = pd.DataFrame(output_rows)
 # ---------------------------------------------------
 
 output_path = (
-    "POS_MATCH_VALIDATION/output/lead_validation/"
+    "pos_match_validation/output/lead_validation/"
     "lead_validation.csv"
 )
 

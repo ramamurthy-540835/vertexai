@@ -1,72 +1,52 @@
 {
   "pos_to_gcp": {
-
     "Whse": "warehouse_number",
     "FY": "fiscal_year",
     "Period": "fiscal_period",
     "Week": "week",
-
     "Account Number": "account_number",
     "Member Number": "membership_number",
     "Customer ID": "sales_reference_id",
-
     "BD Industry": "bd_industry",
     "Industry Description": "industry_description",
-
     "First Name": "first_name",
     "Last Name": "last_name",
-
     "Business Name": "business_name",
-
     "Address 1": "address_line_one",
     "Address 2": "address_line_two",
-
     "City": "city",
     "State": "state",
     "Zip Code": "zip_code",
-
     "Phone": "phone",
     "Email": "email",
-
     "Transaction Count": "transaction_count",
     "Amount": "order_amount",
-
     "Shop Type": "shop_type",
-
     "Company OMS Info": "oms_company",
     "Company 2 OMS Info": "oms_company_2",
-
     "Email 1 OMS Info": "oms_email_1",
     "Email 2 OMS Info": "oms_email_2",
     "Email 3 OMS Info": "oms_email_3",
-
     "Phone 1 OMS Info": "oms_phone_1",
     "Phone 2 OMS Info": "oms_phone_2",
     "Phone 3 OMS Info": "oms_phone_3",
-
     "Cell 1 OMS Info": "oms_cell_1",
     "Cell 2 OMS Info": "oms_cell_2",
-
     "First OMS Info": "oms_first_name",
     "Middle OMS Info": "oms_middle_name",
     "Last OMS Info": "oms_last_name",
-
     "Address Line 1 OMS Info": "oms_address_line_1",
     "City OMS Info": "oms_city",
     "State OMS Info": "oms_state",
     "Zip OMS Info": "oms_zip",
-
     "Address Line 1 V2 OMS Info": "oms_address_line_1_v2",
-
     "Address Line 2 OMS Info": "oms_address_line_2",
     "Address Line 3 OMS Info": "oms_address_line_3",
     "Address Line 4 OMS Info": "oms_address_line_4",
     "Address Line 5 OMS Info": "oms_address_line_5",
     "Address Line 6 OMS Info": "oms_address_line_6",
-
     "City 2 OMS Info": "oms_city_2",
     "State 2 OMS Info": "oms_state_2",
-
     "Zip 2 OMS Info": "oms_zip_2",
     "Zip 3 OMS Info": "oms_zip_3",
     "Zip 4 OMS Info": "oms_zip_4"

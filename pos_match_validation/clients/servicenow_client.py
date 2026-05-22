@@ -107,14 +107,82 @@ class ServiceNowClient:
 
     def fetch_pos_record(
         self,
-        oms_company=None
+        pos_number
     ):
 
-        # TODO
-        # Replace after POS API details shared
+        token_url = (
+            f"https://{self.instance}/oauth_token.do"
+        )
 
-        print("\nFetching POS record from ServiceNow")
+        token_payload = {
 
-        print(f"OMS Company: {oms_company}")
+            "grant_type": "client_credentials",
 
-        return pd.DataFrame()
+            "client_id": self.client_id,
+
+            "client_secret": self.client_secret
+        }
+
+        token_response = requests.post(
+            token_url,
+            data=token_payload,
+            verify=False
+        )
+
+        token_response.raise_for_status()
+
+        access_token = (
+            token_response.json()["access_token"]
+        )
+
+        table_url = (
+            f"https://{self.instance}"
+            f"/api/now/table/sn_retail_pos"
+        )
+
+        headers = {
+
+            "Authorization":
+                f"Bearer {access_token}",
+
+            "Accept": "application/json"
+        }
+
+        params = {
+
+            "sysparm_query":
+                f"number={pos_number}",
+
+            "sysparm_fields":
+                ",".join([
+
+                    "number",
+
+                    "u_matched_lead",
+
+                    "u_matching_comments",
+
+                    "u_business_name",
+
+                    "u_gcp_id",
+
+                    "u_address_1"
+                ]),
+
+            "sysparm_display_value": "true",
+
+            "sysparm_limit": "1"
+        }
+
+        response = requests.get(
+            table_url,
+            headers=headers,
+            params=params,
+            verify=False
+        )
+
+        response.raise_for_status()
+
+        data = response.json()["result"]
+
+        return pd.DataFrame(data)
