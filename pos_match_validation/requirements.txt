@@ -5,3 +5,4 @@ pg8000
 cloud-sql-python-connector
 google-cloud-storage
 requests
+unidecode
