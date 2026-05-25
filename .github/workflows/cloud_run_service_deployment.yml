@@ -145,12 +145,6 @@ jobs:
         if: env.DEPLOY == 'true'
         id: get-service-url
         run: |
-          # Debug: see full output first
-          gcloud run services describe lead-mgmt-service \
-            --project "$PROJECT_ID" \
-            --region us-central1 \
-            --format json | jq '.status'
-
           SERVICE_URL=$(gcloud run services describe lead-mgmt-service \
             --project "$PROJECT_ID" \
             --region us-central1 \
