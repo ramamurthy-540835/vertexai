@@ -146,7 +146,7 @@ jobs:
         id: get-service-url
         run: |
           SERVICE_URL=$(gcloud run services describe lead-mgmt-service \
-            --project ${{ env.PROJECT_ID }} \
+            --project "$PROJECT_ID" \
             --region us-central1 \
             --format 'value(status.uri)')
           echo "SERVICE_URL=$SERVICE_URL"
@@ -156,13 +156,13 @@ jobs:
         if: env.DEPLOY == 'true'
         run: |
           if gcloud scheduler jobs describe lead-mgmt-scheduler \
-            --project ${{ env.PROJECT_ID }} \
+            --project "$PROJECT_ID" \
             --location us-central1 > /dev/null 2>&1; then
             echo "Scheduler job already exists. Skipping creation."
           else
             echo "Creating scheduler job..."
             gcloud scheduler jobs create http cloud-run-service-scheduler \
-              --project ${{ env.PROJECT_ID }} \
+              --project "$PROJECT_ID" \
               --location us-central1 \
               --schedule="0 0 * * *" \
               --uri=${{ steps.get-service-url.outputs.service_url }}/health \
