@@ -2,22 +2,41 @@ name: execute-pos-validation-job
 
 on:
   workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment'
+        required: true
+        default: 'qat'
+        type: choice
+        options:
+          - 'adt'
+          - 'qat'
+          - 'spt'
+
+env:
+  PROJECT_ID: 'p-601-np-bcleadsmgmt-${{ github.event.inputs.environment }}'
+  REGION: 'us-central1'
 
 jobs:
 
   run:
 
-    runs-on: ubuntu-latest
+    name: "Execute POS Validation Job"
+
+    runs-on: "ubuntu-latest"
+
+    environment: ${{ github.event.inputs.environment }}
 
     permissions:
       id-token: write
       contents: read
 
     steps:
-      - name: Checkout
+
+      - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Auth to GCP
+      - name: Auth in GCP
         id: auth
         uses: google-github-actions/auth@v2
         with:
@@ -27,7 +46,11 @@ jobs:
 
       - name: Execute POS Validation Job
         run: |
+          unset CLOUDSDK_CORE_PROJECT
+
+          gcloud config set project $PROJECT_ID
 
           gcloud run jobs execute pos-validation-job \
-            --region=us-central1 \
-            --project=p-601-np-bcleadsmgmt-qat
+            --region=$REGION \
+            --project=$PROJECT_ID \
+            --wait
