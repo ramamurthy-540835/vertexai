@@ -2,7 +2,7 @@
 
 import json
 import pandas as pd
-
+import os
 from clients.gcp_client import GCPClient
 from clients.servicenow_client import ServiceNowClient
 
@@ -11,7 +11,7 @@ from clients.servicenow_client import ServiceNowClient
 # LOAD CONFIGS
 # ---------------------------------------------------
 
-with open("pos_match_validation/config/app_config.json") as f:
+with open("config/app_config.json") as f:
     app_config = json.load(f)
 
 
@@ -20,7 +20,7 @@ with open("pos_match_validation/config/app_config.json") as f:
 # ---------------------------------------------------
 
 mapping_file = (
-    "pos_match_validation/output/pos_mapping/"
+    f"{os.environ['TMP_POS_MAPPING_DIR']}/"
     "pos_mapping.csv"
 )
 
@@ -34,7 +34,7 @@ print(f"Rows found: {len(mapping_df)}")
 # ---------------------------------------------------
 
 config_file_path = (
-    "pos_match_validation/configuration_qa.ini"
+    "configuration_qa.ini"
 )
 
 gcp_client = GCPClient(config_file_path)
@@ -241,9 +241,12 @@ output_df = pd.DataFrame(output_rows)
 # SAVE OUTPUT
 # ---------------------------------------------------
 
+output_dir = os.environ["TMP_MATCH_SYNC_VALIDATION_DIR"]
+
+os.makedirs(output_dir, exist_ok=True)
+
 output_path = (
-    "pos_match_validation/output/"
-    "match_sync_validation.csv"
+    f"{output_dir}/match_sync_validation.csv"
 )
 
 output_df.to_csv(output_path, index=False)

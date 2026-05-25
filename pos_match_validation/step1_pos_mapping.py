@@ -2,10 +2,10 @@
 
 import json
 import pandas as pd
-
+import os
 from clients.gcp_client import GCPClient
 
-from utils.file_utils import get_latest_file
+# from utils.file_utils import get_latest_file
 from utils.parser_utils import parse_company_oms_info
 from utils.compare_utils import compare_pos_vs_gcp
 
@@ -14,29 +14,22 @@ from utils.compare_utils import compare_pos_vs_gcp
 # LOAD CONFIGS
 # ---------------------------------------------------
 
-with open("pos_match_validation/config/app_config.json") as f:
+with open("config/app_config.json") as f:
     app_config = json.load(f)
 
-with open("pos_match_validation/config/field_mapping.json") as f:
+with open("config/field_mapping.json") as f:
     field_mapping_config = json.load(f)
 
 field_mapping = field_mapping_config["pos_to_gcp"]
 
 
 # ---------------------------------------------------
-# GET LATEST POS FILE
-# ---------------------------------------------------
-
-pos_file = get_latest_file(
-    app_config["paths"]["pos_input"]
-)
-
-print(f"POS file found: {pos_file}")
-
-
-# ---------------------------------------------------
 # READ POS FILE
 # ---------------------------------------------------
+
+pos_file = os.environ["POS_INPUT_FILE"]
+
+print(f"POS file found: {pos_file}")
 
 if pos_file.endswith(".csv"):
 
@@ -51,8 +44,6 @@ else:
     raise Exception(
         f"Unsupported file format: {pos_file}"
     )
-
-print(f"Rows found: {len(pos_df)}")
 
 
 # ---------------------------------------------------
@@ -178,9 +169,12 @@ output_df = pd.DataFrame(output_rows)
 # SAVE OUTPUT
 # ---------------------------------------------------
 
+output_dir = os.environ["TMP_POS_MAPPING_DIR"]
+
+os.makedirs(output_dir, exist_ok=True)
+
 output_path = (
-    "pos_match_validation/output/pos_mapping/"
-    "pos_mapping.csv"
+    f"{output_dir}/pos_mapping.csv"
 )
 
 output_df.to_csv(output_path, index=False)

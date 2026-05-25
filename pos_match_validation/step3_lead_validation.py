@@ -2,7 +2,7 @@
 
 import json
 import pandas as pd
-
+import os
 from clients.gcp_client import GCPClient
 from clients.servicenow_client import ServiceNowClient
 
@@ -11,10 +11,10 @@ from clients.servicenow_client import ServiceNowClient
 # LOAD CONFIGS
 # ---------------------------------------------------
 
-with open("pos_match_validation/config/app_config.json") as f:
+with open("config/app_config.json") as f:
     app_config = json.load(f)
 
-with open("pos_match_validation/config/field_mapping.json") as f:
+with open("config/field_mapping.json") as f:
     field_mapping_config = json.load(f)
 
 lead_mapping = field_mapping_config["lead_fields"]
@@ -29,7 +29,7 @@ account_mapping = field_mapping_config["account_fields"]
 sn_client = ServiceNowClient(app_config)
 
 config_file_path = (
-    "pos_match_validation/configuration_qa.ini"
+    "configuration_qa.ini"
 )
 
 gcp_client = GCPClient(config_file_path)
@@ -217,9 +217,12 @@ output_df = pd.DataFrame(output_rows)
 # SAVE OUTPUT
 # ---------------------------------------------------
 
+output_dir = os.environ["TMP_LEAD_VALIDATION_DIR"]
+
+os.makedirs(output_dir, exist_ok=True)
+
 output_path = (
-    "pos_match_validation/output/lead_validation/"
-    "lead_validation.csv"
+    f"{output_dir}/lead_validation.csv"
 )
 
 output_df.to_csv(output_path, index=False)
