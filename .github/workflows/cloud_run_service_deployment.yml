@@ -79,6 +79,19 @@ jobs:
             echo "SERVICE_ACCOUNT=gco-iam-svc-lead-mgmt-bc-adt@p-601-np-bcleadsmgmt-adt.iam.gserviceaccount.com" >> $GITHUB_ENV
             echo "ENVIRONMENT_VARIABLES_PATH=./cloud_run_service/service_adt.properties" >> $GITHUB_ENV
 
+          elif [[ "$REF" == refs/heads/feature* ]]; then
+            # Only deploy if this workflow file itself changed
+            CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD)
+            if echo "$CHANGED_FILES" | grep -q ".github/workflows/cloud_run_service_deployment.yml"; then
+              echo "ENV=adt" >> $GITHUB_ENV
+              echo "DEPLOY=true" >> $GITHUB_ENV
+              echo "PROJECT_ID=p-601-np-bcleadsmgmt-adt" >> $GITHUB_ENV
+              echo "SERVICE_ACCOUNT=gco-iam-svc-lead-mgmt-bc-adt@p-601-np-bcleadsmgmt-adt.iam.gserviceaccount.com" >> $GITHUB_ENV
+              echo "ENVIRONMENT_VARIABLES_PATH=./cloud_run_service/service_adt.properties" >> $GITHUB_ENV
+            else
+              echo "DEPLOY=false" >> $GITHUB_ENV
+            fi
+
           elif [[ "$REF" == refs/heads/main ]]; then
             echo "ENV=qat" >> $GITHUB_ENV
             echo "DEPLOY=true" >> $GITHUB_ENV
