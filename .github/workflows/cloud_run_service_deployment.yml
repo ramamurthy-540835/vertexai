@@ -152,7 +152,7 @@ jobs:
               --project ${{ env.PROJECT_ID }} \
               --location us-central1 \
               --schedule="0 0 * * *" \
-              --uri=${{ steps.get-service-url.outputs.service_url }}/scheduled-update-pos \
+              --uri=${{ steps.get-service-url.outputs.service_url }}/health \
               --http-method=GET \
               --oidc-service-account-email=${{ env.SERVICE_ACCOUNT }}
           fi
