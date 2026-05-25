@@ -49,8 +49,7 @@ jobs:
         with:
           job: 'pos-validation-job'
 
-          image: |
-            us-docker.pkg.dev/gcp-prj-images/gcp-gar-repo-mbrshp/pos-validation:latest
+          image: us-docker.pkg.dev/gcp-prj-images/gcp-gar-repo-mbrshp/pos-validation:latest
 
           project_id: p-601-np-bcleadsmgmt-qat
 
