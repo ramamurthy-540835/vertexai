@@ -145,10 +145,17 @@ jobs:
         if: env.DEPLOY == 'true'
         id: get-service-url
         run: |
+          # Debug: see full output first
+          gcloud run services describe lead-mgmt-service \
+            --project "$PROJECT_ID" \
+            --region us-central1 \
+            --format json | jq '.status'
+
           SERVICE_URL=$(gcloud run services describe lead-mgmt-service \
             --project "$PROJECT_ID" \
             --region us-central1 \
-            --format 'value(status.uri)')
+            --format 'value(status.address.url)')
+
           echo "SERVICE_URL=$SERVICE_URL"
           echo "service_url=$SERVICE_URL" >> $GITHUB_OUTPUT
 
@@ -161,7 +168,7 @@ jobs:
             echo "Scheduler job already exists. Skipping creation."
           else
             echo "Creating scheduler job..."
-            gcloud scheduler jobs create http cloud-run-service-scheduler \
+            gcloud scheduler jobs create http lead-mgmt-scheduler \
               --project "$PROJECT_ID" \
               --location us-central1 \
               --schedule="0 0 * * *" \
