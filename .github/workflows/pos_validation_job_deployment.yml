@@ -53,6 +53,7 @@ jobs:
 
           project_id: p-601-np-bcleadsmgmt-qat
 
+          region: us-central1
 
           flags: |
             --service-account=gco-iam-svc-lead-mgmt-bc-qat@p-601-np-bcleadsmgmt-qat.iam.gserviceaccount.com
