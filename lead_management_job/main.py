@@ -174,7 +174,7 @@ if __name__ == "__main__":
         try:
             if not batch_id:
                 batch_id = uuid.uuid4()
-            get_record_snow_to_gcs(batch_id, "pos",job_config )
+            get_record_snow_to_gcs(batch_id, "pos_update",job_config )
         except Exception as ex:
             print("Error happened during read_pos_data process")
             print(ex)

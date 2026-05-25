@@ -246,7 +246,7 @@ class WriteBatchAudit(beam.DoFn):
                      stage, status, start_date, end_date, comments)
                 VALUES
                     (%s, 'pos', %s, %s,
-                     'ingestion', 'succeeded', %s, %s, %s)
+                     'ingestion', 'Completed', %s, %s, %s)
             '''
 
             comments = json.dumps({

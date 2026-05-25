@@ -90,7 +90,8 @@ def _apply_unmatch(conn, pos_id, now):
                SET lead_id              = NULL,
                    match_score          = NULL,
                    match_type           = NULL,
-                   primary_transaction  = FALSE,
+                   primary_transaction  = NULL,
+                   matching_comments    = NULL,
                    updated_date         = :now,
                    updated_by           = :updated_by
              WHERE pos_id = :pos_id

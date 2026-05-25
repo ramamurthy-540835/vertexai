@@ -709,14 +709,74 @@ def write_lead_data_to_db(batch_id, job_config, chunk_size=1000):
 
 def transform_pos(df, transform_dict):
     transform_data = None
+
     if df is not None:
+
+        # Extract lead_id from nested object
+        if "u_matched_lead" in df.columns:
+            df["lead_id"] = df["u_matched_lead"].apply(
+                lambda x: x.get("number") if isinstance(x, dict) else None
+            )
+
         transform_data = df.rename(columns=transform_dict)
+
         batch_id = uuid.uuid4()
         transform_data['batch_id'] = batch_id
+        
+        transform_data.loc[
+                transform_data["lead_id"].notna(),
+                "match_type"
+            ] = "Exact"
+
+        # Handle unmatched scenarios
+        transform_data.loc[
+            transform_data["lead_id"].isna(),
+            [
+                "match_score",
+                "match_result",
+                "matching_comments",
+                "primary_transaction"
+            ]
+        ] = None
 
     return transform_data
 
+def update_lead_match_result(df, db_config):
 
+    if df is None or df.empty:
+        return
+
+    # Only matched leads
+    update_df = df[
+        df["lead_id"].notna()
+    ][["lead_id", "match_result"]].drop_duplicates()
+
+    if update_df.empty:
+        return
+
+    update_query = text(f"""
+        UPDATE {db_config.schema_name}.lead
+           SET match_result = :match_result,
+               updated_date = NOW(),
+               updated_by = 'System'
+         WHERE lead_id = :lead_id
+    """)
+
+    with db_config.get_engine().begin() as conn:
+
+        for _, row in update_df.iterrows():
+
+            conn.execute(
+                update_query,
+                {
+                    "lead_id": row["lead_id"],
+                    "match_result": row["match_result"]
+                }
+            )
+
+    app_logger.info(
+        f"Updated lead table for {len(update_df)} matched leads"
+    )
 def write_pos_data_to_db(batch_id, job_config: JobConfig, chunk_size=1000):
     if not batch_id:
         batch_id = uuid.uuid4()
@@ -728,7 +788,7 @@ def write_pos_data_to_db(batch_id, job_config: JobConfig, chunk_size=1000):
     file_type = job_config.file_type
     encoding = job_config.file_encoding
 
-    ba_util.add_batch_id(batch_id, "pos", "db_load", "Started", database_config)
+    ba_util.add_batch_id(batch_id, "pos_update", "db_load", "Started", database_config)
 
     pos_record_count_before_load = get_table_row_count(database_config, "transaction")
 
@@ -756,7 +816,7 @@ def write_pos_data_to_db(batch_id, job_config: JobConfig, chunk_size=1000):
                                           dtype={"batch_id": UUID(as_uuid=True)})
                     app_logger.debug("Transaction data inserted into database")
 
-            ba_util.update_batch_id(batch_id, "pos", "db_load", len(transformed_df), len(transformed_df),
+            ba_util.update_batch_id(batch_id, "pos_update", "db_load", len(transformed_df), len(transformed_df),
                                     "Completed", database_config)
         elif data_load_type == "delta":
             data_type_dict = transform_config.delta_load_pos_datatype_mapping
@@ -775,26 +835,31 @@ def write_pos_data_to_db(batch_id, job_config: JobConfig, chunk_size=1000):
                                                         f"{database_config.schema_name}.transaction",
                                                          "pos_id",
                                                                         database_config,batch_id)
-                ba_util.update_batch_id(batch_id, "pos", "db_load", total_count, success_count,
+                # Update lead table match_result
+                update_lead_match_result(
+                    transformed_df,
+                    database_config
+                )
+                ba_util.update_batch_id(batch_id, "pos_update", "db_load", total_count, success_count,
                                         "Completed", database_config)
                 pos_record_count_after_load = get_table_row_count(database_config, "transaction")
 
-                if pos_record_count_after_load > pos_record_count_before_load:
-                    app_logger.warning("New sales records added to transaction table . Match will be triggered")
-                    trigger_match_job(job_config)
-                else:
-                    app_logger.warning("No Change in sales records count in transaction table . Match job will NOT be triggered")
+                # if pos_record_count_after_load > pos_record_count_before_load:
+                #     app_logger.warning("New sales records added to transaction table . Match will be triggered")
+                #     trigger_match_job(job_config)
+                # else:
+                #     app_logger.warning("No Change in sales records count in transaction table . Match job will NOT be triggered")
     except Exception as ex:
         app_logger.error("Error occurred while loading POS data into Database")
         app_logger.error(ex)
         app_logger.exception(ex)
         import traceback
         app_logger.debug(traceback.format_exc())
-        ba_util.update_batch_id(batch_id, "pos", "db_load", total_count, success_count,
+        ba_util.update_batch_id(batch_id, "pos_update", "db_load", total_count, success_count,
                                 "Failed", database_config)
         raise ex
 
-    ba_util.update_batch_id(batch_id, "pos", "db_load", total_count, success_count,
+    ba_util.update_batch_id(batch_id, "pos_update", "db_load", total_count, success_count,
                             "Completed", database_config)
 
 
@@ -846,8 +911,8 @@ def read_pos_data(batch_id, snow_config: SnowConfig, gcs_config: StorageConfig, 
                   batch_size=10000):
     if not batch_id:
         batch_id = uuid.uuid4()
-    ba_util.add_batch_id(batch_id, "pos", "staging", "Started", database_config)
-    start_date, end_date = get_date_range(database_config, snow_config, "pos")
+    ba_util.add_batch_id(batch_id, "pos_update", "staging", "Started", database_config)
+    start_date, end_date = get_date_range(database_config, snow_config, "pos_update")
     start_index = 1
     # batch_size = snow_config.max_batch_size
     end_index = batch_size
@@ -878,12 +943,12 @@ def read_pos_data(batch_id, snow_config: SnowConfig, gcs_config: StorageConfig, 
             else:
                 data_found = False
 
-        ba_util.update_batch_id(batch_id, "pos", "staging", total_rec_count, total_rec_count,
+        ba_util.update_batch_id(batch_id, "pos_update", "staging", total_rec_count, total_rec_count,
                                 "Completed", database_config)
 
     except Exception as exc:
         app_logger.error("Error while getting POS data from  service Now")
-        ba_util.update_batch_id(batch_id, "pos", "staging", total_rec_count, total_rec_count,
+        ba_util.update_batch_id(batch_id, "pos_update", "staging", total_rec_count, total_rec_count,
                                 "Failed", database_config)
         raise exc
     return total_rec_count
@@ -964,7 +1029,7 @@ def get_data_from_snow(batch_id, job_config: JobConfig, ):
         batch_id = uuid.uuid4()
 
     get_record_snow_to_gcs(batch_id, "lead", job_config)
-    get_record_snow_to_gcs(batch_id, "pos", job_config)
+    get_record_snow_to_gcs(batch_id, "pos_update", job_config)
 
     return batch_id
 
