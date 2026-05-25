@@ -37,7 +37,7 @@ def apply_single_update(conn: sqlalchemy.Connection, record: dict, now: datetime
 
 
 def _apply_match(conn, pos_id, lead_id, match_value, match_result, now):
-    """Update transaction with match info, then update the lead's match_result.
+    """Update transaction with match info, then update the lead match_result.
 
     primary_transaction is intentionally NOT touched on match — it stays as-is.
     """

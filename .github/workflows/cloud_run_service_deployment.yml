@@ -26,7 +26,7 @@ on:
 
   push:
     branches:
-      - feature*
+      - feature**
       - main
     tags:
       - release-spt*

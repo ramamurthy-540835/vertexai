@@ -470,7 +470,7 @@ def read_gcs_to_dataframe(bucket_name: str, file_pattern: str, datatype: dict, e
         if file_type == "csv":
             #df = pd.read_csv(file_path, encoding=encoding, dtype=datatype)
             try:
-                df = pd.read_csv(file_path, encoding=encoding, dtype=datatype)
+                df = pd.read_csv(file_path, encoding=encoding, dtype=datatype) 
 
             except Exception as e:
 

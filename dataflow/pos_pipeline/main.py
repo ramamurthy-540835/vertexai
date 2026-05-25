@@ -277,7 +277,7 @@ class WriteBatchAudit(beam.DoFn):
 
 
 # ─────────────────────────────────────────────────────────────
-# Pipeline entry point — BATCH
+# Pipeline entry point — BATCH 
 # ─────────────────────────────────────────────────────────────
 def run():
     parser = argparse.ArgumentParser()
