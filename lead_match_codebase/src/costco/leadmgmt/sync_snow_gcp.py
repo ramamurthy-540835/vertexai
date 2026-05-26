@@ -711,12 +711,8 @@ def transform_pos(df, transform_dict):
     transform_data = None
 
     if df is not None:
-
-        # Extract lead_id from nested object
-        if "u_matched_lead" in df.columns:
-            df["lead_id"] = df["u_matched_lead"].apply(
-                lambda x: x.get("number") if isinstance(x, dict) else None
-            )
+        
+        df["lead_id"] = df["lead_id"].replace("", None)
 
         transform_data = df.rename(columns=transform_dict)
 
@@ -913,10 +909,6 @@ def read_pos_data(batch_id, snow_config: SnowConfig, gcs_config: StorageConfig, 
         batch_id = uuid.uuid4()
     ba_util.add_batch_id(batch_id, "pos_update", "staging", "Started", database_config)
     start_date, end_date = get_date_range(database_config, snow_config, "pos_update")
-    start_index = 1
-    # batch_size = snow_config.max_batch_size
-    end_index = batch_size
-    data_found = True
     total_rec_count = 0
 
     try:
@@ -924,24 +916,21 @@ def read_pos_data(batch_id, snow_config: SnowConfig, gcs_config: StorageConfig, 
         # archive_gcs_folder(gcs_config)
         archive_gcs_files(gcs_config.input_bucket_name, gcs_config.pos_input_folder,
                           gcs_config.archive_bucket_name, gcs_config.archive_folder)
-        while data_found:
-            payload = {
-                "start_index": start_index,
-                "end_index": end_index,
-                "start_date": start_date,
-                "end_date": end_date}
-            output_data = read_data_from_snow(snow_config.pos_url, snow_config.snow_user, snow_config.snow_password,
-                                              payload)
+        payload = {
+            "start_date": start_date,
+            "end_date": end_date}
+        output_data = read_data_from_snow(snow_config.pos_url, snow_config.token_url,
+                                  snow_config.snow_client_id, snow_config.snow_client_secret,
+                                  payload)
+        
+        results = output_data.get('result', {}).get('results', [])
 
-            if int(output_data['result']['returned_count']) > 0 and len(output_data['result']['returned_count']) > 0:
-                # output_data, folder_path, file_name, bucket_name, chunk_number,service_account_path=None,file_type="json"
-                write_to_gcs(output_data, gcs_config.pos_input_folder, "pos_data", gcs_config.input_bucket_name,
-                             end_index, file_type="json")
-                start_index = start_index + batch_size
-                end_index = end_index + batch_size
-                total_rec_count = total_rec_count + len(output_data['result']['results'])
-            else:
-                data_found = False
+        if results:
+            write_to_gcs(output_data, gcs_config.pos_input_folder, "pos_data",
+                         gcs_config.input_bucket_name, 1, file_type="json")
+            total_rec_count = len(results)
+        else:
+            app_logger.info("No POS records returned from ServiceNow for the given date range.")
 
         ba_util.update_batch_id(batch_id, "pos_update", "staging", total_rec_count, total_rec_count,
                                 "Completed", database_config)
