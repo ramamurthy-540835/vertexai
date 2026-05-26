@@ -235,4 +235,4 @@ else:
 print("\n==============================")
 print("ALL STEPS COMPLETED")
 print("ALL OUTPUTS UPLOADED TO GCS")
-print("==============================\n")
+print("===============================\n")
