@@ -1,0 +1,2642 @@
+{
+  "S1": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 150
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 150
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 150
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 150
+    }
+  },
+  "S2": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 145
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 145
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 145
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 145
+    }
+  },
+  "S3": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 145
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 145
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 145
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 145
+    }
+  },
+  "S4": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 140
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 140
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 140
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 140
+    }
+  },
+  "S5": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 140
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 140
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 140
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 140
+    }
+  },
+  "S6": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 135
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 135
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 135
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 135
+    }
+  },
+  "S7": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 135
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 135
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 135
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 135
+    }
+  },
+  "S8": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 130
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 130
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 130
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 130
+    }
+  },
+  "S9": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 130
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 130
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 130
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 130
+    }
+  },
+  "S10": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 125
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 125
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 125
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 125
+    }
+  },
+  "S11": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 125
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 125
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 125
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 125
+    }
+  },
+  "S12": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 120
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 120
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 120
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 120
+    }
+  },
+  "S13": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 115
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 115
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 115
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 115
+    }
+  },
+  "S14": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 115
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 115
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 115
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 115
+    }
+  },
+  "S15": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 110
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 110
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 110
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 110
+    }
+  },
+  "S16": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 110
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 110
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 110
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 110
+    }
+  },
+  "S17": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 110
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 110
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 110
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 110
+    }
+  },
+  "S18": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 110
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 110
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 110
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 110
+    }
+  },
+  "S19": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 110
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 110
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 110
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 110
+    }
+  },
+  "S20": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 105
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 105
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 105
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 105
+    }
+  },
+  "S21": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 105
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 105
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 105
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 105
+    }
+  },
+  "S22": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 105
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 105
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 105
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 105
+    }
+  },
+  "S23": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 105
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 105
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 105
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 105
+    }
+  },
+  "S24": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 105
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 105
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 105
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 105
+    }
+  },
+  "S25": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 100
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 100
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 100
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 100
+    }
+  },
+  "S26": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 100
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 100
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 100
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 100
+    }
+  },
+  "S27": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 100
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 100
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 100
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 100
+    }
+  },
+  "S28": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 100
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 100
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 100
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 100
+    }
+  },
+  "S29": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 100
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 100
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 100
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 100
+    }
+  },
+  "S30": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 95
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 95
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 95
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 95
+    }
+  },
+  "S31": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 95
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 95
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 95
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 95
+    }
+  },
+  "S32": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 95
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 95
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 95
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 95
+    }
+  },
+  "S33": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 95
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 95
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 95
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 95
+    }
+  },
+  "S34": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 95
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 95
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 95
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 95
+    }
+  },
+  "S35": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 95
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 95
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 95
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 95
+    }
+  },
+  "S36": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 90
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 90
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 90
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 90
+    }
+  },
+  "S37": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 90
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 90
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 90
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 90
+    }
+  },
+  "S38": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 90
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 90
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 90
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 90
+    }
+  },
+  "S39": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 90
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 90
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 90
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 90
+    }
+  },
+  "S40": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 90
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 90
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 90
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 90
+    }
+  },
+  "S41": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 85
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 85
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 85
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 85
+    }
+  },
+  "S42": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 85
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 85
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 85
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 85
+    }
+  },
+  "S43": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 80
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 80
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 80
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 80
+    }
+  },
+  "S44": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 80
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 80
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 80
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 80
+    }
+  },
+  "S45": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 80
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 80
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 80
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 80
+    }
+  },
+  "S46": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 75
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 75
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 75
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 75
+    }
+  },
+  "S47": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 75
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 75
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 75
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 75
+    }
+  },
+  "S48": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 75
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 75
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 75
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 75
+    }
+  },
+  "S49": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 75
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 75
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 75
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 75
+    }
+  },
+  "S50": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 75
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 75
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 75
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 75
+    }
+  },
+  "S51": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 75
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 75
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 75
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 75
+    }
+  },
+  "S52": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 75
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 75
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 75
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 75
+    }
+  },
+  "S53": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 75
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 75
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 75
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 75
+    }
+  },
+  "S54": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 70
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 70
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 70
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 70
+    }
+  },
+  "S55": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 70
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 70
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 70
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 70
+    }
+  },
+  "S56": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 70
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 70
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 70
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 70
+    }
+  },
+  "S57": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 70
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 70
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 70
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 70
+    }
+  },
+  "S58": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 70
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 70
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 70
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 70
+    }
+  },
+  "S59": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 70
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 70
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 70
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 70
+    }
+  },
+  "S60": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 65
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 65
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 65
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 65
+    }
+  },
+  "S61": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 65
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 65
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 65
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 65
+    }
+  },
+  "S62": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 65
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 65
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 65
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 65
+    }
+  },
+  "S63": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 65
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 65
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 65
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 65
+    }
+  },
+  "S64": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 65
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 65
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 65
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 65
+    }
+  },
+  "S65": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 65
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 65
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 65
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 65
+    }
+  },
+  "S66": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 60
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 60
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 60
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 60
+    }
+  },
+  "S67": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 60
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 60
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 60
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 60
+    }
+  },
+  "S68": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 60
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 60
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 60
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 60
+    }
+  },
+  "S69": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 60
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 60
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 60
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 60
+    }
+  },
+  "S70": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 55
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 55
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 55
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 55
+    }
+  },
+  "S71": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 55
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 55
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 55
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 55
+    }
+  },
+  "S72": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 55
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 55
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 55
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 55
+    }
+  },
+  "S73": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 55
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 55
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 55
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 55
+    }
+  },
+  "S74": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 55
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 55
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 55
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 55
+    }
+  },
+  "S75": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 55
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 55
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 55
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 55
+    }
+  },
+  "S76": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 50
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 50
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 50
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 50
+    }
+  },
+  "S77": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 50
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 50
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 50
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 50
+    }
+  },
+  "S78": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 50
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 50
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 50
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 50
+    }
+  },
+  "S79": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 50
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 50
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 50
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 50
+    }
+  },
+  "S80": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 50
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 50
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 50
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 50
+    }
+  },
+  "S81": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 50
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 50
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 50
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 50
+    }
+  },
+  "S82": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 45
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 45
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 45
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 45
+    }
+  },
+  "S83": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 45
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 45
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 45
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 45
+    }
+  },
+  "S84": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 45
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 45
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 45
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 45
+    }
+  },
+  "S85": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 45
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 45
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 45
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 45
+    }
+  },
+  "S86": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 40
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 40
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 40
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 40
+    }
+  },
+  "S87": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 40
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 40
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 40
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 40
+    }
+  },
+  "S88": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 40
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 40
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 40
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 40
+    }
+  },
+  "S89": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 35
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 35
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 35
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 35
+    }
+  },
+  "S90": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 35
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 35
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 35
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 35
+    }
+  },
+  "S91": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 35
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 35
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 35
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 35
+    }
+  },
+  "S92": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 35
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 35
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 35
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 35
+    }
+  },
+  "S93": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 30
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 30
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 30
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 30
+    }
+  },
+  "S94": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 30
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 30
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 30
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 30
+    }
+  },
+  "S95": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 30
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 30
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 30
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 30
+    }
+  },
+  "S96": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 25
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 25
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 25
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 25
+    }
+  },
+  "S97": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 25
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 25
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 25
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 25
+    }
+  },
+  "S98": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 20
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 20
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 20
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 20
+    }
+  },
+  "S99": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 20
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 20
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 20
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 20
+    }
+  },
+  "S100": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 15
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 15
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 15
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 15
+    }
+  },
+  "S101": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 15
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 15
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 15
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 15
+    }
+  },
+  "S102": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 10
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 10
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 10
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 10
+    }
+  },
+  "S103": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 10
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 10
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 10
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 10
+    }
+  },
+  "S104": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 5
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 5
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 5
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 5
+    }
+  },
+  "S105": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 5
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 5
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 5
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 5
+    }
+  },
+  "S106": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 5
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 5
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 5
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 5
+    }
+  },
+  "S107": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 5
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 5
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 5
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 5
+    }
+  },
+  "S108": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 10
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 10
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 10
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 10
+    }
+  },
+  "S109": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 30
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 30
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 30
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 30
+    }
+  },
+  "S110": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 20
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 20
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 20
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 20
+    }
+  },
+  "S111": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 40
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 40
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 40
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 40
+    }
+  },
+  "S112": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 40
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 40
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 40
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 40
+    }
+  },
+  "S113": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 45
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 45
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 45
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 45
+    }
+  },
+  "S114": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 50
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 50
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 50
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 50
+    }
+  },
+  "S115": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 150
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 150
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 150
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 150
+    }
+  },
+  "S116": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 0
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 0
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 0
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 0
+    }
+  },
+  "S117": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 0
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 0
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 0
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 0
+    }
+  },
+  "S118": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 0
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 0
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 0
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 0
+    }
+  },
+  "S119": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 150
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 150
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 150
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 150
+    }
+  },
+  "S120": {
+    "EXACT": {
+      "match_type": "MATCH",
+      "score": 150
+    },
+    "MISMATCH": {
+      "match_type": "NO_MATCH",
+      "score": 150
+    },
+    "NULL": {
+      "match_type": "NO_MATCH",
+      "score": 150
+    },
+    "FUZZY_NULL": {
+      "match_type": "FUZZY_MATCH",
+      "score": 150
+    },
+    "FUZZY_MISMATCH": {
+      "match_type": "FUZZY_MATCH",
+      "score": 150
+    }
+  }
+}

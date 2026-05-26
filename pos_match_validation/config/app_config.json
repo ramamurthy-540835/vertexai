@@ -1,0 +1,17 @@
+{
+  "servicenow": {
+    "instance": "costcobizsvctest.service-now.com",
+    "table": "sn_retail_lead",
+    "client_id": "e8604f28cdb14c14a201aa537e40f222",
+    "client_secret": "vR}*naUZKB{4<P?h`-h9nU@92z!RSMML"
+  },
+
+  "paths": {
+    "pos_input": "POS_MATCH_VALIDATION/input/POS",
+    "lead_input": "POS_MATCH_VALIDATION/input/LEADS",
+
+    "pos_mapping_output": "POS_MATCH_VALIDATION/output/pos_mapping",
+    "match_validation_output": "POS_MATCH_VALIDATION/output/match_validation",
+    "lead_validation_output": "POS_MATCH_VALIDATION/output/lead_validation"
+  }
+}

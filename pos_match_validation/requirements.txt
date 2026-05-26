@@ -1,0 +1,10 @@
+pandas
+openpyxl
+sqlalchemy
+pg8000
+cloud-sql-python-connector[pg8000]
+google-auth
+google-cloud-storage
+google-cloud-secret-manager
+requests
+unidecode

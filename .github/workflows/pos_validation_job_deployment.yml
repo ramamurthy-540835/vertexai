@@ -1,0 +1,69 @@
+name: deploy-pos-validation-job
+
+on:
+  workflow_call:
+    inputs:
+      workflow_trigger_event:
+        required: true
+        type: string
+    secrets:
+      GCP_WORKLOAD_IDENTITY_PROVIDER_ID:
+        required: true
+      GCP_WORKLOAD_IDENTITY_SA_EMAIL:
+        required: true
+
+  push:
+    branches:
+      - 'qa/servicenow-gcp-QA'
+    paths:
+      - .github/workflows/pos_validation_job_deployment.yml
+      - pos_match_validation/**
+
+jobs:
+
+  deploy-pos-validation-job:
+
+    runs-on:
+      - self-hosted
+      - us-central1
+
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - id: auth
+        name: Auth to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          token_format: access_token
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
+          service_account: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
+
+      - name: Deploy POS Validation Job
+        uses: google-github-actions/deploy-cloudrun@v2
+        with:
+          job: 'pos-validation-job'
+
+          image: us-docker.pkg.dev/gcp-prj-images/gcp-gar-repo-mbrshp/pos-validation:latest
+
+          project_id: p-601-np-bcleadsmgmt-qat
+
+          region: us-central1
+
+          flags: |
+            --service-account=gco-iam-svc-lead-mgmt-bc-qat@p-601-np-bcleadsmgmt-qat.iam.gserviceaccount.com
+            --vpc-egress=all-traffic
+            --network=projects/gcp-prj-transit-hub/global/networks/gcp-vpc-np-host
+            --subnet=projects/gcp-prj-transit-hub/regions/us-central1/subnetworks/gcp-snt-np-usc1-601-cloudrunjobs-np
+            --command=python
+            --args=run_all.py
+            --task-timeout=2h
+            --max-retries=0
+            --memory=2Gi
+            --cpu=1
+            --verbosity=debug
