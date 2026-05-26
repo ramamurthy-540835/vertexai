@@ -22,7 +22,6 @@ on:
       - .github/workflows/dataflow_image_creation.yml
       - .github/workflows/register_flex_template.yml
       - dataflow/**
-
 concurrency:
   group: dataflow-deploy
   cancel-in-progress: false

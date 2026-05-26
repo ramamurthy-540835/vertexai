@@ -2,7 +2,7 @@
 import setuptools
 
 setuptools.setup(
-    name='pos_pipeline',
+    name='pos_pipeline', 
     version='2.0.0',
     packages=setuptools.find_packages(),
     install_requires=[

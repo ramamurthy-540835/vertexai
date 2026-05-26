@@ -113,7 +113,7 @@ def process_and_archive_files(source_bucket_name, source_folder, destination_buc
             app_logger.debug(f"Moved {source_path} to {destination_path} and deleted from the source folder.")
 
     # Step 3: Upload new files to the input folder for the matching process
-    # destination_path = f"{source_folder}"
+    # destination_path = f"{source_folder} "
     if new_file is not None:
         file_name = f"{source_folder}/{base_name}.csv"
         bucket = storage_client.get_bucket(source_bucket_name)

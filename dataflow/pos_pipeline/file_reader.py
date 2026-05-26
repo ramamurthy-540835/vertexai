@@ -29,6 +29,10 @@ def read_file_to_dicts(content: bytes, filename: str) -> List[Dict[str, Any]]:
     Dispatch to the right reader based on file extension.
     Returns a list of row dicts. Header names are preserved verbatim.
     """
+
+    if not content:
+        logger.warning(f"Skipping zero-byte/corrupted file: {filename}")
+        return []
     ext = os.path.splitext(filename.lower())[1]
     logger.info(f"Reading file {filename} with extension {ext}")
 
@@ -132,7 +136,7 @@ def _read_excel(content: bytes) -> List[Dict[str, Any]]:
     import xlrd
     wb = xlrd.open_workbook(file_contents=content)
     ws = wb.sheet_by_index(0)
-    headers = [str(ws.cell_value(0, c)).strip() for c in range(ws.ncols)]
+    headers = [str(ws.cell_value(0, c)).strip().lower() for c in range(ws.ncols)]
     out = []
     for r in range(1, ws.nrows):
         row_dict = {
@@ -156,6 +160,7 @@ def _read_json(content: bytes) -> List[Dict[str, Any]]:
         rows = [r for r in data["rows"] if isinstance(r, dict)]
     else:
         raise ValueError("JSON must be a list of objects, or {rows: [...]}")
+    rows = [{k.strip().lower(): v for k, v in r.items()} for r in rows]
     logger.info(f"JSON read: {len(rows)} rows")
     return rows
 
@@ -164,6 +169,7 @@ def _read_jsonl(content: bytes) -> List[Dict[str, Any]]:
     """Parse newline-delimited JSON."""
     text = content.decode("utf-8-sig")
     rows = [json.loads(line) for line in text.splitlines() if line.strip()]
+    rows = [{k.strip().lower(): v for k, v in r.items()} for r in rows]
     logger.info(f"JSONL read: {len(rows)} rows")
     return rows
 
@@ -173,5 +179,6 @@ def _read_parquet(content: bytes) -> List[Dict[str, Any]]:
     import pyarrow.parquet as pq
     table = pq.read_table(io.BytesIO(content))
     rows = table.to_pylist()
+    rows = [{k.strip().lower(): v for k, v in r.items()} for r in rows]
     logger.info(f"Parquet read: {len(rows)} rows")
     return rows
