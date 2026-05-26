@@ -64,7 +64,7 @@ jobs:
       - name: Deployment summary
         if: always()
         run: |
-          SCRIPT_ID=$(jq -r '.scriptId' .clasp.json)
+          SCRIPT_ID=$(jq -r '.scriptId' apps-script/.clasp.json)
           echo "## Apps Script Deployment" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Field | Value |" >> $GITHUB_STEP_SUMMARY
