@@ -112,27 +112,29 @@
    * 3. Log result; errors are caught so the trigger keeps running.
    */
   function checkAndTrigger() {
-    Logger.log("🔍 Checking for trigger file: %s", CONFIG.TRIGGER_FILENAME);
+  Logger.log("🔍 Checking for trigger file: %s", CONFIG.TRIGGER_FILENAME);
 
-    try {
-      const triggerFile = findTriggerFile();
+  try {
+    const triggerFile = findTriggerFile();
 
-      if (!triggerFile) {
-        Logger.log("⏭️  Trigger file not found. Nothing to do.");
-        return;
-      }
-
-      Logger.log("🚀 Trigger file detected! Dispatching GitHub Actions workflow...");
-      dispatchGitHubWorkflow();
-      Logger.log("✅ Done. Cloud Run Job will process and archive the files.");
-
-    } catch (err) {
-      Logger.log("❌ Error in checkAndTrigger: %s", err.message);
-      // Re-throw so Apps Script marks this execution as failed in the dashboard
-      throw err;
+    if (!triggerFile) {
+      Logger.log("⏭️  Trigger file not found. Nothing to do.");
+      return;
     }
-  }
 
+    Logger.log("🚀 Trigger file detected! Dispatching GitHub Actions workflow...");
+    dispatchGitHubWorkflow();
+    
+    // Delete file so it doesn't trigger again
+    triggerFile.setTrashed(true);
+    Logger.log("🗑️ Trigger file moved to trash.");
+    Logger.log("✅ Done.");
+
+  } catch (err) {
+    Logger.log("❌ Error in checkAndTrigger: %s", err.message);
+    throw err;
+  }
+}
 
   // ── TRIGGER MANAGEMENT ────────────────────────────────────────────────────────
 
