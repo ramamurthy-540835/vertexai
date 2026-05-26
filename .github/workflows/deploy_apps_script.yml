@@ -44,7 +44,7 @@ jobs:
       # ── 5. Validate the script ID is set ─────────────────────────────────────
       - name: Validate .clasp.json
         run: |
-          SCRIPT_ID=$(jq -r '.scriptId' .clasp.json)
+          SCRIPT_ID=$(jq -r '.scriptId' apps-script/.clasp.json)
           if [ "$SCRIPT_ID" = "YOUR_APPS_SCRIPT_SCRIPT_ID" ] || [ -z "$SCRIPT_ID" ]; then
             echo "❌ ERROR: .clasp.json still contains placeholder scriptId."
             echo "   Update scriptId to your real Apps Script project ID."
