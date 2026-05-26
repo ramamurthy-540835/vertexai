@@ -71,6 +71,12 @@
     const url = `https://api.github.com/repos/${CONFIG.GH_OWNER}/${CONFIG.GH_REPO}`
               + `/actions/workflows/${CONFIG.GH_WORKFLOW_ID}/dispatches`;
 
+    Logger.log("🔗 URL: %s", url);
+    Logger.log("📋 Owner: %s", CONFIG.GH_OWNER);
+    Logger.log("📋 Repo: %s", CONFIG.GH_REPO);
+    Logger.log("📋 Workflow: %s", CONFIG.GH_WORKFLOW_ID);
+    Logger.log("📋 Ref: %s", CONFIG.GH_REF);
+
     const payload = {
       ref   : CONFIG.GH_REF,
       inputs: {
