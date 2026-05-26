@@ -23,7 +23,7 @@ on:
     paths:
       - 'dataflow_config/**'
       - 'dataflow/field_map.json'            
-      - '.github/workflows/deploy_workflow_config.yml'
+      - '.github/workflows/deploy_workflow_config.yml' 
 
 concurrency:
   group: deploy-config

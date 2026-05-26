@@ -26,6 +26,10 @@ jobs:
       contents: read
       packages: write
 
+    env: 
+      TF_VAR_gcp_workload_identity_sa_email: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
+      TF_VAR_db_password: ${{secrets.CLOUD_SQL_QAT_PASSWORD}}
+
     steps:
       - name: "Checkout code"
         uses: actions/checkout@v4
@@ -109,5 +113,3 @@ jobs:
       - name: "Terraform Apply"
         working-directory: ./terraform/environments/${{ matrix.env }}/schema
         run: terraform apply -input=false -lock-timeout=10m plan.tfplan
-        env: 
-            TF_VAR_gcp_workload_identity_sa_email: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
