@@ -34,6 +34,12 @@ variable "database_name" {
   default     = "lead-mgmt-db"
 }
 
+variable "db_password"{
+  description = "database password"
+  type        = string
+  sensitive   = true
+}
+
 variable "gcp_workload_identity_sa_email" {
   description = "IAM service account email used for Workload Identity authentication"
   type        = string
