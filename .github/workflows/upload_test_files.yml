@@ -53,8 +53,8 @@ jobs:
       SOURCE_FOLDER: ${{ github.event.inputs.source_folder }}
       FILE_PATTERN:  ${{ github.event.inputs.file_pattern }}
       PROJECT_ID:    'p-601-np-bcleadsmgmt-${{ github.event.inputs.environment }}'
-      BUCKET_NAME:   'gcp-gcs-lead-mgmt-us-${{ github.event.inputs.environment }}'
-      DEST_PREFIX: 'pos-validation/input/POS'
+      BUCKET_NAME:   'gcp-gcs-lead-mgmt-us-${{ github.event.inputs.environment }}-pos-raw'
+      DEST_PREFIX:   'pos-raw-data/incoming-files'
 
     steps:
       - name: Checkout
