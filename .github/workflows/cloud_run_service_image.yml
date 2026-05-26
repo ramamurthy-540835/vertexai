@@ -9,7 +9,7 @@ name: cloud_run_service_image_creation
 on:
   push:
     branches:
-      - 'feature*' 
+      - 'feature**' 
     paths:
       - .github/workflows/cloud_run_service_image.yml
       - cloud_run_service/**

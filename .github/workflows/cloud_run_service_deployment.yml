@@ -26,7 +26,7 @@ on:
 
   push:
     branches:
-      - feature*
+      - feature**
       - main
     tags:
       - release-spt*
@@ -69,7 +69,7 @@ jobs:
           if [[ -z "$WORKFLOW_TRIGGER" ]]; then
             WORKFLOW_TRIGGER="False"
           fi
-          echo "WORKFLOW_TRIGGER=$WORKFLOW_TRIGGER" 
+          echo "WORKFLOW_TRIGGER=$WORKFLOW_TRIGGER"
 
           # adt: only via workflow_call from cloud_run_service_image_creation
           if [[ "$WORKFLOW_TRIGGER" == "True" ]]; then
@@ -78,6 +78,19 @@ jobs:
             echo "PROJECT_ID=p-601-np-bcleadsmgmt-adt" >> $GITHUB_ENV
             echo "SERVICE_ACCOUNT=gco-iam-svc-lead-mgmt-bc-adt@p-601-np-bcleadsmgmt-adt.iam.gserviceaccount.com" >> $GITHUB_ENV
             echo "ENVIRONMENT_VARIABLES_PATH=./cloud_run_service/service_adt.properties" >> $GITHUB_ENV
+
+          elif [[ "$REF" == refs/heads/feature* ]]; then
+            # Only deploy if this workflow file itself changed
+            CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD)
+            if echo "$CHANGED_FILES" | grep -q ".github/workflows/cloud_run_service_deployment.yml"; then
+              echo "ENV=adt" >> $GITHUB_ENV
+              echo "DEPLOY=true" >> $GITHUB_ENV
+              echo "PROJECT_ID=p-601-np-bcleadsmgmt-adt" >> $GITHUB_ENV
+              echo "SERVICE_ACCOUNT=gco-iam-svc-lead-mgmt-bc-adt@p-601-np-bcleadsmgmt-adt.iam.gserviceaccount.com" >> $GITHUB_ENV
+              echo "ENVIRONMENT_VARIABLES_PATH=./cloud_run_service/service_adt.properties" >> $GITHUB_ENV
+            else
+              echo "DEPLOY=false" >> $GITHUB_ENV
+            fi
 
           elif [[ "$REF" == refs/heads/main ]]; then
             echo "ENV=qat" >> $GITHUB_ENV
@@ -127,6 +140,36 @@ jobs:
             --min-instances=0
             --max-instances=5
             --timeout=60
+
+      - name: Get Service URL
+        if: env.DEPLOY == 'true'
+        id: get-service-url
+        run: |
+          SERVICE_URL=$(gcloud run services describe lead-mgmt-service \
+            --project "$PROJECT_ID" \
+            --region us-central1 \
+            --format 'value(status.address.url)')
+
+          echo "SERVICE_URL=$SERVICE_URL"
+          echo "service_url=$SERVICE_URL" >> $GITHUB_OUTPUT
+
+      - name: Add schedule to Cloud Run service
+        if: env.DEPLOY == 'true'
+        run: |
+          if gcloud scheduler jobs describe lead-mgmt-scheduler \
+            --project "$PROJECT_ID" \
+            --location us-central1 > /dev/null 2>&1; then
+            echo "Scheduler job already exists. Skipping creation."
+          else
+            echo "Creating scheduler job..."
+            gcloud scheduler jobs create http lead-mgmt-scheduler \
+              --project "$PROJECT_ID" \
+              --location us-central1 \
+              --schedule="0 0 * * *" \
+              --uri=${{ steps.get-service-url.outputs.service_url }}/health \
+              --http-method=GET \
+              --oidc-service-account-email=${{ env.SERVICE_ACCOUNT }}
+          fi
 
       - name: Describe deployed service
         if: env.DEPLOY == 'true'

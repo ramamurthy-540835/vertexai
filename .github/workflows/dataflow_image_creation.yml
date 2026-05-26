@@ -14,7 +14,7 @@ name: dataflow_image_creation
 on:
   push:
     branches:
-      - 'feature*'
+      - 'feature**'
       - 'main'
     tags:
       - 'release-spt*'
