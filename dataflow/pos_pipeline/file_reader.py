@@ -33,7 +33,7 @@ def read_file_to_dicts(content: bytes, filename: str) -> List[Dict[str, Any]]:
     if not content:
         logger.warning(f"Skipping zero-byte/corrupted file: {filename}")
         return []
-    ext = os.path.splitext(filename.lower())[1] 
+    ext = os.path.splitext(filename.lower())[1]
     logger.info(f"Reading file {filename} with extension {ext}")
 
     if ext in (".csv", ".txt"):
