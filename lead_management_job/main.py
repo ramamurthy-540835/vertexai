@@ -186,6 +186,16 @@ if __name__ == "__main__":
             print("Error happened during trigger_match_job process")
             print(ex)
             raise ex
+    elif stage.lower() == "pos_update":
+        try:
+            if not batch_id:
+                batch_id = uuid.uuid4()
+            get_record_snow_to_gcs(batch_id, "pos_update",job_config )
+            write_pos_data_to_db(batch_id, job_config)
+        except Exception as ex:
+            print("Error happened during read_pos_data process")
+            print(ex)
+            raise ex
     elif stage.lower() == "drive_to_gcs":
         run() 
     else:
