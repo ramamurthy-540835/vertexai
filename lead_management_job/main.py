@@ -186,7 +186,7 @@ if __name__ == "__main__":
             print("Error happened during trigger_match_job process")
             print(ex)
             raise ex
-    elif stage.lower() == "pos_update":
+    elif stage.lower() == "pos_update": 
         try:
             if not batch_id:
                 batch_id = uuid.uuid4()
