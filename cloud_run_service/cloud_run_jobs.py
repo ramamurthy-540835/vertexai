@@ -13,6 +13,7 @@ Usage:
 
 import logging
 
+from google.api_core.operation import Operation
 from google.cloud import run_v2
 
 log = logging.getLogger(__name__)
@@ -23,7 +24,7 @@ def trigger_job(
     region: str,
     job_name: str,
     args: list[str] | None = None,
-) -> run_v2.Operation:
+) -> Operation:
     """Trigger a Cloud Run Job and return the long-running operation.
 
     Args:
@@ -56,6 +57,6 @@ def trigger_job(
     operation = client.run_job(request=run_request)
     log.info(
         "Cloud Run Job triggered. job=%s  args=%s  operation=%s",
-        job_resource, args, operation.operation.name,
+        job_resource, args, operation.metadata.name,
     )
     return operation

@@ -109,7 +109,7 @@ def trigger_something_else():
         return jsonify({
             "status":    "success",
             "message":   "Drive sync job triggered successfully",
-            "operation": operation.operation.name,
+            "operation": operation.metadata.name,
         }), 200
     except Exception as exc:
         log.exception("Failed to trigger drive sync job")
