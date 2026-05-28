@@ -31,16 +31,16 @@ from google.cloud import storage
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaIoBaseDownload
-from google.auth import default as google_auth_default
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
 
 # ── Required env vars ────────────────────────────────────────────────────────
-PROJECT_ID  = os.environ["GCP_PROJECT_ID"]
-BUCKET_NAME = os.environ["POS_BUCKET_NAME"]
-FOLDER_ID   = os.environ["DRIVE_FOLDER_ID"]   # archive subfolder is also created here
+PROJECT_ID       = os.environ["GCP_PROJECT_ID"]
+BUCKET_NAME      = os.environ["POS_BUCKET_NAME"]
+FOLDER_ID        = os.environ["DRIVE_FOLDER_ID"]
+SERVICE_ACCOUNT  = os.environ["SERVICE_ACCOUNT"]   # e.g. my-sa@my-project.iam.gserviceaccount.com
 
 # ── Optional env vars ────────────────────────────────────────────────────────
 DEST_PREFIX         = os.environ.get("GCS_DESTINATION_PREFIX", "").rstrip("/")
@@ -65,33 +65,23 @@ FOLDER_MIME = "application/vnd.google-apps.folder"
 
 # ── Auth helpers ──────────────────────────────────────────────────────────────
 
-def get_service_account_email() -> str:
+DRIVE_SCOPES = ["https://www.googleapis.com/auth/drive"]
+
+
+def get_credentials():
     """
-    Resolve the Cloud Run service account email from ADC credentials.
-    Falls back to 'unknown-service-account' if it cannot be determined.
+    Use ADC to get credentials with Drive scope.
+    On Cloud Run the attached service account is used automatically.
     """
-    try:
-        credentials, _ = google.auth.default()
-        # service_account_email is available on service account credentials
-        email = getattr(credentials, "service_account_email", None)
-        if email:
-            return email
-        # For impersonated or other credential types, try .signer_email
-        email = getattr(credentials, "signer_email", None)
-        if email:
-            return email
-    except Exception as exc:
-        log.warning("Could not resolve service account email: %s", exc)
-    return "unknown-service-account"
+    credentials, _ = google.auth.default(scopes=DRIVE_SCOPES)
+    return credentials
 
 
 # ── Drive helpers ─────────────────────────────────────────────────────────────
 
-def build_drive_service():
-    creds, _ = google_auth_default(
-        scopes=["https://www.googleapis.com/auth/drive"]
-    )
-    return build("drive", "v3", credentials=creds, cache_discovery=False)
+def build_drive_service(credentials):
+    """Build Drive service using the already-resolved credentials."""
+    return build("drive", "v3", credentials=credentials, cache_discovery=False)
 
 
 def check_trigger_file_exists(drive) -> str | None:
@@ -108,6 +98,8 @@ def check_trigger_file_exists(drive) -> str | None:
         q=query,
         fields="files(id, name)",
         pageSize=1,
+        supportsAllDrives=True,
+        includeItemsFromAllDrives=True,
     ).execute()
     files = resp.get("files", [])
     if files:
@@ -127,9 +119,27 @@ def delete_trigger_file(drive, file_id: str) -> None:
     """
     Permanently delete the trigger file from Drive so the next scheduled
     run does not re-trigger the sync.
+    Falls back to trashing if permanent delete is not permitted.
     """
-    drive.files().delete(fileId=file_id).execute()
-    log.info("Trigger file '%s' (id=%s) deleted from Drive.", TRIGGER_FILENAME, file_id)
+    try:
+        drive.files().delete(
+            fileId=file_id,
+            supportsAllDrives=True,
+        ).execute()
+        log.info("Trigger file '%s' (id=%s) permanently deleted from Drive.", TRIGGER_FILENAME, file_id)
+    except HttpError as exc:
+        if exc.resp.status == 403:
+            log.warning(
+                "Permanent delete not permitted (403) — falling back to trash for file id=%s", file_id
+            )
+            drive.files().update(
+                fileId=file_id,
+                body={"trashed": True},
+                supportsAllDrives=True,
+            ).execute()
+            log.info("Trigger file '%s' (id=%s) moved to trash.", TRIGGER_FILENAME, file_id)
+        else:
+            raise
 
 
 def list_files(drive) -> list[dict]:
@@ -149,6 +159,8 @@ def list_files(drive) -> list[dict]:
             fields="nextPageToken, files(id, name, mimeType, modifiedTime, size)",
             pageToken=page_token,
             pageSize=100,
+            supportsAllDrives=True,
+            includeItemsFromAllDrives=True,
         ).execute()
         results.extend(resp.get("files", []))
         page_token = resp.get("nextPageToken")
@@ -169,7 +181,11 @@ def create_archive_folder(drive) -> str:
         "mimeType": FOLDER_MIME,
         "parents": [FOLDER_ID],
     }
-    folder = drive.files().create(body=metadata, fields="id, name").execute()
+    folder = drive.files().create(
+        body=metadata,
+        fields="id, name",
+        supportsAllDrives=True,
+    ).execute()
     log.info("Created archive folder: %s (id=%s)", folder["name"], folder["id"])
     return folder["id"]
 
@@ -184,6 +200,7 @@ def move_to_archive(drive, file_id: str, archive_folder_id: str) -> None:
         addParents=archive_folder_id,
         removeParents=FOLDER_ID,
         fields="id, parents",
+        supportsAllDrives=True,
     ).execute()
 
 
@@ -275,12 +292,11 @@ def upload_manifest(gcs: storage.Client, manifest: dict, run_id: str) -> str:
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def run():
-    drive = build_drive_service()
-    gcs   = storage.Client(project=PROJECT_ID)
+    credentials = get_credentials()
+    log.info("Running as service account: %s", SERVICE_ACCOUNT)
 
-    # Resolve service account identity once upfront for use in manifest
-    service_account_email = get_service_account_email()
-    log.info("Running as service account: %s", service_account_email)
+    drive = build_drive_service(credentials)
+    gcs   = storage.Client(project=PROJECT_ID, credentials=credentials)
 
     # ── STEP 1: Check for trigger file — exit early if not present ────────────
     log.info(
@@ -360,7 +376,7 @@ def run():
     # ── STEP 6: Manifest — only runs after sync + archive + delete complete ───
     log.info("Building and uploading manifest …")
     run_id   = build_run_id()
-    manifest = build_manifest(run_id, transferred_gcs_paths, service_account_email)
+    manifest = build_manifest(run_id, transferred_gcs_paths, SERVICE_ACCOUNT)
     log.info("Manifest contents:\n%s", json.dumps(manifest, indent=2))
 
     try:
