@@ -153,13 +153,21 @@ jobs:
           echo "SERVICE_URL=$SERVICE_URL"
           echo "service_url=$SERVICE_URL" >> $GITHUB_OUTPUT
 
+      # ── CHANGED: added update branch so cron changes take effect on redeploy ──
       - name: Add schedule to Cloud Run service
         if: env.DEPLOY == 'true'
         run: |
           if gcloud scheduler jobs describe lead-mgmt-scheduler \
             --project "$PROJECT_ID" \
             --location us-central1 > /dev/null 2>&1; then
-            echo "Scheduler job already exists. Skipping creation."
+            echo "Scheduler job exists. Updating..."
+            gcloud scheduler jobs update http lead-mgmt-scheduler \
+              --project "$PROJECT_ID" \
+              --location us-central1 \
+              --schedule="0 0 * * *" \
+              --uri=${{ steps.get-service-url.outputs.service_url }}/health \
+              --http-method=GET \
+              --oidc-service-account-email=${{ env.SERVICE_ACCOUNT }}
           else
             echo "Creating scheduler job..."
             gcloud scheduler jobs create http lead-mgmt-scheduler \
@@ -167,6 +175,32 @@ jobs:
               --location us-central1 \
               --schedule="0 0 * * *" \
               --uri=${{ steps.get-service-url.outputs.service_url }}/health \
+              --http-method=GET \
+              --oidc-service-account-email=${{ env.SERVICE_ACCOUNT }}
+          fi
+
+      # ── CHANGED: update instead of skip if exists + every 10 minutes schedule ──
+      - name: Add schedule to Cloud Run service (for drive to gcs sync)
+        if: env.DEPLOY == 'true'
+        run: |
+          if gcloud scheduler jobs describe drive-sync-scheduler \
+            --project "$PROJECT_ID" \
+            --location us-central1 > /dev/null 2>&1; then
+            echo "Scheduler job exists. Updating..."
+            gcloud scheduler jobs update http drive-sync-scheduler \
+              --project "$PROJECT_ID" \
+              --location us-central1 \
+              --schedule="*/10 * * * *" \
+              --uri=${{ steps.get-service-url.outputs.service_url }}/trigger-drive-sync \
+              --http-method=GET \
+              --oidc-service-account-email=${{ env.SERVICE_ACCOUNT }}
+          else
+            echo "Creating scheduler job..."
+            gcloud scheduler jobs create http drive-sync-scheduler \
+              --project "$PROJECT_ID" \
+              --location us-central1 \
+              --schedule="*/10 * * * *" \
+              --uri=${{ steps.get-service-url.outputs.service_url }}/trigger-drive-sync \
               --http-method=GET \
               --oidc-service-account-email=${{ env.SERVICE_ACCOUNT }}
           fi
