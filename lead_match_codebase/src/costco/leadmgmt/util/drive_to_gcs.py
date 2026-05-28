@@ -94,10 +94,10 @@ def build_drive_service():
     return build("drive", "v3", credentials=creds, cache_discovery=False)
 
 
-def check_trigger_file_exists(drive) -> bool:
+def check_trigger_file_exists(drive) -> str | None:
     """
     Check if the trigger file (TRIGGER_FILENAME) exists in FOLDER_ID.
-    Returns True if found, False otherwise.
+    Returns the file ID if found, None otherwise.
     """
     query = (
         f"'{FOLDER_ID}' in parents "
@@ -115,12 +115,21 @@ def check_trigger_file_exists(drive) -> bool:
             "Trigger file '%s' found (id=%s). Proceeding with sync.",
             TRIGGER_FILENAME, files[0]["id"],
         )
-        return True
+        return files[0]["id"]
     log.info(
         "Trigger file '%s' NOT found in folder %s. Nothing to do.",
         TRIGGER_FILENAME, FOLDER_ID,
     )
-    return False
+    return None
+
+
+def delete_trigger_file(drive, file_id: str) -> None:
+    """
+    Permanently delete the trigger file from Drive so the next scheduled
+    run does not re-trigger the sync.
+    """
+    drive.files().delete(fileId=file_id).execute()
+    log.info("Trigger file '%s' (id=%s) deleted from Drive.", TRIGGER_FILENAME, file_id)
 
 
 def list_files(drive) -> list[dict]:
@@ -278,7 +287,8 @@ def run():
         "Checking for trigger file '%s' in Drive folder %s …",
         TRIGGER_FILENAME, FOLDER_ID,
     )
-    if not check_trigger_file_exists(drive):
+    trigger_file_id = check_trigger_file_exists(drive)
+    if not trigger_file_id:
         log.info("No trigger file found. Exiting with no action.")
         return                          # clean exit — nothing to do
 
@@ -340,7 +350,14 @@ def run():
 
     log.info("Archive done. archived=%d  failed=%d", archived, archive_failed)
 
-    # ── STEP 5: Manifest — only runs after sync + archive are fully complete ──
+    # ── STEP 5: Delete trigger file — prevents re-triggering on next run ──────
+    try:
+        delete_trigger_file(drive, trigger_file_id)
+    except HttpError as exc:
+        log.error("TRIGGER FILE DELETE FAILED: %s", exc)
+        # Non-fatal: log and continue — manifest should still be created
+
+    # ── STEP 6: Manifest — only runs after sync + archive + delete complete ───
     log.info("Building and uploading manifest …")
     run_id   = build_run_id()
     manifest = build_manifest(run_id, transferred_gcs_paths, service_account_email)
