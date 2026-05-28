@@ -79,13 +79,21 @@ jobs:
       #      --project=p-601-np-bcleadsmgmt-qat \
       #      --args="main.py,match_job"
 
-      - name: "Run service now update step"
+      # - name: "Run service now update step"
+      #   run: | 
+      #      unset CLOUDSDK_CORE_PROJECT
+      #      gcloud config set project p-601-np-bcleadsmgmt-qat
+      #      gcloud run jobs execute lead-match-job --region=us-central1 \
+      #      --project=p-601-np-bcleadsmgmt-qat \
+      #      --args="run.py,update_service_now"
+      
+      - name: "Test pos update workflow"
         run: | 
            unset CLOUDSDK_CORE_PROJECT
-           gcloud config set project p-601-np-bcleadsmgmt-qat
-           gcloud run jobs execute lead-match-job --region=us-central1 \
-           --project=p-601-np-bcleadsmgmt-qat \
-           --args="run.py,update_service_now"
+           gcloud config set project p-601-np-bcleadsmgmt-adt
+           gcloud run jobs execute snow-sync-job --region=us-central1 \
+           --project=p-601-np-bcleadsmgmt-adt \
+           --args="main.py,pos_update"
 
       # - name: "Test service now connectivity in ADT"
       #   run: | 

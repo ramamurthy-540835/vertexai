@@ -18,6 +18,7 @@ import config
 import database
 import update_pos
 import manual_match
+import cloud_run_jobs
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
@@ -96,6 +97,23 @@ def manual_match_endpoint():
     
     return jsonify(manual_match.to_servicenow_response(rows)), 200
 
+@app.route("/trigger-drive-sync", methods=["GET"])
+def trigger_something_else():
+    try:
+        operation = cloud_run_jobs.trigger_job(
+            project_id = config.PROJECT_ID,
+            region     = "us-central1",
+            job_name   = "snow-sync-job",
+            args       = ["main.py", "drive_to_gcs"],
+        )
+        return jsonify({
+            "status":    "success",
+            "message":   "Drive sync job triggered successfully",
+            "operation": operation.metadata.name,
+        }), 200
+    except Exception as exc:
+        log.exception("Failed to trigger drive sync job")
+        return jsonify({"status": "error", "message": str(exc)}), 500
 
 if __name__ == "__main__":
     app.run(debug=False, host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
