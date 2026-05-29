@@ -26,7 +26,7 @@ PROJECT_ID = os.environ.get("PROJECT_ID")
 client = genai.Client(
     vertexai=True,
     project=PROJECT_ID,
-    location="us-central1"
+    location="us"
 )
 
 Base = declarative_base()
