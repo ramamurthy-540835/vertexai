@@ -7,7 +7,7 @@ import random
 from pgvector.sqlalchemy import Vector
 import sqlalchemy
 from google import genai
-from google.genai import types
+from google.genai.types  import EmbedContentConfig,HttpOptions
 from sqlalchemy.dialects.postgresql import TIMESTAMP
 from sqlalchemy import Column, Integer, Text, DateTime
 import numpy as np
@@ -27,8 +27,8 @@ PROJECT_ID = os.environ.get("PROJECT_ID")
 client = genai.Client(
     vertexai=True,
     project=PROJECT_ID,
-    location="us-central1",
-    http_options=types.HttpOptions(api_version='v1')
+    location="global",
+    http_options=HttpOptions(api_version='v1')
 )
 
 def data_extraction(transaction_df, pos_insert_id):
@@ -51,7 +51,7 @@ def batch_embedding(text_list, max_retries=5, base_delay=1.0, max_delay=60.0):
             response = client.models.embed_content(
                 model="text-embedding-005",
                 contents=text_list,
-                config=types.EmbedContentConfig(
+                config=EmbedContentConfig(
                     task_type="SEMANTIC_SIMILARITY"
                 )
             )
