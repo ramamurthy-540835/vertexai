@@ -60,13 +60,13 @@ def batch_embedding(text_list,max_retries=5, base_delay=1.0, max_delay=60.0):
                 "rate limit" in error_str
             )    
             if is_rate_limit and attempt < max_retries - 1:
-                    # Exponential backoff: 1s, 2s, 4s, 8s, 16s ... + jitter
-                    delay = min(base_delay * (2 ** attempt) + random.uniform(0, 1), max_delay)
-                    print(f"Rate limit hit (attempt {attempt + 1}/{max_retries}). Retrying in {delay:.2f}s...")
-                    time.sleep(delay)
-        else:
-                print(f"Batch failed after {attempt + 1} attempt(s): {str(e)}")
-                return None  # Caller handles fallback
+                # Exponential backoff: 1s, 2s, 4s, 8s, 16s ... + jitter
+                delay = min(base_delay * (2 ** attempt) + random.uniform(0, 1), max_delay)
+                print(f"Rate limit hit (attempt {attempt + 1}/{max_retries}). Retrying in {delay:.2f}s...")
+                time.sleep(delay)
+            else:
+                    print(f"Batch failed after {attempt + 1} attempt(s): {str(e)}")
+                    return None  # Caller handles fallback
 
     return None
 
@@ -90,7 +90,7 @@ def process_in_batch(df, embedding_column_name, column_name):
     results = [None] * len(batches)
 
     RAMP_STAGES = [
-        (5,  0.5),   # First 5 batches  → 0.5s gap between submits
+        (5,  0.5),   #  First 5 batches  → 0.5s gap between submits
         (10, 0.2),   # Next 10 batches  → 0.2s gap
         (999, 0.05), # Rest             → 0.05s gap (near full speed)
     ]
@@ -148,10 +148,18 @@ def process_in_batch(df, embedding_column_name, column_name):
 
 
 def insert_operation_transaction(engine, table_name, schema_name, data_frame):
-    data_frame.to_sql(table_name, con=engine, if_exists='append', index=False, schema=schema_name, method='multi',
-                      chunksize=1000, dtype={"combined_embedding": Vector(768), "address_embedding": Vector(768),
-                                             "name_embedding": Vector(768), "load_date": TIMESTAMP})
-
+    try:
+        data_frame.to_sql(
+            table_name, con=engine, if_exists='append', index=False,
+            schema=schema_name, method='multi', chunksize=1000,
+            dtype={"combined_embedding": Vector(768),
+                   "address_embedding": Vector(768),
+                   "name_embedding": Vector(768),
+                   "load_date": TIMESTAMP}
+        )
+    except Exception as e:
+        print(f"DB insert failed for table {schema_name}.{table_name}: {e}")
+        raise   # re-raise so the caller knows it failed
 
 def embed_chunk(chunk_df):
 
