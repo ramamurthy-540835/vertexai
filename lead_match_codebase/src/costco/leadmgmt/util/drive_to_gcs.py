@@ -36,7 +36,6 @@ FOLDER_ID       = os.environ["DRIVE_FOLDER_ID"]
 SERVICE_ACCOUNT = os.environ["SERVICE_ACCOUNT"]   # e.g. my-sa@my-project.iam.gserviceaccount.com
 
 # ── Optional env vars ────────────────────────────────────────────────────────
-DEST_PREFIX         = os.environ.get("GCS_DESTINATION_PREFIX", "").rstrip("/")
 ARCHIVE_FOLDER_NAME = os.environ.get("ARCHIVE_FOLDER_NAME", "archive")
 INCOMING_PREFIX     = os.environ.get("INCOMING_PREFIX", "pos-raw-data/incoming-files")
 MANIFESTS_PREFIX    = os.environ.get("MANIFESTS_PREFIX", "manifests")
@@ -57,7 +56,10 @@ FOLDER_MIME = "application/vnd.google-apps.folder"
 
 # ── Auth helpers ──────────────────────────────────────────────────────────────
 
-DRIVE_SCOPES = ["https://www.googleapis.com/auth/drive"]
+DRIVE_SCOPES = [
+    "https://www.googleapis.com/auth/drive",
+    "https://www.googleapis.com/auth/devstorage.read_write",
+]
 
 
 def get_credentials():
@@ -140,8 +142,7 @@ def move_to_archive(drive, file_id: str, archive_folder_id: str) -> None:
 # ── GCS helpers ───────────────────────────────────────────────────────────────
 
 def gcs_blob_name(filename: str) -> str:
-    prefix = f"{DEST_PREFIX}/{INCOMING_PREFIX}" if DEST_PREFIX else INCOMING_PREFIX
-    return f"{prefix}/{filename}"
+    return f"{INCOMING_PREFIX}/{filename}"
 
 
 def already_in_gcs(gcs: storage.Client, filename: str) -> bool:
@@ -241,7 +242,9 @@ def run():
 
     # ── STEP 2: Sync — download from Drive and upload to GCS ─────────────────
     transferred = skipped = failed = 0
+    archive_failed = 0               # initialized here so exit code check always works
     transferred_gcs_paths = []
+    transferred_files = []           # track file objects that synced successfully
 
     for file in files:
         fname = file["name"]
@@ -258,6 +261,7 @@ def run():
             gcs_path = upload_to_gcs(gcs, data, final_name)
             log.info("Transferred: %s → %s", fname, gcs_path)
             transferred_gcs_paths.append(gcs_path)
+            transferred_files.append(file)   # only added on success
             transferred += 1
 
         except Exception as exc:
@@ -269,24 +273,27 @@ def run():
         transferred, skipped, failed,
     )
 
-    # ── STEP 3: Archive — move all processed files into dated sub-folder ──────
-    log.info(
-        "Archiving %d file(s) into dated sub-folder inside folder %s …",
-        len(files), FOLDER_ID,
-    )
-    archive_folder_id = create_archive_folder(drive)
+    # ── STEP 3: Archive — only archive files that synced successfully ─────────
+    if not transferred_files:
+        log.info("No files successfully transferred — skipping archive.")
+    else:
+        log.info(
+            "Archiving %d successfully transferred file(s) into dated sub-folder …",
+            len(transferred_files),
+        )
+        archive_folder_id = create_archive_folder(drive)
 
-    archived = archive_failed = 0
-    for file in files:
-        try:
-            move_to_archive(drive, file["id"], archive_folder_id)
-            log.info("Archived: %s", file["name"])
-            archived += 1
-        except HttpError as exc:
-            log.error("ARCHIVE FAILED: %s — %s", file["name"], exc)
-            archive_failed += 1
+        archived = archive_failed = 0
+        for file in transferred_files:    # ← only successfully synced files
+            try:
+                move_to_archive(drive, file["id"], archive_folder_id)
+                log.info("Archived: %s", file["name"])
+                archived += 1
+            except HttpError as exc:
+                log.error("ARCHIVE FAILED: %s — %s", file["name"], exc)
+                archive_failed += 1
 
-    log.info("Archive done. archived=%d  failed=%d", archived, archive_failed)
+        log.info("Archive done. archived=%d  failed=%d", archived, archive_failed)
 
     # ── STEP 4: Manifest — only runs after sync + archive are fully complete ──
     log.info("Building and uploading manifest …")
