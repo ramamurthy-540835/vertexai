@@ -1,22 +1,15 @@
 """
 Drive → GCS sync job.
-Triggered by Cloud Scheduler via Apps Script.
+Manually triggered via Cloud Run Job.
 
 This script:
-  1. Checks if the trigger file (defined by TRIGGER_FILENAME env var) exists
-     in the Drive folder.
-     If NOT found → exits immediately and does nothing.
-     If found     → proceeds with the full sync + archive + manifest flow.
-
-  2. Lists all *files* (not sub-folders) in the Drive folder,
-     excluding the trigger file.
-  3. Downloads & uploads every file to GCS.
-  4. Archives all processed files into a date-stamped sub-folder
+  1. Lists all *files* (not sub-folders) in the Drive folder.
+  2. Downloads & uploads every file to GCS.
+  3. Archives all processed files into a date-stamped sub-folder
      created inside the same Drive folder:
      <DRIVE_FOLDER_ID>/archive_YYYYMMDD_HHMMSS/
-  5. Creates and uploads a manifest JSON to GCS after all processing
-     and archival is complete. The manifest is submitted_by the Cloud Run
-     service account identity.
+  4. Creates and uploads a manifest JSON to GCS after all processing
+     and archival is complete.
 """
 
 import io
@@ -37,18 +30,17 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 log = logging.getLogger(__name__)
 
 # ── Required env vars ────────────────────────────────────────────────────────
-PROJECT_ID       = os.environ["GCP_PROJECT_ID"]
-BUCKET_NAME      = os.environ["POS_BUCKET_NAME"]
-FOLDER_ID        = os.environ["DRIVE_FOLDER_ID"]
-SERVICE_ACCOUNT  = os.environ["SERVICE_ACCOUNT"]   # e.g. my-sa@my-project.iam.gserviceaccount.com
+PROJECT_ID      = os.environ["GCP_PROJECT_ID"]
+BUCKET_NAME     = os.environ["POS_BUCKET_NAME"]
+FOLDER_ID       = os.environ["DRIVE_FOLDER_ID"]
+SERVICE_ACCOUNT = os.environ["SERVICE_ACCOUNT"]   # e.g. my-sa@my-project.iam.gserviceaccount.com
 
 # ── Optional env vars ────────────────────────────────────────────────────────
 DEST_PREFIX         = os.environ.get("GCS_DESTINATION_PREFIX", "").rstrip("/")
-TRIGGER_FILENAME    = os.environ.get("TRIGGER_FILENAME", "process_pos_data.txt")  # comes from env
 ARCHIVE_FOLDER_NAME = os.environ.get("ARCHIVE_FOLDER_NAME", "archive")
 INCOMING_PREFIX     = os.environ.get("INCOMING_PREFIX", "pos-raw-data/incoming-files")
 MANIFESTS_PREFIX    = os.environ.get("MANIFESTS_PREFIX", "manifests")
-RUN_LABEL           = os.environ.get("RUN_LABEL", "")   # optional label for manifest run_id
+RUN_LABEL           = os.environ.get("RUN_LABEL", "")
 
 # ── Google Workspace → Office export map ─────────────────────────────────────
 EXPORTABLE = {
@@ -84,73 +76,14 @@ def build_drive_service(credentials):
     return build("drive", "v3", credentials=credentials, cache_discovery=False)
 
 
-def check_trigger_file_exists(drive) -> str | None:
-    """
-    Check if the trigger file (TRIGGER_FILENAME) exists in FOLDER_ID.
-    Returns the file ID if found, None otherwise.
-    """
-    query = (
-        f"'{FOLDER_ID}' in parents "
-        f"and trashed = false "
-        f"and name = '{TRIGGER_FILENAME}'"
-    )
-    resp = drive.files().list(
-        q=query,
-        fields="files(id, name)",
-        pageSize=1,
-        supportsAllDrives=True,
-        includeItemsFromAllDrives=True,
-    ).execute()
-    files = resp.get("files", [])
-    if files:
-        log.info(
-            "Trigger file '%s' found (id=%s). Proceeding with sync.",
-            TRIGGER_FILENAME, files[0]["id"],
-        )
-        return files[0]["id"]
-    log.info(
-        "Trigger file '%s' NOT found in folder %s. Nothing to do.",
-        TRIGGER_FILENAME, FOLDER_ID,
-    )
-    return None
-
-
-def delete_trigger_file(drive, file_id: str) -> None:
-    """
-    Permanently delete the trigger file from Drive so the next scheduled
-    run does not re-trigger the sync.
-    Falls back to trashing if permanent delete is not permitted.
-    """
-    try:
-        drive.files().delete(
-            fileId=file_id,
-            supportsAllDrives=True,
-        ).execute()
-        log.info("Trigger file '%s' (id=%s) permanently deleted from Drive.", TRIGGER_FILENAME, file_id)
-    except HttpError as exc:
-        if exc.resp.status == 403:
-            log.warning(
-                "Permanent delete not permitted (403) — falling back to trash for file id=%s", file_id
-            )
-            drive.files().update(
-                fileId=file_id,
-                body={"trashed": True},
-                supportsAllDrives=True,
-            ).execute()
-            log.info("Trigger file '%s' (id=%s) moved to trash.", TRIGGER_FILENAME, file_id)
-        else:
-            raise
-
-
 def list_files(drive) -> list[dict]:
     """
-    List all non-trashed files (not folders, not trigger file) in FOLDER_ID.
+    List all non-trashed files (not folders) in FOLDER_ID.
     """
     query = (
         f"'{FOLDER_ID}' in parents "
         f"and trashed = false "
-        f"and mimeType != '{FOLDER_MIME}' "
-        f"and name != '{TRIGGER_FILENAME}'"    # exclude trigger file at query level
+        f"and mimeType != '{FOLDER_MIME}'"
     )
     results, page_token = [], None
     while True:
@@ -263,13 +196,12 @@ def build_run_id() -> str:
 def build_manifest(run_id: str, gcs_paths: list[str], service_account_email: str) -> dict:
     """
     Build the manifest JSON.
-    submitted_by reflects the Cloud Run service account, not a GitHub actor.
+    submitted_by reflects the Cloud Run service account.
     """
     return {
         "run_id": run_id,
         "submitted_by": f"service-account:{service_account_email}",
         "submitted_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "trigger_file": TRIGGER_FILENAME,
         "files": gcs_paths,
     }
 
@@ -298,18 +230,8 @@ def run():
     drive = build_drive_service(credentials)
     gcs   = storage.Client(project=PROJECT_ID, credentials=credentials)
 
-    # ── STEP 1: Check for trigger file — exit early if not present ────────────
-    log.info(
-        "Checking for trigger file '%s' in Drive folder %s …",
-        TRIGGER_FILENAME, FOLDER_ID,
-    )
-    trigger_file_id = check_trigger_file_exists(drive)
-    if not trigger_file_id:
-        log.info("No trigger file found. Exiting with no action.")
-        return                          # clean exit — nothing to do
-
-    # ── STEP 2: List files to process ────────────────────────────────────────
-    log.info("Scanning Drive folder %s (trigger file excluded)", FOLDER_ID)
+    # ── STEP 1: List files to process ────────────────────────────────────────
+    log.info("Scanning Drive folder %s", FOLDER_ID)
     files = list_files(drive)
     log.info("Found %d file(s) to process", len(files))
 
@@ -317,9 +239,9 @@ def run():
         log.info("No files to process. Exiting.")
         return
 
-    # ── STEP 3: Sync — download from Drive and upload to GCS ─────────────────
+    # ── STEP 2: Sync — download from Drive and upload to GCS ─────────────────
     transferred = skipped = failed = 0
-    transferred_gcs_paths = []         # collect gs:// paths for manifest
+    transferred_gcs_paths = []
 
     for file in files:
         fname = file["name"]
@@ -347,7 +269,7 @@ def run():
         transferred, skipped, failed,
     )
 
-    # ── STEP 4: Archive — move all processed files into dated sub-folder ──────
+    # ── STEP 3: Archive — move all processed files into dated sub-folder ──────
     log.info(
         "Archiving %d file(s) into dated sub-folder inside folder %s …",
         len(files), FOLDER_ID,
@@ -366,14 +288,7 @@ def run():
 
     log.info("Archive done. archived=%d  failed=%d", archived, archive_failed)
 
-    # ── STEP 5: Delete trigger file — prevents re-triggering on next run ──────
-    try:
-        delete_trigger_file(drive, trigger_file_id)
-    except HttpError as exc:
-        log.error("TRIGGER FILE DELETE FAILED: %s", exc)
-        # Non-fatal: log and continue — manifest should still be created
-
-    # ── STEP 6: Manifest — only runs after sync + archive + delete complete ───
+    # ── STEP 4: Manifest — only runs after sync + archive are fully complete ──
     log.info("Building and uploading manifest …")
     run_id   = build_run_id()
     manifest = build_manifest(run_id, transferred_gcs_paths, SERVICE_ACCOUNT)

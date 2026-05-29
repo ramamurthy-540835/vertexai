@@ -98,14 +98,14 @@ jobs:
             echo "- **Create manifest after:** ${{ github.event.inputs.create_manifest_after }}"
           } >> $GITHUB_STEP_SUMMARY
 
-  create_manifest:
-    name: "Create manifest after sync"
-    needs: trigger_sync
-    if: ${{ github.event.inputs.create_manifest_after == 'true' && needs.trigger_sync.result == 'success' }}
-    uses: ./.github/workflows/create_manifest.yml
-    with:
-      environment: ${{ github.event.inputs.environment }}
-      dry_run: 'false'
-    secrets:
-      GCP_WORKLOAD_IDENTITY_PROVIDER_ID: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
-      GCP_WORKLOAD_IDENTITY_SA_EMAIL: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
+  # create_manifest:
+  #   name: "Create manifest after sync"
+  #   needs: trigger_sync
+  #   if: ${{ github.event.inputs.create_manifest_after == 'true' && needs.trigger_sync.result == 'success' }}
+  #   uses: ./.github/workflows/create_manifest.yml
+  #   with:
+  #     environment: ${{ github.event.inputs.environment }}
+  #     dry_run: 'false'
+  #   secrets:
+  #     GCP_WORKLOAD_IDENTITY_PROVIDER_ID: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
+  #     GCP_WORKLOAD_IDENTITY_SA_EMAIL: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
