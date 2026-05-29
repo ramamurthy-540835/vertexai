@@ -27,7 +27,7 @@ PROJECT_ID = os.environ.get("PROJECT_ID")
 client = genai.Client(
     vertexai=True,
     project=PROJECT_ID,
-    location="us"
+    location="us-central1"
 )
 
 def data_extraction(transaction_df, pos_insert_id):
@@ -51,7 +51,8 @@ def batch_embedding(text_list, max_retries=5, base_delay=1.0, max_delay=60.0):
                 model="text-embedding-005",
                 contents=text_list,
                 config=types.EmbedContentConfig(
-                    task_type="SEMANTIC_SIMILARITY"
+                    task_type="SEMANTIC_SIMILARITY",
+                    http_options=types.HttpOptions(api_version='v1')
                 )
             )
             return [e.values for e in response.embeddings]
