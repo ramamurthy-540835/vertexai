@@ -65,8 +65,8 @@ def batch_embedding(text_list,max_retries=5, base_delay=1.0, max_delay=60.0):
                 print(f"Rate limit hit (attempt {attempt + 1}/{max_retries}). Retrying in {delay:.2f}s...")
                 time.sleep(delay)
             else:
-                    print(f"Batch failed after {attempt + 1} attempt(s): {str(e)}")
-                    return None  # Caller handles fallback
+                print(f"Batch failed after {attempt + 1} attempt(s): {str(e)}")
+                return None  # Caller handles fallback
 
     return None
 
