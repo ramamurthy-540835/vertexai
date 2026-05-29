@@ -16,11 +16,11 @@ on:
         default: ''
         type: string
 
-      create_manifest_after:
-        description: 'Automatically create manifest after sync completes'
-        required: true
-        default: true
-        type: boolean
+      # create_manifest_after:
+      #   description: 'Automatically create manifest after sync completes'
+      #   required: true
+      #   default: true
+      #   type: boolean
 
 jobs:
   trigger_sync:
