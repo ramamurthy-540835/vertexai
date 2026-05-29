@@ -14,7 +14,7 @@ on:
       scheduler_job_name:
         description: 'Cloud Scheduler job name to delete (leave blank to skip)'
         required: false
-        default: 'snow-sync-job-scheduler'
+        default: 'drive-sync-scheduler'
         type: string
       cloud_run_service_name:
         description: 'Cloud Run service name to delete (leave blank to skip)'
