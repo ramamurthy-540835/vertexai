@@ -23,6 +23,8 @@ BASE_IMAGE = os.environ.get("KFP_CUSTOM_IMAGE")
 MAX_WORKERS = os.environ.get("MAX_WORKERS")
 PROJECT_ID = os.environ.get("PROJECT_ID")
 
+print(f"PROJECT_ID: {PROJECT_ID}")  # add this log
+
 
 client = genai.Client(
     vertexai=True,
