@@ -1,11 +1,6 @@
 # ------------------------------------
-# Reference existing VPC & subnet
+# Reference existing subnet
 # ------------------------------------
-
-data "google_compute_network" "vpc_network" {
-  project = var.vpc_project_id
-  name    = var.network_name
-}
 
 data "google_compute_subnetwork" "psc_subnet" {
   project = var.vpc_project_id

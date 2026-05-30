@@ -256,7 +256,6 @@ module "network_attachement" {
   project_id            = var.projectId
   region                = var.region
   vpc_project_id        = "gcp-prj-transit-hub"
-  network_name          = "gcp-vpc-np-host"
   subnet_name           = "gcp-snt-np-usc1-601-bcleadsmgmt-servicenow-psc-adt"
   network_attachment_name = "gcp-nat-np-usc1-601-bcleadsmgmt-servicenow-psc-adt"
 }

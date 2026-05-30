@@ -14,11 +14,6 @@ variable "region" {
   type        = string
 }
 
-variable "network_name" {
-  description = "The name of the existing VPC network."
-  type        = string
-}
-
 variable "subnet_name" {
   description = "The name of the existing subnet."
   type        = string
