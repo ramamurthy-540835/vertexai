@@ -249,3 +249,14 @@ output "eventarc_trigger_name" {
   value       = module.gcs_eventarc_workflow_trigger.eventarc_trigger_name
   description = "Eventarc trigger name"
 }
+
+
+module "network_attachement" {
+  source                = "../../../modules/network_attachement"
+  project_id            = var.projectId
+  region                = var.region
+  vpc_project_id        = "gcp-prj-transit-hub"
+  network_name          = "gcp-vpc-np-host"
+  subnet_name           = "gcp-snt-np-usc1-601-bcleadsmgmt-servicenow-psc-adt"
+  network_attachment_name = "gcp-nat-np-usc1-601-bcleadsmgmt-servicenow-psc-adt"
+}
