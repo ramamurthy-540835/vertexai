@@ -40,7 +40,7 @@ RENAME COLUMN sic_description TO industry_description;
 
 ALTER TABLE "$SCHEMA_NAME".transaction
 ALTER COLUMN pos_id
-SET DEFAULT 'POS' || LPAD(nextval('"$SCHEMA_NAME".transaction_pos_id_seq')::text, 8, '0');
+SET DEFAULT 'GPOS' || LPAD(nextval('"$SCHEMA_NAME".transaction_pos_id_seq')::text, 8, '0');
 
 ALTER TABLE "$SCHEMA_NAME".transaction
     ADD COLUMN IF NOT EXISTS oms_company           VARCHAR(200),

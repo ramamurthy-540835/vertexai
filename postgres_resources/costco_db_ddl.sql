@@ -191,7 +191,7 @@ CONSTRAINT unique_confidence_level UNIQUE (confidence_level)
 
  CREATE TABLE IF NOT EXISTS
   "$SCHEMA_NAME".transaction ( 
-    pos_id varchar(120) PRIMARY KEY DEFAULT ('POS' || LPAD(nextval('"$SCHEMA_NAME".transaction_pos_id_seq')::text, 8, '0')), 
+    pos_id varchar(120) PRIMARY KEY DEFAULT ('GPOS' || LPAD(nextval('"$SCHEMA_NAME".transaction_pos_id_seq')::text, 8, '0')), 
     sales_reference_id  varchar(130),
 	account_number bigint,
     lead_id varchar(20) NULL,

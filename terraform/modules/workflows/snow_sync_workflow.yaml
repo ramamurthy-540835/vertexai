@@ -111,7 +111,14 @@ main:
         next: wait_for_lead_match
 
     - done:
-        return:
-          status: "success"
-          batch_id: ${batch_id}
-          lead_match_execution: ${if(run_lead_match, lead_match_execution.name, "skipped")}
+        switch:
+          - condition: ${run_lead_match == true}
+            return:
+              status: "success"
+              batch_id: ${batch_id}
+              lead_match_execution: ${lead_match_execution.name}
+          - condition: true
+            return:
+              status: "success"
+              batch_id: ${batch_id}
+              lead_match_execution: "skipped"
