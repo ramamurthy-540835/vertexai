@@ -151,6 +151,7 @@ jobs:
             --vpc-egress=all-traffic
             --network=${{ env.NETWORK }}
             --subnet=${{ env.SUBNET }}
+            --parallelism=10
             --command="python"
             --args="run.py,run_pipeline"
             --task-timeout=40h

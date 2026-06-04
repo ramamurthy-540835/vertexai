@@ -145,6 +145,7 @@ jobs:
             --vpc-egress=all-traffic
             --network=${{ env.NETWORK }}
             --subnet=${{ env.SUBNET }}
+            --parallelism=10
             --command="python"
             --args="main.py,snow_to_db"
             --task-timeout=40h
