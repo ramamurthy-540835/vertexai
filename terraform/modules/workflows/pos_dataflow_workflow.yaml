@@ -10,7 +10,7 @@
 #   5. Launch Dataflow Flex Template jobs in parallel (bounded concurrency)
 #   6. After Dataflow succeeds: MOVE source files to processed/ (decoupled
 #      from downstream so files don't pile up if downstream is flaky)
-#   7. Trigger downstream snow_sync_workflow
+#   7. Trigger downstream snow_sync_workflow (optional, default: true)
 #   8. Wait for downstream to complete
 #   9. Done — workflow SUCCEEDED if downstream also succeeded, FAILED otherwise
 #      (but files are already moved and data is already in DB by step 6)
@@ -27,6 +27,7 @@ main:
           - gcs_event: '${json.decode(raw_json)}'
           - bucket: '${gcs_event.bucket}'
           - manifest_object: '${gcs_event.name}'
+          - run_snow_sync: '${default(map.get(event, "run_snow_sync"), true)}'
 
     # ── 2. Read env config from the same bucket ────────────────────────
     - read_config:
@@ -82,13 +83,13 @@ main:
           - run_id: '${default(map.get(manifest, "run_id"), manifest_object)}'
           - all_files: '${manifest.files}'
           - file_count: '${len(all_files)}'
-          - batch_id: '${uuid.generate()}' 
+          - batch_id: '${uuid.generate()}'
 
     - log_run_start:
         call: sys.log
         args:
           severity: INFO
-          text: '${"[" + environment + "] run " + run_id + ": " + string(file_count) + " files, max " + string(chunk_size) + " in parallel"}'
+          text: '${"[" + environment + "] run " + run_id + ": " + string(file_count) + " files, max " + string(chunk_size) + " in parallel, run_snow_sync=" + string(run_snow_sync)}'
 
     # ── 5. Launch all Dataflow jobs in parallel with concurrency cap ───
     - launch_all_jobs:
@@ -123,7 +124,7 @@ main:
                           db_user: '${db_user}'
                           field_map_path: '${field_map_gcs}'
                           batch_size: '${batch_size}'
-                          batch_id: '${batch_id}'            
+                          batch_id: '${batch_id}'
                           manifest_run_id: '${run_id}'
                         environment:
                           serviceAccountEmail: '${sa_email}'
@@ -196,7 +197,22 @@ main:
           severity: INFO
           text: '${"[" + environment + "] " + string(file_count) + " files moved to processed/"}'
 
-    # ── 7. Trigger downstream workflow (snow_sync) ─────────────────────
+    # ── 7. Check whether to trigger downstream snow_sync ──────────────
+    - check_run_snow_sync:
+        switch:
+          - condition: '${run_snow_sync == true}'
+            next: trigger_downstream
+          - condition: true
+            next: log_snow_sync_skipped
+
+    - log_snow_sync_skipped:
+        call: sys.log
+        args:
+          severity: INFO
+          text: '${"[" + environment + "] snow_sync skipped (run_snow_sync=false)"}'
+        next: done_no_downstream
+
+    # ── 8. Trigger downstream workflow (snow_sync) ─────────────────────
     - trigger_downstream:
         steps:
           - build_payload:
@@ -217,7 +233,7 @@ main:
                   argument: '${downstream_args}'
               result: downstream_execution
 
-    # ── 8. Wait for downstream to complete ─────────────────────────────
+    # ── 9. Wait for downstream to complete ─────────────────────────────
     - wait_for_downstream:
         call: googleapis.workflowexecutions.v1.projects.locations.workflows.executions.get
         args:
@@ -240,14 +256,25 @@ main:
           seconds: 15
         next: wait_for_downstream
 
-    # ── 9. Success terminal ────────────────────────────────────────────
+    # ── 10. Success terminal (with downstream) ─────────────────────────
     - done:
         return:
           status: "success"
           environment: '${environment}'
           run_id: '${run_id}'
           file_count: '${file_count}'
+          run_snow_sync: '${run_snow_sync}'
           downstream_execution: '${downstream_execution.name}'
+
+    # ── 11. Success terminal (without downstream) ──────────────────────
+    - done_no_downstream:
+        return:
+          status: "success"
+          environment: '${environment}'
+          run_id: '${run_id}'
+          file_count: '${file_count}'
+          run_snow_sync: '${run_snow_sync}'
+          downstream_execution: "skipped"
 
 
 # ─────────────────────────────────────────────────────────────────────

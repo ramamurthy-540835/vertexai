@@ -9,7 +9,8 @@ main:
           - job_name_par: snow-sync-job-par
           - batch_id: ${default(map.get(input, "resume_batch_id"), uuid.generate())}
           - start_at: ${default(map.get(input, "start_at"), "leads_to_gcs")}
-          
+          - run_lead_match: ${default(map.get(input, "run_lead_match"), true)}
+
     - determine_start_point:
         switch:
           - condition: ${start_at == "leads_to_db"}
@@ -34,11 +35,12 @@ main:
           connector_params:
             timeout: 72000
             polling_policy:
-                initial_delay: 5              # Start polling after 5 seconds
-                multiplier: 1.5               # Increase delay by 1.5x after each poll
-                max_delay: 60                 # Max 60 seconds between polls
+              initial_delay: 5
+              multiplier: 1.5
+              max_delay: 60
             skip_polling: false
-  
+        next: load_lead_to_db
+
     - load_lead_to_db:
         call: googleapis.run.v1.namespaces.jobs.run
         args:
@@ -56,10 +58,18 @@ main:
           connector_params:
             timeout: 72000
             polling_policy:
-                initial_delay: 5              # Start polling after 5 seconds
-                multiplier: 1.5               # Increase delay by 1.5x after each poll
-                max_delay: 60                 # Max 60 seconds between polls
+              initial_delay: 5
+              multiplier: 1.5
+              max_delay: 60
             skip_polling: false
+        next: check_run_lead_match
+
+    - check_run_lead_match:
+        switch:
+          - condition: ${run_lead_match == true}
+            next: trigger_lead_match_workflow
+          - condition: true
+            next: done
 
     - trigger_lead_match_workflow:
         steps:
@@ -77,7 +87,7 @@ main:
                 body:
                   argument: ${lead_match_args}
               result: lead_match_execution
-    
+
     - wait_for_lead_match:
         call: googleapis.workflowexecutions.v1.projects.locations.workflows.executions.get
         args:
@@ -91,9 +101,9 @@ main:
             next: done
           - condition: ${lead_match_result.state == "FAILED"}
             raise: ${lead_match_result.error}
-          - condition: true # Still running
+          - condition: true
             next: poll_delay
-    
+
     - poll_delay:
         call: sys.sleep
         args:
@@ -104,4 +114,4 @@ main:
         return:
           status: "success"
           batch_id: ${batch_id}
-          lead_match_execution: ${lead_match_execution.name}
+          lead_match_execution: ${if(run_lead_match, lead_match_execution.name, "skipped")}
