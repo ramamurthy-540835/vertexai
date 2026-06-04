@@ -78,6 +78,8 @@ jobs:
             echo "PROJECT_ID=p-601-np-bcleadsmgmt-adt" >> $GITHUB_ENV
             echo "SERVICE_ACCOUNT=gco-iam-svc-lead-mgmt-bc-adt@p-601-np-bcleadsmgmt-adt.iam.gserviceaccount.com" >> $GITHUB_ENV
             echo "ENVIRONMENT_VARIABLES_PATH=./cloud_run_service/service_adt.properties" >> $GITHUB_ENV
+            echo "NETWORK=projects/gcp-prj-transit-hub/global/networks/gcp-vpc-np-host" >> $GITHUB_ENV
+            echo "SUBNET=projects/gcp-prj-transit-hub/regions/us-central1/subnetworks/gcp-snt-np-usc1-601-cloudrunjobs-np" >> $GITHUB_ENV
 
           elif [[ "$REF" == refs/heads/feature* ]]; then
             # Only deploy if this workflow file itself changed
@@ -88,6 +90,8 @@ jobs:
               echo "PROJECT_ID=p-601-np-bcleadsmgmt-adt" >> $GITHUB_ENV
               echo "SERVICE_ACCOUNT=gco-iam-svc-lead-mgmt-bc-adt@p-601-np-bcleadsmgmt-adt.iam.gserviceaccount.com" >> $GITHUB_ENV
               echo "ENVIRONMENT_VARIABLES_PATH=./cloud_run_service/service_adt.properties" >> $GITHUB_ENV
+              echo "NETWORK=projects/gcp-prj-transit-hub/global/networks/gcp-vpc-np-host" >> $GITHUB_ENV
+              echo "SUBNET=projects/gcp-prj-transit-hub/regions/us-central1/subnetworks/gcp-snt-np-usc1-601-cloudrunjobs-np" >> $GITHUB_ENV
             else
               echo "DEPLOY=false" >> $GITHUB_ENV
             fi
@@ -98,6 +102,8 @@ jobs:
             echo "PROJECT_ID=p-601-np-bcleadsmgmt-qat" >> $GITHUB_ENV
             echo "SERVICE_ACCOUNT=gco-iam-svc-lead-mgmt-bc-qat@p-601-np-bcleadsmgmt-qat.iam.gserviceaccount.com" >> $GITHUB_ENV
             echo "ENVIRONMENT_VARIABLES_PATH=./cloud_run_service/service_qat.properties" >> $GITHUB_ENV
+            echo "NETWORK=projects/gcp-prj-transit-hub/global/networks/gcp-vpc-np-host" >> $GITHUB_ENV
+            echo "SUBNET=projects/gcp-prj-transit-hub/regions/us-central1/subnetworks/gcp-snt-np-usc1-601-cloudrunjobs-np" >> $GITHUB_ENV
 
           elif [[ "$REF" == refs/tags/release-spt* ]]; then
             echo "ENV=spt" >> $GITHUB_ENV
@@ -105,6 +111,8 @@ jobs:
             echo "PROJECT_ID=p-601-np-bcleadsmgmt-spt" >> $GITHUB_ENV
             echo "SERVICE_ACCOUNT=gco-iam-svc-lead-mgmt-bc-spt@p-601-np-bcleadsmgmt-spt.iam.gserviceaccount.com" >> $GITHUB_ENV
             echo "ENVIRONMENT_VARIABLES_PATH=./cloud_run_service/service_spt.properties" >> $GITHUB_ENV
+            echo "NETWORK=projects/gcp-prj-transit-hub/global/networks/gcp-vpc-np-host" >> $GITHUB_ENV
+            echo "SUBNET=projects/gcp-prj-transit-hub/regions/us-central1/subnetworks/gcp-snt-np-usc1-601-bcleadsmgmt-servicenow-psc-spt" >> $GITHUB_ENV
 
           else
             echo "DEPLOY=false" >> $GITHUB_ENV
@@ -132,8 +140,8 @@ jobs:
             --service-account=${{ env.SERVICE_ACCOUNT }}
             --vpc-egress=all-traffic
             --ingress=internal
-            --network=projects/gcp-prj-transit-hub/global/networks/gcp-vpc-np-host
-            --subnet=projects/gcp-prj-transit-hub/regions/us-central1/subnetworks/gcp-snt-np-usc1-601-cloudrunjobs-np
+            --network=${{ env.NETWORK }}
+            --subnet=${{ env.SUBNET }}
             --set-env-vars=${{ steps.env.outputs.env_vars }}
             --memory=512Mi
             --cpu=1
