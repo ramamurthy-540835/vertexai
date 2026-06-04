@@ -1,29 +1,17 @@
-import os
-import concurrent.futures
 import pandas as pd
 from datetime import datetime
 import time
 import random
 from pgvector.sqlalchemy import Vector
-import sqlalchemy
-from vertexai.preview.language_models import TextEmbeddingModel, TextEmbeddingInput
+from google import genai
+from google.genai.types  import EmbedContentConfig,HttpOptions
 from sqlalchemy.dialects.postgresql import TIMESTAMP
-from sqlalchemy import Column, Integer, Text, DateTime
 import numpy as np
-from sqlalchemy.orm import declarative_base, sessionmaker
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from costco.leadmgmt.config.Configuration import JobConfig
 from costco.leadmgmt.util.apputil import load_file_from_gcs
 from costco.leadmgmt.database.DBUtil import load_data_from_cloudsql
 from costco.leadmgmt.util.fiscal_year import get_costco_fiscal_info
-
-# Get the base image from environment variables
-BASE_IMAGE = os.environ.get("KFP_CUSTOM_IMAGE")
-MAX_WORKERS = os.environ.get("MAX_WORKERS")
-PROJECT_ID = os.environ.get("PROJECT_ID")
-
-
-model = TextEmbeddingModel.from_pretrained("text-embedding-005")
 
 
 def data_extraction(transaction_df, pos_insert_id):
@@ -39,18 +27,18 @@ def data_extraction(transaction_df, pos_insert_id):
     return transaction_insert_df
 
 
-def batch_embedding(text_list,max_retries=5, base_delay=1.0, max_delay=60.0):
+def batch_embedding(client,text_list, max_retries=5, base_delay=1.0, max_delay=60.0):
     """Generate embeddings for a batch of texts"""
     for attempt in range(max_retries):
         try:
-
-            embedding = []
-            text_list = [TextEmbeddingInput(text, 'SEMANTIC_SIMILARITY') for text in text_list]
-            embeddings = model.get_embeddings(text_list)
-            for i in range(0, len(embeddings)):
-                embedding.append(embeddings[i].values)
-            # return [embedding.values for embedding in embeddings]
-            return embedding
+            response = client.models.embed_content(
+                model="text-embedding-005",
+                contents=text_list,
+                config=EmbedContentConfig(
+                    task_type="SEMANTIC_SIMILARITY"
+                )
+            )
+            return [e.values for e in response.embeddings]
         except Exception as e:
             error_str = str(e).lower()
             is_rate_limit = (
@@ -58,20 +46,17 @@ def batch_embedding(text_list,max_retries=5, base_delay=1.0, max_delay=60.0):
                 "resource exhausted" in error_str or
                 "quota" in error_str or
                 "rate limit" in error_str
-            )    
+            )
             if is_rate_limit and attempt < max_retries - 1:
-                    # Exponential backoff: 1s, 2s, 4s, 8s, 16s ... + jitter
-                    delay = min(base_delay * (2 ** attempt) + random.uniform(0, 1), max_delay)
-                    print(f"Rate limit hit (attempt {attempt + 1}/{max_retries}). Retrying in {delay:.2f}s...")
-                    time.sleep(delay)
-        else:
+                delay = min(base_delay * (2 ** attempt) + random.uniform(0, 1), max_delay)
+                print(f"Rate limit hit (attempt {attempt + 1}/{max_retries}). Retrying in {delay:.2f}s...")
+                time.sleep(delay)
+            else:
                 print(f"Batch failed after {attempt + 1} attempt(s): {str(e)}")
-                return None  # Caller handles fallback
-
+                return None
     return None
 
-
-def process_in_batch(df, embedding_column_name, column_name):
+def process_in_batch(df, embedding_column_name, column_name,max_workers):
     if embedding_column_name not in df.columns:
         df[embedding_column_name] = None
 
@@ -90,7 +75,7 @@ def process_in_batch(df, embedding_column_name, column_name):
     results = [None] * len(batches)
 
     RAMP_STAGES = [
-        (5,  0.5),   # First 5 batches  → 0.5s gap between submits
+        (5,  0.5),   #  First 5 batches  → 0.5s gap between submits
         (10, 0.2),   # Next 10 batches  → 0.2s gap
         (999, 0.05), # Rest             → 0.05s gap (near full speed)
     ]
@@ -104,7 +89,7 @@ def process_in_batch(df, embedding_column_name, column_name):
         return 0.05
 
 
-    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
 
         future_to_batch = {}
 
@@ -148,23 +133,38 @@ def process_in_batch(df, embedding_column_name, column_name):
 
 
 def insert_operation_transaction(engine, table_name, schema_name, data_frame):
-    data_frame.to_sql(table_name, con=engine, if_exists='append', index=False, schema=schema_name, method='multi',
-                      chunksize=1000, dtype={"combined_embedding": Vector(768), "address_embedding": Vector(768),
-                                             "name_embedding": Vector(768), "load_date": TIMESTAMP})
+    try:
+        data_frame.to_sql(
+            table_name, con=engine, if_exists='append', index=False,
+            schema=schema_name, method='multi', chunksize=1000,
+            dtype={"combined_embedding": Vector(768),
+                   "address_embedding": Vector(768),
+                   "name_embedding": Vector(768),
+                   "load_date": TIMESTAMP}
+        )
+    except Exception as e:
+        print(f"DB insert failed for table {schema_name}.{table_name}: {e}")
+        raise   # re-raise so the caller knows it failed
 
-
-def embed_chunk(chunk_df):
+def embed_chunk(chunk_df,max_workers):
 
     chunk_df['combined_embedding'] = process_in_batch(chunk_df, 'combined_embedding',
-                                                                        'combined_field')  # column name to  be changed
+                                                                        'combined_field',max_workers)  # column name to  be changed
     chunk_df['address_embedding'] = process_in_batch(chunk_df, 'address_embedding',
-                                                                        'full_address')  # column name to  be changed
+                                                                        'full_address',max_workers)  # column name to  be changed
     chunk_df['name_embedding'] = process_in_batch(chunk_df, 'name_embedding',
-                                                                    'business_name')  # column name to  be changed
+                                                                    'business_name',max_workers)  # column name to  be changed
 
     return chunk_df
 
-def embedding_generation(file_pos: str, config_file_path: str):
+def embedding_generation(file_pos: str, config_file_path: str,project_id: str, max_workers: int):
+
+    client = genai.Client(
+    vertexai=True,
+    project=project_id,
+    location="global",
+    http_options=HttpOptions(api_version='v1')
+)
     # Initialization
     job_config = JobConfig(config_file_path)
     db_config = job_config.db_config
@@ -212,7 +212,7 @@ def embedding_generation(file_pos: str, config_file_path: str):
         for i in range(0, len(transaction_insert_df), chunk_size):
 
             chunk_df = transaction_insert_df.iloc[i:i+chunk_size].copy()
-            chunk_df = embed_chunk(chunk_df)
+            chunk_df = embed_chunk(chunk_df,max_workers)
             chunk_df['load_date'] = pd.to_datetime(datetime.now())
 
             chunk_df = chunk_df.rename(

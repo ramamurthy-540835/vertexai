@@ -1,8 +1,6 @@
 import os
 from kfp import dsl
-import configparser
 from kfp.dsl import PipelineTaskFinalStatus
-import os
 
 BASE_IMAGE = os.environ.get("KFP_CUSTOM_IMAGE")
 CPU_LIMIT = os.environ.get("CPU_LIMIT")
@@ -52,15 +50,15 @@ def update_cloud_sql(file_path: str, config_file_path: str):
 
 
 @dsl.component(base_image=BASE_IMAGE)
-def embedding_generation_leads(file_leads: str, config_file_path: str):
+def embedding_generation_leads(file_leads: str, config_file_path: str,project_id: str, max_workers: int):
     from costco.leadmgmt.components.vector_db_loading_leads import embedding_generation
-    return embedding_generation(file_leads=file_leads, config_file_path=config_file_path)
+    return embedding_generation(file_leads=file_leads, config_file_path=config_file_path,project_id=project_id, max_workers=max_workers)
 
 
 @dsl.component(base_image=BASE_IMAGE)
-def embedding_generation_pos(file_pos: str, config_file_path: str):
+def embedding_generation_pos(file_pos: str, config_file_path: str,project_id: str, max_workers: int):
     from costco.leadmgmt.components.vector_db_loading_pos import embedding_generation
-    return embedding_generation(file_pos=file_pos, config_file_path=config_file_path)
+    return embedding_generation(file_pos=file_pos, config_file_path=config_file_path,project_id=project_id, max_workers=max_workers)
 
 
 @dsl.component(base_image=BASE_IMAGE)
@@ -72,7 +70,9 @@ def update_servicenow(config_file_path: str, file_path: str):
 @dsl.pipeline(name=os.environ.get("PIPELINE_NAME"))
 def my_pipeline(
         match_id: str,
-        config_file_path: str
+        config_file_path: str,
+        project_id:str,
+        max_workers:int
 ):
     print("pipeline execution started")
 
@@ -114,14 +114,18 @@ def my_pipeline(
         # Embedding generation leads
         task_2 = embedding_generation_leads(
             file_leads=file_leads_preprocessed.output,
-            config_file_path=config_file_path)
+            config_file_path=config_file_path,
+            project_id=project_id,
+            max_workers=max_workers)
         task_2.set_caching_options(False).set_cpu_limit(CPU_LIMIT_EG).set_memory_limit(MEMORY_LIMIT_EG)
        
 
         # Embedding generation pos
         task_3 = embedding_generation_pos(
             file_pos=file_pos_preprocessed.output,
-            config_file_path=config_file_path)
+            config_file_path=config_file_path,
+            project_id=project_id,
+            max_workers=max_workers)
         task_3.set_caching_options(False).set_cpu_limit(CPU_LIMIT_EG).set_memory_limit(MEMORY_LIMIT_EG)
       
 

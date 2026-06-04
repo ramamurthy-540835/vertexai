@@ -1,10 +1,10 @@
 name: "cloud_run_job_execution"
 
 on:
-  workflow_dispatch:  # Trigger manually
+  workflow_dispatch:
     inputs:
       environment:
-        description: 'Environment to deploy to'
+        description: 'Environment to run job in'
         required: true
         default: 'adt'
         type: choice
@@ -12,35 +12,20 @@ on:
           - 'adt'
           - 'qat'
           - 'spt'
-      resume_batch_id:
-        description: 'Specific batch_id to resume old run'
-        required: false
+      job_name:
+        description: 'Cloud Run Job name (e.g. lead-match-job, snow-sync-job)'
+        required: true
         type: string
-      start_stage:
-        description: 'Start from which stage of the workflow'
-        required: false
-        default: 'leads_to_gcs'
-        type: choice
-        options:
-          - 'leads_to_gcs'
-          - 'leads_to_db'
-          - 'pos_to_gcs'
-          - 'pos_to_db'
-env:
-  PROJECT_ID: 'p-601-np-bcleadsmgmt-${{ github.event.inputs.environment }}' # TODO: update to your Google Cloud project ID
-  REGION: 'us-central1' # TODO: update to your region
+      args:
+        description: 'Comma-separated args to pass to the job (e.g. run.py,run_pipeline)'
+        required: true
+        type: string
 
 jobs:
   run:
-    name: "auth"
-    runs-on: "ubuntu-latest"
-    environment: ${{ github.event.pull_request.head.ref }}
-    # strategy:
-    #   matrix:
-    #     env: [ ${{ github.event.inputs.environment }}] #,['qat', 'qat', 'spt'] # Exclude prd from auto-plan
-    env:
-      TARGET_ENV_VAR: ${{ github.event.inputs.environment }}
-      PROJECT_ID_FOR_GCP: 'p-601-np-bcleadsmgmt-${{ github.event.inputs.environment }}'
+    name: "execute-${{ github.event.inputs.job_name }}-${{ github.event.inputs.environment }}"
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment }}
 
     permissions:
       id-token: write
@@ -56,112 +41,28 @@ jobs:
         with:
           create_credentials_file: true
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
-          service_account: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}    
-      # - name: "Cancel an execution"
-      #   run: |
-      #     unset CLOUDSDK_CORE_PROJECT
-      #     gcloud config set project p-601-np-bcleadsmgmt-adt
-      #     gcloud run jobs executions cancel snow-sync-job-2fc2s --region us-central1 --project p-601-np-bcleadsmgmt-adt --quiet
+          service_account: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
 
-      # - name: "Cancel vertex ai"
-      #   run: |
-      #     unset CLOUDSDK_CORE_PROJECT
-      #     gcloud config set project p-601-np-bcleadsmgmt-qat
-      #     gcloud ai pipeline-jobs cancel lead-match-pipeline-20260427081736 \
-      #       --project=p-601-np-bcleadsmgmt-qat \
-      #       --region=us-central1
+      - name: "Set project"
+        run: |
+          unset CLOUDSDK_CORE_PROJECT
+          gcloud config set project p-601-np-bcleadsmgmt-${{ github.event.inputs.environment }}
 
-      # - name: "Run Match job"
-      #   run: | 
-      #      unset CLOUDSDK_CORE_PROJECT
-      #      gcloud config set project p-601-np-bcleadsmgmt-qat
-      #      gcloud run jobs execute snow-sync-job --region=us-central1 \
-      #      --project=p-601-np-bcleadsmgmt-qat \
-      #      --args="main.py,match_job"
+      - name: "Execute Cloud Run Job"
+        run: |
+          gcloud run jobs execute ${{ github.event.inputs.job_name }} \
+            --region=us-central1 \
+            --project=p-601-np-bcleadsmgmt-${{ github.event.inputs.environment }} \
+            --args="${{ github.event.inputs.args }}"
 
-      # - name: "Run service now update step"
-      #   run: | 
-      #      unset CLOUDSDK_CORE_PROJECT
-      #      gcloud config set project p-601-np-bcleadsmgmt-qat
-      #      gcloud run jobs execute lead-match-job --region=us-central1 \
-      #      --project=p-601-np-bcleadsmgmt-qat \
-      #      --args="run.py,update_service_now"
-      
-      - name: "Test pos update workflow"
-        run: | 
-           unset CLOUDSDK_CORE_PROJECT
-           gcloud config set project p-601-np-bcleadsmgmt-adt
-           gcloud run jobs execute snow-sync-job --region=us-central1 \
-           --project=p-601-np-bcleadsmgmt-adt \
-           --args="main.py,pos_update"
-
-      # - name: "Test service now connectivity in ADT"
-      #   run: | 
-      #      unset CLOUDSDK_CORE_PROJECT
-      #      gcloud config set project p-601-np-bcleadsmgmt-adt
-      #      gcloud run jobs execute snow-sync-job --region=us-central1 \
-      #      --project=p-601-np-bcleadsmgmt-adt \
-      #      --args="main.py,snow_validation"
-      # - name: "Run match cloud run job in qat"
-      #   run: | 
-      #      unset CLOUDSDK_CORE_PROJECT
-      #      gcloud config set project p-601-np-bcleadsmgmt-qat
-      #      gcloud run jobs execute lead-match-job --region=us-central1 \
-      #      --project=p-601-np-bcleadsmgmt-qat \
-      #      --args="run.py,update_service_now"
-
-      # - name: "Run cloud run job through workflows"
-      #   run: | 
-      #     unset CLOUDSDK_CORE_PROJECT
-      #     gcloud config set project $PROJECT_ID
-
-      #     # Assign inputs to variables
-      #     RESUME_BATCH_ID="${{ github.event.inputs.resume_batch_id }}"
-      #     START_STAGE="${{ github.event.inputs.start_stage }}"
-
-      #     echo "Resume Batch ID: $RESUME_BATCH_ID"
-      #     echo "Start Stage: $START_STAGE"
-
-      #     JSON_DATA='{}'
-
-      #     # Add resume_batch_id
-      #     if [ -n "$RESUME_BATCH_ID" ]; then
-      #       JSON_DATA=$(echo "$JSON_DATA" | jq --arg id "$RESUME_BATCH_ID" '.resume_batch_id = $id')
-      #     fi
-
-      #     # Add start_stage
-      #     if [ -n "$START_STAGE" ]; then
-      #       JSON_DATA=$(echo "$JSON_DATA" | jq --arg step "$START_STAGE" '.start_at = $step')
-      #     fi
-
-      #     echo "Constructed JSON data: $JSON_DATA"
-
-      #     gcloud workflows execute snow_sync_workflow \
-      #       --location=us-central1 \
-      #       --project=$PROJECT_ID \
-      #       --data="$JSON_DATA"
-      # - name: "run lead match"
-      #   run: |
-      #     unset CLOUDSDK_CORE_PROJECT
-      #     gcloud config set project p-601-np-bcleadsmgmt-adt
-      #     gcloud workflows execute lead_match_workflow --location=us-central1 \
-      #   #--data='{"batch_id":"7bd759e8-cde4-44a1-9c4b-3689d199ada3","start_at":"leads_to_db"}'
-
-      # #- name: "Check address space"
-      # #  run: | 
-      # #    gcloud compute networks subnets describe gcp-snt-np-usc1-601-membership-gsqldb-np \
-      # #    --project=gcp-prj-transit-hub \
-      # #    --region=us-central1 \
-      # #    --format="get(ipCidrRange)"
-
-      # - name: "addresses in subnetwork"
-      #   run: | 
-      #    gcloud workflows execute lead_match_workflow \
-      #       --location=us-central1 \
-      #       --project=$PROJECT_ID \
-      #- name: "vms in subnetwork"
-      #  run: | 
-      #    gcloud compute instances list \
-      #    --project=gcp-prj-transit-hub \
-      #    --filter="zone:us-central1-* AND networkInterfaces.subnetwork:projects/gcp-prj-transit-hub/regions/us-central1/subnetworks/gcp-snt-np-usc1-601-cloudruncloudsql-np" \
-      #    --format="table(name,zone,status,networkInterfaces[0].networkIP:label=INTERNAL_IP)"
+      - name: "Summary"
+        if: always()
+        run: |
+          {
+            echo "## Cloud Run Job Execution"
+            echo ""
+            echo "- **Environment:** \`${{ github.event.inputs.environment }}\`"
+            echo "- **Job Name:** \`${{ github.event.inputs.job_name }}\`"
+            echo "- **Args:** \`${{ github.event.inputs.args }}\`"
+            echo "- **Project:** \`p-601-np-bcleadsmgmt-${{ github.event.inputs.environment }}\`"
+          } >> $GITHUB_STEP_SUMMARY
