@@ -21,6 +21,8 @@ on:
         required: true
       GCP_WORKLOAD_IDENTITY_SA_EMAIL:
         required: true
+      GCP_WORKLOAD_IDENTITY_SA_EMAIL_PRD:
+        required: false
 
   # Or triggered manually from the Actions tab
   workflow_dispatch:
@@ -30,7 +32,7 @@ on:
         required: true
         default: 'adt'
         type: choice
-        options: ['adt', 'qat', 'spt']
+        options: ['adt', 'qat', 'spt', 'prd']
 
 jobs:
   register:
@@ -49,12 +51,20 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Set ENV early for auth
+        run: |
+          if [[ "${{ inputs.environment }}" == "prd" ]]; then
+            echo "ENV=prd" >> $GITHUB_ENV
+          else
+            echo "ENV=non-prd" >> $GITHUB_ENV
+          fi
+
       - id: auth
         name: Auth to GCP
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
-          service_account: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
+          service_account: ${{ env.ENV == 'prd' && secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL_PRD || secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
 
       - name: Set up gcloud
         uses: google-github-actions/setup-gcloud@v2
@@ -63,7 +73,13 @@ jobs:
         id: cfg
         run: |
           set -euo pipefail
-          PROJECT_ID="p-601-np-bcleadsmgmt-${ENVIRONMENT}"
+
+          if [[ "${ENVIRONMENT}" == "prd" ]]; then
+            PROJECT_ID="p-601-pd-bcleadsmgmt-prd"
+          else
+            PROJECT_ID="p-601-np-bcleadsmgmt-${ENVIRONMENT}"
+          fi
+
           BUCKET_NAME="gcp-gcs-lead-mgmt-us-${ENVIRONMENT}-pos-raw"
 
           # Single shared image — all environments use :latest.
@@ -80,6 +96,7 @@ jobs:
           echo "TEMPLATE_GCS=$TEMPLATE_GCS" >> $GITHUB_OUTPUT
 
           echo "Environment: $ENVIRONMENT"
+          echo "Project    : $PROJECT_ID"
           echo "Image      : $IMAGE_URI"
           echo "Template   : $TEMPLATE_GCS"
 

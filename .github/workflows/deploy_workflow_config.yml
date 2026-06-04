@@ -7,7 +7,7 @@ on:
         description: 'Environment to deploy config to'
         required: true
         type: choice
-        options: ['adt', 'qat', 'spt']
+        options: ['adt', 'qat', 'spt', 'prd']
       include_field_map:
         description: 'Also upload field_map.json (manual dispatch only)'
         required: true
@@ -20,10 +20,11 @@ on:
       - 'main'
     tags:
       - 'release-spt*'
+      - 'release-prd*'
     paths:
       - 'dataflow_config/**'
-      - 'dataflow/field_map.json'            
-      - '.github/workflows/deploy_workflow_config.yml' 
+      - 'dataflow/field_map.json'
+      - '.github/workflows/deploy_workflow_config.yml'
 
 concurrency:
   group: deploy-config
@@ -46,6 +47,8 @@ jobs:
             TARGET="qat"
           elif [[ "${{ github.ref_type }}" == "tag" && "${{ github.ref_name }}" == release-spt* ]]; then
             TARGET="spt"
+          elif [[ "${{ github.ref_type }}" == "tag" && "${{ github.ref_name }}" == release-prd* ]]; then
+            TARGET="prd"
           else
             exit 1
           fi
@@ -119,18 +122,28 @@ jobs:
       contents: read
 
     env:
-      ENV_NAME:    ${{ needs.determine-target.outputs.target_env }}
-      PROJECT_ID:  'p-601-np-bcleadsmgmt-${{ needs.determine-target.outputs.target_env }}'
-      BUCKET_NAME: 'gcp-gcs-lead-mgmt-us-${{ needs.determine-target.outputs.target_env }}-pos-raw'
+      ENV_NAME: ${{ needs.determine-target.outputs.target_env }}
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Set ENV early for auth
+        run: |
+          if [[ "${ENV_NAME}" == "prd" ]]; then
+            echo "ENV=prd" >> $GITHUB_ENV
+            echo "PROJECT_ID=p-601-pd-bcleadsmgmt-prd" >> $GITHUB_ENV
+            echo "BUCKET_NAME=gcp-gcs-lead-mgmt-us-prd-pos-raw" >> $GITHUB_ENV
+          else
+            echo "ENV=non-prd" >> $GITHUB_ENV
+            echo "PROJECT_ID=p-601-np-bcleadsmgmt-${ENV_NAME}" >> $GITHUB_ENV
+            echo "BUCKET_NAME=gcp-gcs-lead-mgmt-us-${ENV_NAME}-pos-raw" >> $GITHUB_ENV
+          fi
 
       - id: auth
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
-          service_account: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
+          service_account: ${{ env.ENV == 'prd' && secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL_PRD || secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
 
       - uses: google-github-actions/setup-gcloud@v2
 
@@ -184,6 +197,8 @@ jobs:
         run: |
           {
             echo "## Deployment to ${ENV_NAME}"
+            echo "- **Project:**        \`${PROJECT_ID}\`"
+            echo "- **Bucket:**         \`${BUCKET_NAME}\`"
             echo "- Config uploaded:    ${{ needs.detect-changes.outputs.config_changed }}"
             echo "- field_map uploaded: ${{ needs.detect-changes.outputs.field_map_changed }}"
           } >> $GITHUB_STEP_SUMMARY

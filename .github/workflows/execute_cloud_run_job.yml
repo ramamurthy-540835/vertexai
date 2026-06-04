@@ -12,6 +12,7 @@ on:
           - 'adt'
           - 'qat'
           - 'spt'
+          - 'prd'
       job_name:
         description: 'Cloud Run Job name (e.g. lead-match-job, snow-sync-job)'
         required: true
@@ -35,24 +36,34 @@ jobs:
       - name: "Checkout code"
         uses: actions/checkout@v4
 
+      - name: "Set ENV early for auth"
+        run: |
+          if [[ "${{ github.event.inputs.environment }}" == "prd" ]]; then
+            echo "ENV=prd" >> $GITHUB_ENV
+            echo "PROJECT_ID=p-601-pd-bcleadsmgmt-prd" >> $GITHUB_ENV
+          else
+            echo "ENV=non-prd" >> $GITHUB_ENV
+            echo "PROJECT_ID=p-601-np-bcleadsmgmt-${{ github.event.inputs.environment }}" >> $GITHUB_ENV
+          fi
+
       - name: "Auth in GCP"
         id: "auth"
         uses: "google-github-actions/auth@v2"
         with:
           create_credentials_file: true
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
-          service_account: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
+          service_account: ${{ env.ENV == 'prd' && secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL_PRD || secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
 
       - name: "Set project"
         run: |
           unset CLOUDSDK_CORE_PROJECT
-          gcloud config set project p-601-np-bcleadsmgmt-${{ github.event.inputs.environment }}
+          gcloud config set project ${{ env.PROJECT_ID }}
 
       - name: "Execute Cloud Run Job"
         run: |
           gcloud run jobs execute ${{ github.event.inputs.job_name }} \
             --region=us-central1 \
-            --project=p-601-np-bcleadsmgmt-${{ github.event.inputs.environment }} \
+            --project=${{ env.PROJECT_ID }} \
             --args="${{ github.event.inputs.args }}"
 
       - name: "Summary"
@@ -64,5 +75,5 @@ jobs:
             echo "- **Environment:** \`${{ github.event.inputs.environment }}\`"
             echo "- **Job Name:** \`${{ github.event.inputs.job_name }}\`"
             echo "- **Args:** \`${{ github.event.inputs.args }}\`"
-            echo "- **Project:** \`p-601-np-bcleadsmgmt-${{ github.event.inputs.environment }}\`"
+            echo "- **Project:** \`${{ env.PROJECT_ID }}\`"
           } >> $GITHUB_STEP_SUMMARY

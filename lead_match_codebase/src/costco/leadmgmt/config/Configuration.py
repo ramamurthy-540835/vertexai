@@ -206,6 +206,7 @@ class SnowConfig:
     default_start_date: str
     match_result_update_url: str
     batch_size: int
+    insert_batch_size:int
     max_retries: int
     retry_delay: int
 
@@ -281,6 +282,7 @@ class SnowConfig:
         pos_url = cls.get_config("SERVICENOW", "pos_url", config, None)
         match_result_update_url =cls.get_config("SERVICENOW", "match_result_update_url", config, None)
         batch_size = cls.get_config("SERVICENOW", "batch_size", config, None)
+        insert_batch_size = cls.get_config("SERVICENOW", "insert_batch_size", config, None)
         max_retries = cls.get_config("SERVICENOW", "max_retries", config, None)
         retry_delay = cls.get_config("SERVICENOW", "retry_delay", config, None)
         urls = {'pos': pos_url, "lead": lead_url, "contact": contact_url, "match": match_url}
@@ -301,6 +303,7 @@ class SnowConfig:
             default_start_date=cls.get_config("SERVICENOW", "default_start_date", config, "2025-05-07 00:00:00"),
             match_result_update_url=match_result_update_url,
             batch_size=batch_size,
+            insert_batch_size=insert_batch_size,
             max_retries=max_retries,
             retry_delay=retry_delay
         )
