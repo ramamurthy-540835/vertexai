@@ -30,7 +30,7 @@ on:
       - main
     tags:
       - release-spt*
-      - release-prod*
+      #- release-prod*
     paths:
       - .github/workflows/cloud_run_service_deployment.yml
       - cloud_run_service/**
