@@ -11,6 +11,8 @@ on:
         required: true
       GCP_WORKLOAD_IDENTITY_SA_EMAIL:
         required: true
+      GCP_WORKLOAD_IDENTITY_SA_EMAIL_PRD:
+        required: false
   push:
     branches:
       - main
@@ -18,6 +20,7 @@ on:
     tags:
       - release-spt*
       - release-prod*
+      - release-prd*
     paths:
       - .github/workflows/lead_match_job_deployment.yml
       - lead_management_job/**
@@ -39,13 +42,21 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Set ENV early for auth
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/release-prd* ]]; then
+            echo "ENV=prd" >> $GITHUB_ENV
+          else
+            echo "ENV=non-prd" >> $GITHUB_ENV
+          fi
+
       - id: auth
         name: Auth to GCP for GAR service account
-        uses : google-github-actions/auth@v2
+        uses: google-github-actions/auth@v2
         with:
           token_format: access_token
-          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID}}
-          service_account: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL}}
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
+          service_account: ${{ env.ENV == 'prd' && secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL_PRD || secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
 
       - name: Determine environment and conditions
         id: config
@@ -65,7 +76,7 @@ jobs:
               git show --pretty="" --name-only "${{ github.sha }}"
             fi
           }
-          
+
           if [[ "$REF" == refs/heads/feature* ]]; then
             MODIFIED_FILES="$(get_modified_files)"
             echo "$MODIFIED_FILES"
@@ -76,21 +87,36 @@ jobs:
             echo "DEPLOY=true" >> $GITHUB_ENV
             echo "PROJECT_ID=p-601-np-bcleadsmgmt-adt" >> $GITHUB_ENV
             echo "SERVICE_ACCOUNT=gco-iam-svc-lead-mgmt-bc-adt@p-601-np-bcleadsmgmt-adt.iam.gserviceaccount.com" >> $GITHUB_ENV
-            echo "ENVIRONMENT_VARIABLES_PATH=./lead_management_job/lead_matching_config_adt.properties" >>  $GITHUB_ENV
+            echo "ENVIRONMENT_VARIABLES_PATH=./lead_management_job/lead_matching_config_adt.properties" >> $GITHUB_ENV
+            echo "NETWORK=projects/gcp-prj-transit-hub/global/networks/gcp-vpc-np-host" >> $GITHUB_ENV
+            echo "SUBNET=projects/gcp-prj-transit-hub/regions/us-central1/subnetworks/gcp-snt-np-usc1-601-cloudrunjobs-np" >> $GITHUB_ENV
 
           elif [[ "$REF" == refs/heads/main ]]; then
             echo "ENV=qat" >> $GITHUB_ENV
             echo "DEPLOY=true" >> $GITHUB_ENV
             echo "PROJECT_ID=p-601-np-bcleadsmgmt-qat" >> $GITHUB_ENV
             echo "SERVICE_ACCOUNT=gco-iam-svc-lead-mgmt-bc-qat@p-601-np-bcleadsmgmt-qat.iam.gserviceaccount.com" >> $GITHUB_ENV
-             echo "ENVIRONMENT_VARIABLES_PATH=./lead_management_job/lead_matching_config_qat.properties" >>  $GITHUB_ENV
+            echo "ENVIRONMENT_VARIABLES_PATH=./lead_management_job/lead_matching_config_qat.properties" >> $GITHUB_ENV
+            echo "NETWORK=projects/gcp-prj-transit-hub/global/networks/gcp-vpc-np-host" >> $GITHUB_ENV
+            echo "SUBNET=projects/gcp-prj-transit-hub/regions/us-central1/subnetworks/gcp-snt-np-usc1-601-cloudrunjobs-np" >> $GITHUB_ENV
 
           elif [[ "$REF" == refs/tags/release-spt* ]]; then
             echo "ENV=spt" >> $GITHUB_ENV
             echo "DEPLOY=true" >> $GITHUB_ENV
             echo "PROJECT_ID=p-601-np-bcleadsmgmt-spt" >> $GITHUB_ENV
             echo "SERVICE_ACCOUNT=gco-iam-svc-lead-mgmt-bc-spt@p-601-np-bcleadsmgmt-spt.iam.gserviceaccount.com" >> $GITHUB_ENV
-             echo "ENVIRONMENT_VARIABLES_PATH=./lead_management_job/lead_matching_config_spt.properties" >>  $GITHUB_ENV
+            echo "ENVIRONMENT_VARIABLES_PATH=./lead_management_job/lead_matching_config_spt.properties" >> $GITHUB_ENV
+            echo "NETWORK=projects/gcp-prj-transit-hub/global/networks/gcp-vpc-np-host" >> $GITHUB_ENV
+            echo "SUBNET=projects/gcp-prj-transit-hub/regions/us-central1/subnetworks/gcp-snt-np-usc1-601-cloudrunjobs-np" >> $GITHUB_ENV
+
+          elif [[ "$REF" == refs/tags/release-prd* ]]; then
+            echo "ENV=prd" >> $GITHUB_ENV
+            echo "DEPLOY=true" >> $GITHUB_ENV
+            echo "PROJECT_ID=p-601-pd-bcleadsmgmt-prd" >> $GITHUB_ENV
+            echo "SERVICE_ACCOUNT=gco-iam-svc-lead-mgmt-bc-prd@p-601-pd-bcleadsmgmt-prd.iam.gserviceaccount.com" >> $GITHUB_ENV
+            echo "ENVIRONMENT_VARIABLES_PATH=./lead_management_job/lead_matching_config_prd.properties" >> $GITHUB_ENV
+            echo "NETWORK=TO_BE_UPDATED" >> $GITHUB_ENV
+            echo "SUBNET=TO_BE_UPDATED" >> $GITHUB_ENV
 
           else
             echo "DEPLOY=false" >> $GITHUB_ENV
@@ -112,6 +138,7 @@ jobs:
           # Filter out comments and blank lines, then join into comma-separated string
           ENV_VARS=$(grep -v '^\s*#' ${{ env.ENVIRONMENT_VARIABLES_PATH }} | grep -v '^\s*$' | paste -sd, -)
           echo "env_vars=$ENV_VARS" >> "$GITHUB_OUTPUT"
+
       - name: Deploy lead matching job to Cloud Run
         if: env.DEPLOY == 'true'
         uses: google-github-actions/deploy-cloudrun@v2
@@ -122,14 +149,15 @@ jobs:
           flags: |
             --service-account=${{ env.SERVICE_ACCOUNT }}
             --vpc-egress=all-traffic
-            --network=projects/gcp-prj-transit-hub/global/networks/gcp-vpc-np-host
-            --subnet=projects/gcp-prj-transit-hub/regions/us-central1/subnetworks/gcp-snt-np-usc1-601-cloudrunjobs-np
+            --network=${{ env.NETWORK }}
+            --subnet=${{ env.SUBNET }}
             --command="python"
             --args="run.py,run_pipeline"
-            --task-timeout=40h 
+            --task-timeout=40h
             --set-env-vars=${{ steps.env.outputs.env_vars }}
             --max-retries=0
             --memory=2Gi
+
       - name: Describe deployed job
         if: env.DEPLOY == 'true'
         run: |

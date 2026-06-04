@@ -5,6 +5,7 @@ name: dataflow_image_creation
 #   feature*       → BUILD image, tag :latest, register adt template
 #   main           → register qat template (using same :latest image)
 #   release-spt*   → register spt template (using same :latest image)
+#   release-prd*   → register prd template (using same :latest image)
 #
 # All environments use the SAME image (:latest). Environment-specific
 # values (project, bucket, db, etc.) come from Flex Template registration
@@ -18,10 +19,12 @@ on:
       - 'main'
     tags:
       - 'release-spt*'
+      - 'release-prd*'
     paths:
       - .github/workflows/dataflow_image_creation.yml
       - .github/workflows/register_flex_template.yml
       - dataflow/**
+
 concurrency:
   group: dataflow-deploy
   cancel-in-progress: false
@@ -52,6 +55,9 @@ jobs:
             SHOULD_BUILD="false"
           elif [[ "$REF_TYPE" == "tag" && "$REF_NAME" == release-spt* ]]; then
             TARGET_ENV="spt"
+            SHOULD_BUILD="false"
+          elif [[ "$REF_TYPE" == "tag" && "$REF_NAME" == release-prd* ]]; then
+            TARGET_ENV="prd"
             SHOULD_BUILD="false"
           else
             echo "❌ Unrecognized trigger: ref_type=$REF_TYPE ref_name=$REF_NAME"
@@ -158,3 +164,4 @@ jobs:
     secrets:
       GCP_WORKLOAD_IDENTITY_PROVIDER_ID: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
       GCP_WORKLOAD_IDENTITY_SA_EMAIL:    ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
+      GCP_WORKLOAD_IDENTITY_SA_EMAIL_PRD: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL_PRD }}

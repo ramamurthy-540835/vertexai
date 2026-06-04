@@ -382,7 +382,7 @@ def update_servicenow(config_file_path: str, file_path: str = ""):
         file_path = get_gcs_file_path(standalone_file_path)
 
     # ── ServiceNow config ──
-    BATCH_SIZE   = servicenow_config.batch_size
+    BATCH_SIZE   = servicenow_config.insert_batch_size
     url          = servicenow_config.match_result_update_url
     MAX_RETRIES  = servicenow_config.max_retries
     RETRY_DELAY  = servicenow_config.retry_delay
