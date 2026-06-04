@@ -110,7 +110,7 @@ jobs:
             echo "DEPLOY=true" >> $GITHUB_ENV
             echo "PROJECT_ID=p-601-np-bcleadsmgmt-spt" >> $GITHUB_ENV
             echo "SERVICE_ACCOUNT=gco-iam-svc-lead-mgmt-bc-spt@p-601-np-bcleadsmgmt-spt.iam.gserviceaccount.com" >> $GITHUB_ENV
-            echo "ENVIRONMENT_VARIABLES_PATH=./cloud_run_service/service_spt.properties" >> $GITHUB_ENV
+            echo "ENVIRONMENT_VARIABLES_PATH=./cloud_run_service/service_spt.properties" >> $GITHUB_ENV 
             echo "NETWORK=projects/gcp-prj-transit-hub/global/networks/gcp-vpc-np-host" >> $GITHUB_ENV
             echo "SUBNET=projects/gcp-prj-transit-hub/regions/us-central1/subnetworks/gcp-snt-np-usc1-601-bcleadsmgmt-servicenow-psc-spt" >> $GITHUB_ENV
 
