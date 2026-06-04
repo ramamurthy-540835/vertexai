@@ -224,7 +224,8 @@ jobs:
           echo "  Project:     ${{ env.PROJECT_ID }}"
 
           gcloud workflows executions cancel "${{ env.FULL_EXECUTION_NAME }}" \
-            --project="${{ env.PROJECT_ID }}"
+            --project="${{ env.PROJECT_ID }}" \
+            --quiet
 
           echo "✅ Cancellation request sent"
 
