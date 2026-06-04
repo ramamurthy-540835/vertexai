@@ -10,6 +10,15 @@ This script:
      <DRIVE_FOLDER_ID>/archive_YYYYMMDD_HHMMSS/
   4. Creates and uploads a manifest JSON to GCS after all processing
      and archival is complete.
+
+Resume behaviour:
+  - Files already in GCS are skipped for upload but still tracked
+    for archival and manifest.
+  - Files already archived in Drive are skipped (not re-moved).
+  - If a manifest for this run already exists in GCS it is not re-uploaded.
+  - A checkpoint file (gs://<bucket>/<INCOMING_PREFIX>/.run_checkpoint.json)
+    tracks run_id and archive_folder_id across retries so the same
+    run_id and archive folder are reused on resume.
 """
 
 import io
@@ -33,13 +42,16 @@ log = logging.getLogger(__name__)
 PROJECT_ID      = os.environ["GCP_PROJECT_ID"]
 BUCKET_NAME     = os.environ["POS_BUCKET_NAME"]
 FOLDER_ID       = os.environ["DRIVE_FOLDER_ID"]
-SERVICE_ACCOUNT = os.environ["SERVICE_ACCOUNT"]   # e.g. my-sa@my-project.iam.gserviceaccount.com
+SERVICE_ACCOUNT = os.environ["SERVICE_ACCOUNT"]
 
 # ── Optional env vars ────────────────────────────────────────────────────────
 ARCHIVE_FOLDER_NAME = os.environ.get("ARCHIVE_FOLDER_NAME", "archive")
 INCOMING_PREFIX     = os.environ.get("INCOMING_PREFIX", "pos-raw-data/incoming-files")
 MANIFESTS_PREFIX    = os.environ.get("MANIFESTS_PREFIX", "manifests")
 RUN_LABEL           = os.environ.get("RUN_LABEL", "")
+
+# ── Checkpoint blob — tracks run_id + archive_folder_id across retries ───────
+CHECKPOINT_BLOB = f"{INCOMING_PREFIX}/.run_checkpoint.json"
 
 # ── Google Workspace → Office export map ─────────────────────────────────────
 EXPORTABLE = {
@@ -53,14 +65,13 @@ EXPORTABLE = {
 
 FOLDER_MIME = "application/vnd.google-apps.folder"
 
-
-# ── Auth helpers ──────────────────────────────────────────────────────────────
-
 DRIVE_SCOPES = [
     "https://www.googleapis.com/auth/drive",
     "https://www.googleapis.com/auth/devstorage.read_write",
 ]
 
+
+# ── Auth helpers ──────────────────────────────────────────────────────────────
 
 def get_credentials():
     """
@@ -69,6 +80,49 @@ def get_credentials():
     """
     credentials, _ = google.auth.default(scopes=DRIVE_SCOPES)
     return credentials
+
+
+# ── Checkpoint helpers ────────────────────────────────────────────────────────
+
+def load_checkpoint(bucket) -> dict:
+    """
+    Load checkpoint from GCS if it exists.
+    Returns dict with run_id and archive_folder_id, or empty dict.
+    """
+    blob = bucket.blob(CHECKPOINT_BLOB)
+    if blob.exists():
+        data = json.loads(blob.download_as_text())
+        log.info(
+            "Resuming from checkpoint: run_id=%s  archive_folder_id=%s",
+            data.get("run_id"), data.get("archive_folder_id"),
+        )
+        return data
+    return {}
+
+
+def save_checkpoint(bucket, run_id: str, archive_folder_id: str) -> None:
+    """Save checkpoint to GCS so retries can resume from the same run."""
+    data = {
+        "run_id": run_id,
+        "archive_folder_id": archive_folder_id,
+        "saved_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
+    bucket.blob(CHECKPOINT_BLOB).upload_from_string(
+        json.dumps(data, indent=2).encode("utf-8"),
+        content_type="application/json",
+    )
+    log.info(
+        "Checkpoint saved: run_id=%s  archive_folder_id=%s",
+        run_id, archive_folder_id,
+    )
+
+
+def clear_checkpoint(bucket) -> None:
+    """Delete checkpoint after a fully successful run."""
+    blob = bucket.blob(CHECKPOINT_BLOB)
+    if blob.exists():
+        blob.delete()
+        log.info("Checkpoint cleared")
 
 
 # ── Drive helpers ─────────────────────────────────────────────────────────────
@@ -104,11 +158,32 @@ def list_files(drive) -> list[dict]:
     return results
 
 
-def create_archive_folder(drive) -> str:
+def is_already_archived(drive, file_id: str, archive_folder_id: str) -> bool:
     """
-    Create a date-stamped sub-folder inside FOLDER_ID and return its ID.
-    Name format: <ARCHIVE_FOLDER_NAME>_YYYYMMDD_HHMMSS (UTC)
+    Check if the file is already in the archive folder.
+    Prevents double-move on retry.
     """
+    try:
+        file_meta = drive.files().get(
+            fileId=file_id,
+            fields="parents",
+            supportsAllDrives=True,
+        ).execute()
+        return archive_folder_id in file_meta.get("parents", [])
+    except HttpError:
+        return False
+
+
+def get_or_create_archive_folder(drive, checkpoint: dict) -> str:
+    """
+    Reuse archive folder from checkpoint if available,
+    otherwise create a new one.
+    """
+    if checkpoint.get("archive_folder_id"):
+        folder_id = checkpoint["archive_folder_id"]
+        log.info("Reusing archive folder from checkpoint: %s", folder_id)
+        return folder_id
+
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     folder_name = f"{ARCHIVE_FOLDER_NAME}_{timestamp}"
     metadata = {
@@ -145,8 +220,12 @@ def gcs_blob_name(filename: str) -> str:
     return f"{INCOMING_PREFIX}/{filename}"
 
 
-def already_in_gcs(gcs: storage.Client, filename: str) -> bool:
-    return gcs.bucket(BUCKET_NAME).blob(gcs_blob_name(filename)).exists()
+def already_in_gcs(bucket, filename: str) -> bool:
+    return bucket.blob(gcs_blob_name(filename)).exists()
+
+
+def manifest_already_exists(bucket, run_id: str) -> bool:
+    return bucket.blob(f"{MANIFESTS_PREFIX}/{run_id}.json").exists()
 
 
 def resolve_final_name(file: dict) -> str:
@@ -175,18 +254,21 @@ def download_file(drive, file: dict) -> bytes:
     return buf.getvalue()
 
 
-def upload_to_gcs(gcs: storage.Client, data: bytes, filename: str) -> str:
+def upload_to_gcs(bucket, data: bytes, filename: str) -> str:
     blob_name = gcs_blob_name(filename)
-    gcs.bucket(BUCKET_NAME).blob(blob_name).upload_from_string(data)
+    bucket.blob(blob_name).upload_from_string(data)
     return f"gs://{BUCKET_NAME}/{blob_name}"
 
 
 # ── Manifest helpers ──────────────────────────────────────────────────────────
 
-def build_run_id() -> str:
+def build_run_id(checkpoint: dict) -> str:
     """
-    Build a run_id from RUN_LABEL env var (if set) or auto-generate one.
+    Reuse run_id from checkpoint if available, otherwise generate new one.
     """
+    if checkpoint.get("run_id"):
+        log.info("Reusing run_id from checkpoint: %s", checkpoint["run_id"])
+        return checkpoint["run_id"]
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     if RUN_LABEL:
         clean = "".join(c if c.isalnum() or c == "-" else "-" for c in RUN_LABEL.lower())
@@ -207,14 +289,14 @@ def build_manifest(run_id: str, gcs_paths: list[str], service_account_email: str
     }
 
 
-def upload_manifest(gcs: storage.Client, manifest: dict, run_id: str) -> str:
+def upload_manifest(bucket, manifest: dict, run_id: str) -> str:
     """
     Upload the manifest JSON to GCS under MANIFESTS_PREFIX/<run_id>.json.
     Returns the gs:// URI of the uploaded manifest.
     """
     blob_name = f"{MANIFESTS_PREFIX}/{run_id}.json"
     data = json.dumps(manifest, indent=2).encode("utf-8")
-    gcs.bucket(BUCKET_NAME).blob(blob_name).upload_from_string(
+    bucket.blob(blob_name).upload_from_string(
         data, content_type="application/json"
     )
     uri = f"gs://{BUCKET_NAME}/{blob_name}"
@@ -228,13 +310,18 @@ def run():
     credentials = get_credentials()
     log.info("Running as service account: %s", SERVICE_ACCOUNT)
 
-    drive = build_drive_service(credentials)
-    gcs   = storage.Client(project=PROJECT_ID, credentials=credentials)
+    drive  = build_drive_service(credentials)
+    gcs    = storage.Client(project=PROJECT_ID, credentials=credentials)
+    bucket = gcs.bucket(BUCKET_NAME)
+
+    # ── Load checkpoint (resume support) ─────────────────────────────────────
+    checkpoint = load_checkpoint(bucket)
+    run_id     = build_run_id(checkpoint)
 
     # ── STEP 1: List files to process ────────────────────────────────────────
     log.info("Scanning Drive folder %s", FOLDER_ID)
     files = list_files(drive)
-    log.info("Found %d file(s) to process", len(files))
+    log.info("Found %d file(s) in Drive folder", len(files))
 
     if not files:
         log.info("No files to process. Exiting.")
@@ -242,26 +329,30 @@ def run():
 
     # ── STEP 2: Sync — download from Drive and upload to GCS ─────────────────
     transferred = skipped = failed = 0
-    archive_failed = 0               # initialized here so exit code check always works
     transferred_gcs_paths = []
-    transferred_files = []           # track file objects that synced successfully
+    transferred_files     = []
 
     for file in files:
         fname = file["name"]
         try:
             final_name = resolve_final_name(file)
 
-            if already_in_gcs(gcs, final_name):
-                log.info("SKIP (already in GCS): %s", final_name)
+            if already_in_gcs(bucket, final_name):
+                log.info("SKIP upload (already in GCS): %s", final_name)
+                # Still track — file is in GCS and needs archiving + manifest
+                transferred_gcs_paths.append(
+                    f"gs://{BUCKET_NAME}/{gcs_blob_name(final_name)}"
+                )
+                transferred_files.append(file)
                 skipped += 1
                 continue
 
             log.info("Downloading: %s (%s)", fname, file["mimeType"])
             data = download_file(drive, file)
-            gcs_path = upload_to_gcs(gcs, data, final_name)
+            gcs_path = upload_to_gcs(bucket, data, final_name)
             log.info("Transferred: %s → %s", fname, gcs_path)
             transferred_gcs_paths.append(gcs_path)
-            transferred_files.append(file)   # only added on success
+            transferred_files.append(file)
             transferred += 1
 
         except Exception as exc:
@@ -274,18 +365,26 @@ def run():
     )
 
     # ── STEP 3: Archive — only archive files that synced successfully ─────────
+    archive_failed = 0
     if not transferred_files:
-        log.info("No files successfully transferred — skipping archive.")
+        log.info("No files to archive — skipping.")
     else:
         log.info(
-            "Archiving %d successfully transferred file(s) into dated sub-folder …",
+            "Archiving %d file(s) into dated sub-folder …",
             len(transferred_files),
         )
-        archive_folder_id = create_archive_folder(drive)
+        archive_folder_id = get_or_create_archive_folder(drive, checkpoint)
+
+        # Save checkpoint so retry reuses same run_id + archive folder
+        save_checkpoint(bucket, run_id, archive_folder_id)
 
         archived = archive_failed = 0
-        for file in transferred_files:    # ← only successfully synced files
+        for file in transferred_files:
             try:
+                if is_already_archived(drive, file["id"], archive_folder_id):
+                    log.info("SKIP archive (already archived): %s", file["name"])
+                    archived += 1
+                    continue
                 move_to_archive(drive, file["id"], archive_folder_id)
                 log.info("Archived: %s", file["name"])
                 archived += 1
@@ -295,24 +394,38 @@ def run():
 
         log.info("Archive done. archived=%d  failed=%d", archived, archive_failed)
 
-    # ── STEP 4: Manifest — only runs after sync + archive are fully complete ──
-    log.info("Building and uploading manifest …")
-    run_id   = build_run_id()
-    manifest = build_manifest(run_id, transferred_gcs_paths, SERVICE_ACCOUNT)
-    log.info("Manifest contents:\n%s", json.dumps(manifest, indent=2))
-
-    try:
-        manifest_uri = upload_manifest(gcs, manifest, run_id)
-        log.info(
-            "Manifest creation complete. run_id=%s  files=%d  uri=%s",
-            run_id, len(transferred_gcs_paths), manifest_uri,
+    # ── STEP 4: Manifest — only runs after archive fully completes ────────────
+    if archive_failed:
+        log.error(
+            "Archive had %d failure(s) — skipping manifest to avoid incomplete run",
+            archive_failed,
         )
-    except Exception as exc:
-        log.error("MANIFEST UPLOAD FAILED: %s", exc)
         raise SystemExit(1)
 
+    if manifest_already_exists(bucket, run_id):
+        log.info(
+            "Manifest already exists for run_id=%s — skipping upload",
+            run_id,
+        )
+    else:
+        log.info("Building and uploading manifest …")
+        manifest = build_manifest(run_id, transferred_gcs_paths, SERVICE_ACCOUNT)
+        log.info("Manifest contents:\n%s", json.dumps(manifest, indent=2))
+        try:
+            manifest_uri = upload_manifest(bucket, manifest, run_id)
+            log.info(
+                "Manifest creation complete. run_id=%s  files=%d  uri=%s",
+                run_id, len(transferred_gcs_paths), manifest_uri,
+            )
+        except Exception as exc:
+            log.error("MANIFEST UPLOAD FAILED: %s", exc)
+            raise SystemExit(1)
+
+    # ── Clear checkpoint on full success ──────────────────────────────────────
+    clear_checkpoint(bucket)
+
     # ── Final exit code ───────────────────────────────────────────────────────
-    if failed or archive_failed:
+    if failed:
         raise SystemExit(1)
 
 
