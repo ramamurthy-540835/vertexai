@@ -163,7 +163,8 @@ CREATE TABLE IF NOT EXISTS "$SCHEMA_NAME".pos_embeddings(
   load_date TIMESTAMP WITH TIME ZONE DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'),
   warehouse_number INT,
   fiscal_year INT,
-  fiscal_period INT
+  fiscal_period INT,
+  week INT
 );
  
 CREATE INDEX IF NOT EXISTS leads_combined_embedding_idx ON "$SCHEMA_NAME".leads_embeddings USING hnsw (combined_embedding vector_cosine_ops);
@@ -222,6 +223,35 @@ CONSTRAINT unique_confidence_level UNIQUE (confidence_level)
 	load_date TIMESTAMP WITH TIME ZONE  DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'),
     updated_by varchar(20) NULL,
     updated_date TIMESTAMP WITH TIME ZONE  DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'),
+    oms_company           VARCHAR(200),
+    oms_company_2         VARCHAR(200),
+    oms_email_1           VARCHAR(150),
+    oms_email_2           VARCHAR(150),
+    oms_email_3           VARCHAR(150),
+    oms_phone_1           VARCHAR(40),
+    oms_phone_2           VARCHAR(40),
+    oms_phone_3           VARCHAR(40),
+    oms_cell_1            VARCHAR(40),
+    oms_cell_2            VARCHAR(40),
+    oms_first_name        VARCHAR(100),
+    oms_middle_name       VARCHAR(100),
+    oms_last_name         VARCHAR(100),
+    oms_address_line_1    VARCHAR(150),
+    oms_city              VARCHAR(80),
+    oms_state             VARCHAR(50),
+    oms_zip               VARCHAR(20),
+    oms_address_line_1_v2 VARCHAR(150),
+    oms_address_line_2    VARCHAR(150),
+    oms_address_line_3    VARCHAR(150),
+    oms_address_line_4    VARCHAR(150),
+    oms_address_line_5    VARCHAR(150),
+    oms_address_line_6    VARCHAR(150),
+    oms_city_2            VARCHAR(80),
+    oms_state_2           VARCHAR(50),
+    oms_zip_2             VARCHAR(20),
+    oms_zip_3             VARCHAR(20),
+    oms_zip_4             VARCHAR(20),
+    matching_comments     TEXT,
   FOREIGN KEY
     (lead_id)
   REFERENCES

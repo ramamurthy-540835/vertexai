@@ -1,0 +1,34 @@
+{
+  "environment": "prd",
+  "project_id":  "p-601-pd-bcleadsmgmt-prd",
+  "region":      "us-central1",
+
+  "bucket_name":      "gcp-gcs-lead-mgmt-us-prd-pos-raw",
+  "manifest_prefix":  "manifests/",
+  "incoming_prefix":  "pos-raw-data/incoming-files/",
+  "processed_prefix": "pos-raw-data/processed/",
+
+  "dataflow": {
+    "template_path":   "gs://gcp-gcs-lead-mgmt-us-prd-pos-raw/templates/pos-pipeline-flex-prd.json",
+    "service_account": "gco-iam-svc-lead-mgmt-bc-prd@p-601-pd-bcleadsmgmt-prd.iam.gserviceaccount.com",
+    "field_map_path":  "gs://gcp-gcs-lead-mgmt-us-prd-pos-raw/config/field_map.json",
+    "machine_type":    "n2d-standard-2",
+    "max_workers":     5,
+    "subnetwork":      "https://www.googleapis.com/compute/v1/projects/gcp-prj-transit-hub/regions/us-central1/subnetworks/gcp-snt-pd-usc1-601-cloudrunjobs-pd",
+    "chunk_size":      2,
+    "batch_size":      "2000"
+  },
+
+  "database": {
+    "instance_connection_name": "p-601-pd-bcleadsmgmt-prd:us-central1:lead-mgmt-prd",
+    "db_name":   "lead-mgmt-db",
+    "db_schema": "lead_mgmt_prd",
+    "db_table":  "transaction",
+    "db_user":   "gco-iam-svc-lead-mgmt-bc-prd@p-601-pd-bcleadsmgmt-prd.iam"
+  },
+
+  "downstream": {
+    "next_workflow":          "snow_sync_workflow",
+    "next_workflow_location": "us-central1"
+  }
+}

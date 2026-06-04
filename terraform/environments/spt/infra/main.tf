@@ -76,15 +76,6 @@ module "pos_bucket" {
   log_object_prefix = "logs/gcp-gcs-${var.prefix}-${var.country}-${var.environment}-pos-raw/"
 }
 
-module "kubeflow_registry" {
-  source        = "../../../modules/artifact_registry"
-  location      = var.location
-  repository_id = "gcp-lead-mgmt-kubeflow"
-  description   = "Kubeflow pipeline repository"
-  format        = "kfp"
-  project       = var.projectId
-}
-
 module "service_now_username" {
   source       = "../../../modules/secret_manager"
   project      = var.projectId
@@ -245,4 +236,13 @@ output "deadletter_topic_id" {
 output "eventarc_trigger_name" {
   value       = module.gcs_eventarc_workflow_trigger.eventarc_trigger_name
   description = "Eventarc trigger name"
+}
+
+module "network_attachement" {
+  source                = "../../../modules/network_attachement" 
+  project_id            = var.projectId
+  region                = var.region
+  vpc_project_id        = "gcp-prj-transit-hub"
+  subnet_name           = "gcp-snt-np-usc1-601-bcleadsmgmt-servicenow-psc-spt"
+  network_attachment_name = "gcp-nat-np-usc1-601-bcleadsmgmt-servicenow-psc-spt"
 }
