@@ -60,23 +60,45 @@ jobs:
           gcloud config set project "${{ env.PROJECT_ID }}"
 
           echo "Fetching execution details..."
-          STATUS=$(gcloud run jobs executions describe "${{ github.event.inputs.execution_id }}" \
-            --job="${{ github.event.inputs.job_name }}" \
+
+          # executions describe uses full execution name — --job flag not needed
+          DESCRIBE_OUTPUT=$(gcloud run jobs executions describe "${{ github.event.inputs.execution_id }}" \
             --region=us-central1 \
             --project="${{ env.PROJECT_ID }}" \
-            --format="value(status.conditions[0].type)" 2>&1) || {
-              echo "❌ Execution ${{ github.event.inputs.execution_id }} not found"
+            --format="yaml" 2>&1) || {
+              echo "❌ Execution ${{ github.event.inputs.execution_id }} not found or not accessible"
+              echo "Raw output: $DESCRIBE_OUTPUT"
+              echo ""
+              echo "Available executions for ${{ github.event.inputs.job_name }}:"
+              gcloud run jobs executions list \
+                --job="${{ github.event.inputs.job_name }}" \
+                --region=us-central1 \
+                --project="${{ env.PROJECT_ID }}" \
+                --format="table(name,status.conditions[0].type,metadata.creationTimestamp)" \
+                --limit=10
               exit 1
             }
 
+          echo "$DESCRIBE_OUTPUT"
+
+          # Extract status — may be empty if job never started (e.g. IP exhaustion)
+          STATUS=$(echo "$DESCRIBE_OUTPUT" | grep -A1 "conditions:" | grep "type:" | awk '{print $2}' || echo "Unknown")
           echo "Current status: $STATUS"
 
-          if [[ "$STATUS" == "Completed" || "$STATUS" == "Failed" ]]; then
-            echo "❌ Execution is already in terminal state: $STATUS — nothing to cancel"
+          if [[ "$STATUS" == "Completed" ]]; then
+            echo "❌ Execution is already Completed — nothing to cancel"
             exit 1
           fi
 
-          echo "✅ Execution is in state '$STATUS' — proceeding with cancellation"
+          if [[ "$STATUS" == "Failed" ]]; then
+            echo "❌ Execution is already in Failed state — likely never started (check for IP exhaustion or other startup errors)"
+            echo ""
+            echo "Tip: Run the following to see why it failed:"
+            echo "  gcloud run jobs executions describe ${{ github.event.inputs.execution_id }} --region=us-central1 --project=${{ env.PROJECT_ID }} --format=yaml"
+            exit 1
+          fi
+
+          echo "✅ Proceeding with cancellation (status: $STATUS)"
 
       - name: Cancel execution
         run: |
@@ -88,8 +110,8 @@ jobs:
           echo "  Environment: ${{ github.event.inputs.environment }}"
           echo "  Project:     ${{ env.PROJECT_ID }}"
 
+          # --job flag omitted — execution name is globally unique
           gcloud run jobs executions cancel "${{ github.event.inputs.execution_id }}" \
-            --job="${{ github.event.inputs.job_name }}" \
             --region=us-central1 \
             --project="${{ env.PROJECT_ID }}" \
             --quiet
@@ -104,10 +126,9 @@ jobs:
           sleep 5
 
           STATUS=$(gcloud run jobs executions describe "${{ github.event.inputs.execution_id }}" \
-            --job="${{ github.event.inputs.job_name }}" \
             --region=us-central1 \
             --project="${{ env.PROJECT_ID }}" \
-            --format="value(status.conditions[0].type)")
+            --format="yaml" | grep -A1 "conditions:" | grep "type:" | awk '{print $2}' || echo "Unknown")
 
           echo "Post-cancel status: $STATUS"
 
