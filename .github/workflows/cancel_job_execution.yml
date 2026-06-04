@@ -106,6 +106,7 @@ jobs:
 
           echo "$DESCRIBE_OUTPUT"
 
+          # Extract status — may be empty if job never started (e.g. IP exhaustion)
           STATUS=$(echo "$DESCRIBE_OUTPUT" | grep -A1 "conditions:" | grep "type:" | awk '{print $2}' || echo "Unknown")
           echo "Current status: $STATUS"
 
@@ -171,14 +172,17 @@ jobs:
           unset CLOUDSDK_CORE_PROJECT CLOUDSDK_PROJECT GCLOUD_PROJECT GCP_PROJECT GOOGLE_CLOUD_PROJECT
           gcloud config set project "${{ env.PROJECT_ID }}"
 
+          # Build full execution path — required by gcloud workflows executions describe
+          FULL_EXECUTION_NAME="projects/${{ env.PROJECT_ID }}/locations/us-central1/workflows/${{ github.event.inputs.workflow_name }}/executions/${{ github.event.inputs.execution_id }}"
+          echo "FULL_EXECUTION_NAME=$FULL_EXECUTION_NAME" >> $GITHUB_ENV
+          echo "Full execution path: $FULL_EXECUTION_NAME"
+
           echo "Fetching workflow execution details..."
 
-          DESCRIBE_OUTPUT=$(gcloud workflows executions describe "${{ github.event.inputs.execution_id }}" \
-            --workflow="${{ github.event.inputs.workflow_name }}" \
-            --location=us-central1 \
+          DESCRIBE_OUTPUT=$(gcloud workflows executions describe "$FULL_EXECUTION_NAME" \
             --project="${{ env.PROJECT_ID }}" \
             --format="yaml" 2>&1) || {
-              echo "❌ Execution ${{ github.event.inputs.execution_id }} not found or not accessible"
+              echo "❌ Execution not found or not accessible"
               echo "Raw output: $DESCRIBE_OUTPUT"
               echo ""
               echo "Available executions for ${{ github.event.inputs.workflow_name }}:"
@@ -213,14 +217,13 @@ jobs:
           set -euo pipefail
           unset CLOUDSDK_CORE_PROJECT CLOUDSDK_PROJECT GCLOUD_PROJECT GCP_PROJECT GOOGLE_CLOUD_PROJECT
 
-          echo "Cancelling GCP Workflow execution: ${{ github.event.inputs.execution_id }}"
+          echo "Cancelling GCP Workflow execution..."
+          echo "  Execution:   ${{ env.FULL_EXECUTION_NAME }}"
           echo "  Workflow:    ${{ github.event.inputs.workflow_name }}"
           echo "  Environment: ${{ github.event.inputs.environment }}"
           echo "  Project:     ${{ env.PROJECT_ID }}"
 
-          gcloud workflows executions cancel "${{ github.event.inputs.execution_id }}" \
-            --workflow="${{ github.event.inputs.workflow_name }}" \
-            --location=us-central1 \
+          gcloud workflows executions cancel "${{ env.FULL_EXECUTION_NAME }}" \
             --project="${{ env.PROJECT_ID }}"
 
           echo "✅ Cancellation request sent"
@@ -233,9 +236,7 @@ jobs:
           echo "Waiting for cancellation to reflect..."
           sleep 5
 
-          STATE=$(gcloud workflows executions describe "${{ github.event.inputs.execution_id }}" \
-            --workflow="${{ github.event.inputs.workflow_name }}" \
-            --location=us-central1 \
+          STATE=$(gcloud workflows executions describe "${{ env.FULL_EXECUTION_NAME }}" \
             --project="${{ env.PROJECT_ID }}" \
             --format="value(state)" || echo "Unknown")
 
@@ -261,6 +262,7 @@ jobs:
               echo "- **Job Name:**      \`${{ github.event.inputs.job_name }}\`"
             else
               echo "- **Workflow Name:** \`${{ github.event.inputs.workflow_name }}\`"
+              echo "- **Full Path:**     \`${{ env.FULL_EXECUTION_NAME }}\`"
             fi
             echo "- **Execution ID:**   \`${{ github.event.inputs.execution_id }}\`"
           } >> $GITHUB_STEP_SUMMARY
