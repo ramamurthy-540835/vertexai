@@ -1,0 +1,151 @@
+name: trigger_gcp_workflow
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'adt'
+        type: choice
+        options:
+          - 'adt'
+          - 'qat'
+          - 'spt'
+          - 'prd'
+      workflow_name:
+        description: 'GCP Workflow name to trigger (e.g. snow_sync_workflow, pos_dataflow_workflow)'
+        required: true
+        type: string
+      region:
+        description: 'Region where the workflow is deployed'
+        required: false
+        default: 'us-central1'
+        type: string
+      payload:
+        description: 'JSON payload to pass to the workflow (e.g. {"run_snow_sync": false, "run_lead_match": false})'
+        required: false
+        default: '{}'
+        type: string
+      wait_for_completion:
+        description: 'Wait for workflow execution to complete?'
+        required: true
+        default: 'false'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+
+jobs:
+  trigger:
+    name: "trigger-${{ github.event.inputs.workflow_name }}-${{ github.event.inputs.environment }}"
+    runs-on:
+      - self-hosted
+      - us-central1
+
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Set ENV early for auth
+        run: |
+          if [[ "${{ github.event.inputs.environment }}" == "prd" ]]; then
+            echo "ENV=prd" >> $GITHUB_ENV
+            echo "PROJECT_ID=p-601-pd-bcleadsmgmt-prd" >> $GITHUB_ENV
+          else
+            echo "ENV=non-prd" >> $GITHUB_ENV
+            echo "PROJECT_ID=p-601-np-bcleadsmgmt-${{ github.event.inputs.environment }}" >> $GITHUB_ENV
+          fi
+
+      - name: Auth to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
+          service_account: ${{ env.ENV == 'prd' && secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL_PRD || secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Validate JSON payload
+        run: |
+          echo '${{ github.event.inputs.payload }}' | python3 -c "import sys, json; json.load(sys.stdin)" || {
+            echo "❌ Invalid JSON payload: ${{ github.event.inputs.payload }}"
+            exit 1
+          }
+          echo "✅ Payload is valid JSON"
+
+      - name: Trigger GCP Workflow
+        id: trigger
+        run: |
+          set -euo pipefail
+          unset CLOUDSDK_CORE_PROJECT CLOUDSDK_PROJECT GCLOUD_PROJECT GCP_PROJECT GOOGLE_CLOUD_PROJECT
+          gcloud config set project "${{ env.PROJECT_ID }}"
+
+          echo "Triggering workflow..."
+          echo "  Workflow : ${{ github.event.inputs.workflow_name }}"
+          echo "  Env      : ${{ github.event.inputs.environment }}"
+          echo "  Project  : ${{ env.PROJECT_ID }}"
+          echo "  Region   : ${{ github.event.inputs.region }}"
+          echo "  Payload  : ${{ github.event.inputs.payload }}"
+
+          EXECUTION=$(gcloud workflows run "${{ github.event.inputs.workflow_name }}" \
+            --location="${{ github.event.inputs.region }}" \
+            --project="${{ env.PROJECT_ID }}" \
+            --data='${{ github.event.inputs.payload }}' \
+            --format="value(name)")
+
+          echo "EXECUTION_NAME=$EXECUTION" >> $GITHUB_ENV
+          echo "execution_name=$EXECUTION" >> $GITHUB_OUTPUT
+          echo "✅ Execution started: $EXECUTION"
+
+      - name: Wait for completion
+        if: github.event.inputs.wait_for_completion == 'true'
+        run: |
+          set -euo pipefail
+          echo "Waiting for execution to complete..."
+          echo "  Execution: ${{ env.EXECUTION_NAME }}"
+
+          while true; do
+            STATE=$(gcloud workflows executions describe "${{ env.EXECUTION_NAME }}" \
+              --project="${{ env.PROJECT_ID }}" \
+              --location="${{ github.event.inputs.region }}" \
+              --format="value(state)")
+
+            echo "  Current state: $STATE"
+
+            case "$STATE" in
+              SUCCEEDED)
+                echo "✅ Workflow execution SUCCEEDED"
+                break
+                ;;
+              FAILED|CANCELLED)
+                echo "❌ Workflow execution ended in state: $STATE"
+                # Print error details
+                gcloud workflows executions describe "${{ env.EXECUTION_NAME }}" \
+                  --project="${{ env.PROJECT_ID }}" \
+                  --location="${{ github.event.inputs.region }}" \
+                  --format="value(error)"
+                exit 1
+                ;;
+              *)
+                echo "  Still running — polling again in 15s..."
+                sleep 15
+                ;;
+            esac
+          done
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "## GCP Workflow Trigger"
+            echo ""
+            echo "- **Environment:**  \`${{ github.event.inputs.environment }}\`"
+            echo "- **Project:**      \`${{ env.PROJECT_ID }}\`"
+            echo "- **Workflow:**     \`${{ github.event.inputs.workflow_name }}\`"
+            echo "- **Region:**       \`${{ github.event.inputs.region }}\`"
+            echo "- **Payload:**      \`${{ github.event.inputs.payload }}\`"
+            echo "- **Execution:**    \`${{ env.EXECUTION_NAME }}\`"
+            echo "- **Wait:**         \`${{ github.event.inputs.wait_for_completion }}\`"
+          } >> $GITHUB_STEP_SUMMARY
