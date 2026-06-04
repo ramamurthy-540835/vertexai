@@ -19,7 +19,6 @@ from costco.leadmgmt.database.DBUtil import load_data_from_cloudsql
 from costco.leadmgmt.util.fiscal_year import get_costco_fiscal_info
 
 # Get the base image from environment variables
-BASE_IMAGE = os.environ.get("KFP_CUSTOM_IMAGE")
 MAX_WORKERS = os.environ.get("MAX_WORKERS")
 PROJECT_ID = os.environ.get("PROJECT_ID")
 

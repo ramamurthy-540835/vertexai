@@ -252,7 +252,7 @@ output "eventarc_trigger_name" {
 
 
 module "network_attachement" {
-  source                = "../../../modules/network_attachement"
+  source                = "../../../modules/network_attachement" 
   project_id            = var.projectId
   region                = var.region
   vpc_project_id        = "gcp-prj-transit-hub"

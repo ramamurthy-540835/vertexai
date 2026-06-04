@@ -22,6 +22,7 @@ def run_pipeline(config_file_path,match_id):
     service_account = os.environ.get("SERVICE_ACCOUNT")
     registry_url = os.environ.get("ARTIFACT_REGISTRY_URL")
     bucket = os.environ.get("GCS_BUCKET")
+    max_workers = os.environ.get('MAX_WORKERS')
 
     aiplatform.init(project=project_id, location=region)
     template_path = f"{registry_url}/{pipeline_name}/latest"
@@ -32,7 +33,9 @@ def run_pipeline(config_file_path,match_id):
         pipeline_root=f"gs://{bucket}/pipelines",
         parameter_values={
             'match_id': match_id,
-            'config_file_path': config_file_path
+            'config_file_path': config_file_path,
+            'project_id' : project_id,
+            'max_workers': max_workers
         }
     )
 
