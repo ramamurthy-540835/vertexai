@@ -1,0 +1,2 @@
+# Production environments - assign management
+/terraform/environments/prd/**              @nxt-costco-com/membership-global-membership-management
