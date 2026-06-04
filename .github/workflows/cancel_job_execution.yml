@@ -1,0 +1,130 @@
+name: cancel_cloud_run_job_execution
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment'
+        required: true
+        default: 'adt'
+        type: choice
+        options:
+          - 'adt'
+          - 'qat'
+          - 'spt'
+          - 'prd'
+      job_name:
+        description: 'Cloud Run Job name (e.g. lead-match-job, snow-sync-job)'
+        required: true
+        type: string
+      execution_id:
+        description: 'Execution ID to cancel (e.g. lead-match-job-abc12)'
+        required: true
+        type: string
+
+jobs:
+  cancel:
+    name: "cancel-${{ github.event.inputs.job_name }}-${{ github.event.inputs.execution_id }}"
+    runs-on:
+      - self-hosted
+      - us-central1
+
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Set ENV early for auth
+        run: |
+          if [[ "${{ github.event.inputs.environment }}" == "prd" ]]; then
+            echo "ENV=prd" >> $GITHUB_ENV
+            echo "PROJECT_ID=p-601-pd-bcleadsmgmt-prd" >> $GITHUB_ENV
+          else
+            echo "ENV=non-prd" >> $GITHUB_ENV
+            echo "PROJECT_ID=p-601-np-bcleadsmgmt-${{ github.event.inputs.environment }}" >> $GITHUB_ENV
+          fi
+
+      - name: Auth to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
+          service_account: ${{ env.ENV == 'prd' && secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL_PRD || secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Verify execution exists and is cancellable
+        run: |
+          set -euo pipefail
+          unset CLOUDSDK_CORE_PROJECT CLOUDSDK_PROJECT GCLOUD_PROJECT GCP_PROJECT GOOGLE_CLOUD_PROJECT
+          gcloud config set project "${{ env.PROJECT_ID }}"
+
+          echo "Fetching execution details..."
+          STATUS=$(gcloud run jobs executions describe "${{ github.event.inputs.execution_id }}" \
+            --job="${{ github.event.inputs.job_name }}" \
+            --region=us-central1 \
+            --project="${{ env.PROJECT_ID }}" \
+            --format="value(status.conditions[0].type)" 2>&1) || {
+              echo "❌ Execution ${{ github.event.inputs.execution_id }} not found"
+              exit 1
+            }
+
+          echo "Current status: $STATUS"
+
+          if [[ "$STATUS" == "Completed" || "$STATUS" == "Failed" ]]; then
+            echo "❌ Execution is already in terminal state: $STATUS — nothing to cancel"
+            exit 1
+          fi
+
+          echo "✅ Execution is in state '$STATUS' — proceeding with cancellation"
+
+      - name: Cancel execution
+        run: |
+          set -euo pipefail
+          unset CLOUDSDK_CORE_PROJECT CLOUDSDK_PROJECT GCLOUD_PROJECT GCP_PROJECT GOOGLE_CLOUD_PROJECT
+
+          echo "Cancelling execution: ${{ github.event.inputs.execution_id }}"
+          echo "  Job:         ${{ github.event.inputs.job_name }}"
+          echo "  Environment: ${{ github.event.inputs.environment }}"
+          echo "  Project:     ${{ env.PROJECT_ID }}"
+
+          gcloud run jobs executions cancel "${{ github.event.inputs.execution_id }}" \
+            --job="${{ github.event.inputs.job_name }}" \
+            --region=us-central1 \
+            --project="${{ env.PROJECT_ID }}" \
+            --quiet
+
+          echo "✅ Cancellation request sent"
+
+      - name: Verify cancellation
+        run: |
+          set -euo pipefail
+
+          echo "Waiting for cancellation to reflect..."
+          sleep 5
+
+          STATUS=$(gcloud run jobs executions describe "${{ github.event.inputs.execution_id }}" \
+            --job="${{ github.event.inputs.job_name }}" \
+            --region=us-central1 \
+            --project="${{ env.PROJECT_ID }}" \
+            --format="value(status.conditions[0].type)")
+
+          echo "Post-cancel status: $STATUS"
+
+          if [[ "$STATUS" == "Cancelled" || "$STATUS" == "Failed" ]]; then
+            echo "✅ Execution successfully cancelled"
+          else
+            echo "⚠️ Execution status is '$STATUS' — cancellation may still be in progress"
+          fi
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "## Cancel Cloud Run Job Execution"
+            echo ""
+            echo "- **Environment:** \`${{ github.event.inputs.environment }}\`"
+            echo "- **Project:**     \`${{ env.PROJECT_ID }}\`"
+            echo "- **Job Name:**    \`${{ github.event.inputs.job_name }}\`"
+            echo "- **Execution ID:** \`${{ github.event.inputs.execution_id }}\`"
+          } >> $GITHUB_STEP_SUMMARY
