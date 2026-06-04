@@ -5,7 +5,7 @@
   "bucket_name":      "gcp-gcs-lead-mgmt-us-spt-pos-raw",
   "manifest_prefix":  "manifests/",
   "incoming_prefix":  "pos-raw-data/incoming-files/",
-  "processed_prefix": "pos-raw-data/processed/",
+  "processed_prefix": "pos-raw-data/processed/", 
   "dataflow": {
     "template_path":   "gs://gcp-gcs-lead-mgmt-us-spt-pos-raw/templates/pos-pipeline-flex-spt.json",
     "service_account": "gco-iam-svc-lead-mgmt-bc-spt@p-601-np-bcleadsmgmt-spt.iam.gserviceaccount.com",
