@@ -27,7 +27,7 @@ main:
           - gcs_event: '${json.decode(raw_json)}'
           - bucket: '${gcs_event.bucket}'
           - manifest_object: '${gcs_event.name}'
-          - run_snow_sync: '${default(map.get(event, "run_snow_sync"), true)}'
+          - run_snow_sync: '${default(map.get(event, "run_snow_sync"), false)}'
 
     # ── 2. Read env config from the same bucket ────────────────────────
     - read_config:
