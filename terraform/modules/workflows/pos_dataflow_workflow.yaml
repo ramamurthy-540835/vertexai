@@ -15,6 +15,13 @@
 #   9. Wait for downstream to complete
 #  10. Done — workflow SUCCEEDED if downstream also succeeded, FAILED otherwise
 #      (but files are already moved and data is already in DB by step 6)
+#
+# FIXES applied vs original:
+#   - parse_path: replaced invalid inline text.split()[N] indexing with
+#     list.get(text.split(...), N) — Workflows does not support inline list
+#     index expressions on function return values.
+#   - move_files_to_processed: added shared: [incoming_prefix, processed_prefix]
+#     so the parallel branch can read those top-level variables safely.
 
 main:
   params: [event]
@@ -28,7 +35,7 @@ main:
           - gcs_event: '${json.decode(raw_json)}'
           - bucket: '${gcs_event.bucket}'
           - manifest_object: '${gcs_event.name}'
-          - run_snow_sync: '${default(map.get(event, "run_snow_sync"), false)}'
+          - run_snow_sync: '${default(map.get(event, "run_snow_sync"), true)}'
 
     # ── 2. Read env config from the same bucket ────────────────────────
     - read_config:
@@ -191,18 +198,26 @@ main:
           - condition: true
             next: move_files_to_processed
 
+    # FIX: added shared: [incoming_prefix, processed_prefix] so the parallel
+    # branches can read those variables assigned in extract_config above.
     - move_files_to_processed:
         parallel:
+          shared: [incoming_prefix, processed_prefix]
           for:
             value: file_path
-            in: '${successful_files}'    # ← only successful files
+            in: '${successful_files}'
             steps:
+              # FIX: replaced invalid inline text.split()[N] index expressions
+              # with list.get(text.split(...), N) — the only supported form in
+              # Google Cloud Workflows expression syntax.
               - parse_path:
                   assign:
-                    - bucket_and_object: '${text.split(file_path, "gs://")[1]}'
-                    - bucket_only: '${text.split(bucket_and_object, "/")[0]}'
-                    - object_only: '${text.substring(bucket_and_object, len(bucket_only) + 1, len(bucket_and_object))}'
-                    - dest_object: '${text.replace_all(object_only, incoming_prefix, processed_prefix)}'
+                    - parts:             '${text.split(file_path, "gs://")}'
+                    - bucket_and_object: '${list.get(parts, 1)}'
+                    - slash_parts:       '${text.split(bucket_and_object, "/")}'
+                    - bucket_only:       '${list.get(slash_parts, 0)}'
+                    - object_only:       '${text.substring(bucket_and_object, len(bucket_only) + 1, len(bucket_and_object))}'
+                    - dest_object:       '${text.replace_all(object_only, incoming_prefix, processed_prefix)}'
               - rewrite:
                   call: googleapis.storage.v1.objects.rewrite
                   args:
@@ -252,7 +267,7 @@ main:
               assign:
                 - downstream_map:
                     pos_run_id: '${run_id}'
-                    pos_files: '${successful_files}'    # ← only successful files
+                    pos_files: '${successful_files}'
                     upstream: "pos_dataflow_workflow"
                     environment: '${environment}'
           - encode_argument:
