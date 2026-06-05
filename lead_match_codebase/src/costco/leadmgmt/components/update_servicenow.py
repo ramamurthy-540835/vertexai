@@ -191,6 +191,7 @@ def generate_post_json(df):
             "u_industry_description": str(row.get("industry_description", "")),
             "u_bd_industry_pos":   str(row.get("bd_industry", "")),
             "u_order_amount_rounded": str(round(float(row.get("order_amount", 0)), 2)),
+            "u_primary_transaction": str(row.get("primary_transaction", "")),
 
             # Match details
             "u_matching_comments": str(row.get("matching_comments", "")),

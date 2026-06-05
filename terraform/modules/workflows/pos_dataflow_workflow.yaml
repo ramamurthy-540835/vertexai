@@ -15,6 +15,13 @@
 #   9. Wait for downstream to complete
 #  10. Done — workflow SUCCEEDED if downstream also succeeded, FAILED otherwise
 #      (but files are already moved and data is already in DB by step 6)
+#
+# FIXES applied vs original:
+#   - parse_path: removed all split/index logic. bucket is already known from
+#     the Pub/Sub event so object_only is derived with a single text.substring.
+#     This avoids list indexing entirely (unsupported in Cloud Workflows).
+#   - move_files_to_processed: added shared: [bucket, incoming_prefix,
+#     processed_prefix] so parallel branches can read those variables safely.
 
 main:
   params: [event]
@@ -191,29 +198,34 @@ main:
           - condition: true
             next: move_files_to_processed
 
+    # FIX: added shared: [incoming_prefix, processed_prefix] so the parallel
+    # branches can read those variables assigned in extract_config above.
     - move_files_to_processed:
         parallel:
+          shared: [incoming_prefix, processed_prefix, bucket]
           for:
             value: file_path
-            in: '${successful_files}'    # ← only successful files
+            in: '${successful_files}'
             steps:
+              # FIX: avoid all list indexing entirely — bucket is already known
+              # from the event (step 1). Strip the "gs://<bucket>/" prefix with
+              # text.substring + len() to get object_only directly, no split needed.
               - parse_path:
                   assign:
-                    - bucket_and_object: '${text.split(file_path, "gs://")[1]}'
-                    - bucket_only: '${text.split(bucket_and_object, "/")[0]}'
-                    - object_only: '${text.substring(bucket_and_object, len(bucket_only) + 1, len(bucket_and_object))}'
+                    - gs_prefix:   '${"gs://" + bucket + "/"}'
+                    - object_only: '${text.substring(file_path, len(gs_prefix), len(file_path))}'
                     - dest_object: '${text.replace_all(object_only, incoming_prefix, processed_prefix)}'
               - rewrite:
                   call: googleapis.storage.v1.objects.rewrite
                   args:
-                    sourceBucket: '${bucket_only}'
+                    sourceBucket: '${bucket}'
                     sourceObject: '${text.url_encode(object_only)}'
-                    destinationBucket: '${bucket_only}'
+                    destinationBucket: '${bucket}'
                     destinationObject: '${text.url_encode(dest_object)}'
               - delete_source:
                   call: googleapis.storage.v1.objects.delete
                   args:
-                    bucket: '${bucket_only}'
+                    bucket: '${bucket}'
                     object: '${text.url_encode(object_only)}'
 
     - log_files_moved:
@@ -252,7 +264,7 @@ main:
               assign:
                 - downstream_map:
                     pos_run_id: '${run_id}'
-                    pos_files: '${successful_files}'    # ← only successful files
+                    pos_files: '${successful_files}'
                     upstream: "pos_dataflow_workflow"
                     environment: '${environment}'
           - encode_argument:
