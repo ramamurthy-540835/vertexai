@@ -35,7 +35,7 @@ main:
           - gcs_event: '${json.decode(raw_json)}'
           - bucket: '${gcs_event.bucket}'
           - manifest_object: '${gcs_event.name}'
-          - run_snow_sync: '${default(map.get(event, "run_snow_sync"), true)}'
+          - run_snow_sync: '${default(map.get(event, "run_snow_sync"), false)}'
 
     # ── 2. Read env config from the same bucket ────────────────────────
     - read_config:
@@ -218,14 +218,14 @@ main:
               - rewrite:
                   call: googleapis.storage.v1.objects.rewrite
                   args:
-                    sourceBucket: '${bucket_only}'
+                    sourceBucket: '${bucket}'
                     sourceObject: '${text.url_encode(object_only)}'
-                    destinationBucket: '${bucket_only}'
+                    destinationBucket: '${bucket}'
                     destinationObject: '${text.url_encode(dest_object)}'
               - delete_source:
                   call: googleapis.storage.v1.objects.delete
                   args:
-                    bucket: '${bucket_only}'
+                    bucket: '${bucket}'
                     object: '${text.url_encode(object_only)}'
 
     - log_files_moved:
