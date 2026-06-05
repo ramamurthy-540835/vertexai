@@ -155,13 +155,20 @@ def generate_post_json(df):
 
     # ── Build result payload ──
     results = []
+    # Simple lookup dicts defined inline
+    shop_type_map = {"delivery": "Delivery", "walk-in": "Walk-in", "walk in": "Walk-in"}
+    match_result_map = {"match": "Complete Match", "potential": "Potential Match"}
 
     for _, row in df.iterrows():
+
+        # Zip code — just convert to int then string to strip the .0
+        zip_val = row.get("zip_code", "")
+        zip_code = str(int(float(zip_val))) if zip_val not in ("", None, "nan") else ""
         result = {
             # POS information
             "u_gcp_id":            str(row.get("pos_id", "")),
             "active":              "true",
-            "u_type":              str(row.get("shop_type", "")),
+            "u_type":              shop_type_map.get(str(row.get("shop_type", "")).strip().lower(), str(row.get("shop_type", ""))), 
             "u_business_name":     str(row.get("business_name_transaction", "")),
             "u_address_1":         str(row.get("address_line_one", "")),
             "u_address_2":         str(row.get("address_line_two", "")),
@@ -169,7 +176,7 @@ def generate_post_json(df):
             "u_last":              str(row.get("last_name", "")),
             "u_city":              str(row.get("city", "")),
             "u_state_pos":         str(row.get("state", "")),
-            "u_zip_code":          str(row.get("zip_code", "")),
+            "u_zip_code":          zip_code,
             "u_email":             str(row.get("email", "")),
             "u_phone_number":      str(row.get("phone", "")),
 
@@ -181,7 +188,7 @@ def generate_post_json(df):
             "u_account_number":    str(row.get("account_number", "")),
             "u_warehouse_number":  str(int(row.get("warehouse_number", 0))),
             "u_membership_number": str(row.get("membership_number", "")),
-            "u_industry_description": "",
+            "u_industry_description": str(row.get("industry_description", "")),
             "u_bd_industry_pos":   str(row.get("bd_industry", "")),
             "u_order_amount_rounded": str(round(float(row.get("order_amount", 0)), 2)),
 
@@ -189,7 +196,7 @@ def generate_post_json(df):
             "u_matching_comments": str(row.get("matching_comments", "")),
             "u_matched_by":        "System",
             "u_match_value":       str(row.get("similarity_score", "")),
-            "u_match_result":      str(row.get("match_result", "")),
+            "u_match_result":      match_result_map.get(str(row.get("match_result", "")).strip().lower(), str(row.get("match_result", ""))),
 
             # Matched lead
             "u_matched_lead": {

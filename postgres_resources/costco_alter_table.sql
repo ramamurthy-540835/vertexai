@@ -98,8 +98,7 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON
     "$SCHEMA_NAME".account,
     "$SCHEMA_NAME".contact,
     "$SCHEMA_NAME".error_Audit,
-    "$SCHEMA_NAME".batch_audit,
-    "$SCHEMA_NAME".pos_transactions
+    "$SCHEMA_NAME".batch_audit
 TO "postgres";
 
 
