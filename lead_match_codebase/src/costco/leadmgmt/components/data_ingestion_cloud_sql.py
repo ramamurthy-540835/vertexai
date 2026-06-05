@@ -19,7 +19,7 @@ from costco.leadmgmt.util.fiscal_year import get_costco_fiscal_info
 # Rows pulled from Cloud SQL per fetch. Bigger = faster but more memory.
 # At 1M rows per chunk, peak memory is ~3-4 GB during normalization.
 # Cloud Run job memory should be >= 6 GB for this setting.
-CHUNK_SIZE = 1_000_000
+CHUNK_SIZE = 200_000
 
 
 # ─────────────────────────────────────────────────────────────────────
