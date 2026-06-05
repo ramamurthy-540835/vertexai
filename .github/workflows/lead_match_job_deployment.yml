@@ -157,7 +157,8 @@ jobs:
             --task-timeout=40h
             --set-env-vars=${{ steps.env.outputs.env_vars }}
             --max-retries=0
-            --memory=2Gi
+            --memory=8Gi
+            --cpu=2
 
       - name: Describe deployed job
         if: env.DEPLOY == 'true'
