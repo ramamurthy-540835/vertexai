@@ -33,7 +33,7 @@ ALTER TABLE "$SCHEMA_NAME".lead
 ADD COLUMN match_result VARCHAR(10);
 
 Alter table "$SCHEMA_NAME".transaction
-RENAME COLUMN nmi_flag TO primary_transaction;
+Add column primary_transaction BOOLEAN;
 
 Alter table "$SCHEMA_NAME".transaction
 RENAME COLUMN sic_description TO industry_description;
