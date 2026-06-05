@@ -8,11 +8,12 @@
 #   3. Validate manifest path matches expected prefix
 #   4. Read the manifest from GCS
 #   5. Launch Dataflow Flex Template jobs in parallel (bounded concurrency)
-#   6. After Dataflow succeeds: MOVE source files to processed/ (decoupled
-#      from downstream so files don't pile up if downstream is flaky)
-#   7. Trigger downstream snow_sync_workflow (optional, default: true)
-#   8. Wait for downstream to complete
-#   9. Done — workflow SUCCEEDED if downstream also succeeded, FAILED otherwise
+#      — successful files tracked separately from failed ones
+#   6. After Dataflow: MOVE only successfully processed files to processed/
+#   7. Raise error if any jobs failed (after moving successful files)
+#   8. Trigger downstream snow_sync_workflow (optional, default: false)
+#   9. Wait for downstream to complete
+#  10. Done — workflow SUCCEEDED if downstream also succeeded, FAILED otherwise
 #      (but files are already moved and data is already in DB by step 6)
 
 main:
@@ -61,6 +62,8 @@ main:
           - next_workflow: '${cfg.downstream.next_workflow}'
           - next_wf_location: '${cfg.downstream.next_workflow_location}'
           - all_job_states: []
+          - successful_files: []
+          - failed_files: []
           - downstream_execution: null
 
     # ── 3. Defensive: ignore non-manifest uploads ──────────────────────
@@ -93,9 +96,12 @@ main:
           text: '${"[" + environment + "] run " + run_id + ": " + string(file_count) + " files, max " + string(chunk_size) + " in parallel, run_snow_sync=" + string(run_snow_sync)}'
 
     # ── 5. Launch all Dataflow jobs in parallel with concurrency cap ───
+    # Successful and failed files tracked separately.
+    # Does NOT raise on individual job failure — collects all results first
+    # so successful files can still be moved to processed/.
     - launch_all_jobs:
         parallel:
-          shared: [all_job_states]
+          shared: [all_job_states, successful_files, failed_files]
           concurrency_limit: '${chunk_size}'
           for:
             value: file_path
@@ -151,27 +157,45 @@ main:
                   assign:
                     - all_job_states: '${list.concat(all_job_states, final_state)}'
 
-              - guard_on_failure:
+              # Track success/failure per file — do NOT raise here
+              # so other parallel jobs can still complete
+              - classify_result:
                   switch:
-                    - condition: '${final_state != "JOB_STATE_DONE"}'
-                      raise: '${"[" + environment + "] run " + run_id + " — job for " + file_path + " ended in state " + final_state}'
+                    - condition: '${final_state == "JOB_STATE_DONE"}'
+                      assign:
+                        - successful_files: '${list.concat(successful_files, [file_path])}'
+                    - condition: true
+                      steps:
+                        - log_job_failure:
+                            call: sys.log
+                            args:
+                              severity: ERROR
+                              text: '${"[" + environment + "] FAILED: " + file_path + " ended in state " + final_state}'
+                        - record_failure:
+                            assign:
+                              - failed_files: '${list.concat(failed_files, [file_path])}'
 
     - log_all_done:
         call: sys.log
         args:
           severity: INFO
-          text: '${"[" + environment + "] all " + string(file_count) + " Dataflow jobs DONE"}'
+          text: '${"[" + environment + "] Dataflow complete. succeeded=" + string(len(successful_files)) + " failed=" + string(len(failed_files))}'
 
-    # ── 6. Move source files to processed/ (decoupled from downstream) ──
-    # Files move as soon as Dataflow ingestion succeeds. This way, if
-    # downstream (snow_sync / lead_match) fails, files don't pile up in
-    # incoming/ — the data is already in the DB and the file has been
-    # processed.
+    # ── 6. Move only successfully processed files to processed/ ────────
+    # Files move as soon as Dataflow ingestion succeeds. Failed files
+    # stay in incoming/ so they can be retried on the next run.
+    - check_files_to_move:
+        switch:
+          - condition: '${len(successful_files) == 0}'
+            next: check_for_failures
+          - condition: true
+            next: move_files_to_processed
+
     - move_files_to_processed:
         parallel:
           for:
             value: file_path
-            in: '${all_files}'
+            in: '${successful_files}'    # ← only successful files
             steps:
               - parse_path:
                   assign:
@@ -196,9 +220,17 @@ main:
         call: sys.log
         args:
           severity: INFO
-          text: '${"[" + environment + "] " + string(file_count) + " files moved to processed/"}'
+          text: '${"[" + environment + "] " + string(len(successful_files)) + " file(s) moved to processed/. " + string(len(failed_files)) + " file(s) left in incoming/ for retry."}'
 
-    # ── 7. Check whether to trigger downstream snow_sync ──────────────
+    # ── 7. Raise if any jobs failed (after moving successful files) ────
+    - check_for_failures:
+        switch:
+          - condition: '${len(failed_files) > 0}'
+            raise: '${"[" + environment + "] run " + run_id + " — " + string(len(failed_files)) + " job(s) failed: " + json.encode_to_string(failed_files)}'
+          - condition: true
+            next: check_run_snow_sync
+
+    # ── 8. Check whether to trigger downstream snow_sync ──────────────
     - check_run_snow_sync:
         switch:
           - condition: '${run_snow_sync == true}'
@@ -213,14 +245,14 @@ main:
           text: '${"[" + environment + "] snow_sync skipped (run_snow_sync=false)"}'
         next: done
 
-    # ── 8. Trigger downstream workflow (snow_sync) ─────────────────────
+    # ── 9. Trigger downstream workflow (snow_sync) ─────────────────────
     - trigger_downstream:
         steps:
           - build_payload:
               assign:
                 - downstream_map:
                     pos_run_id: '${run_id}'
-                    pos_files: '${all_files}'
+                    pos_files: '${successful_files}'    # ← only successful files
                     upstream: "pos_dataflow_workflow"
                     environment: '${environment}'
           - encode_argument:
@@ -234,7 +266,7 @@ main:
                   argument: '${downstream_args}'
               result: downstream_execution
 
-    # ── 9. Wait for downstream to complete ─────────────────────────────
+    # ── 10. Wait for downstream to complete ────────────────────────────
     - wait_for_downstream:
         call: googleapis.workflowexecutions.v1.projects.locations.workflows.executions.get
         args:
@@ -257,7 +289,7 @@ main:
           seconds: 15
         next: wait_for_downstream
 
-    # ── 10. Success terminal ───────────────────────────────────────────
+    # ── 11. Success terminal ───────────────────────────────────────────
     - done:
         switch:
           - condition: '${run_snow_sync == true}'
@@ -266,6 +298,8 @@ main:
               environment: '${environment}'
               run_id: '${run_id}'
               file_count: '${file_count}'
+              successful_files: '${len(successful_files)}'
+              failed_files: '${len(failed_files)}'
               run_snow_sync: '${run_snow_sync}'
               downstream_execution: '${downstream_execution.name}'
           - condition: true
@@ -274,6 +308,8 @@ main:
               environment: '${environment}'
               run_id: '${run_id}'
               file_count: '${file_count}'
+              successful_files: '${len(successful_files)}'
+              failed_files: '${len(failed_files)}'
               run_snow_sync: '${run_snow_sync}'
               downstream_execution: "skipped"
 
