@@ -188,7 +188,7 @@ def generate_post_json(df):
             "u_account_number":    str(row.get("account_number", "")),
             "u_warehouse_number":  str(int(row.get("warehouse_number", 0))),
             "u_membership_number": str(row.get("membership_number", "")),
-            "u_industry_description": str(row.get("industry_description", "")),,
+            "u_industry_description": str(row.get("industry_description", "")),
             "u_bd_industry_pos":   str(row.get("bd_industry", "")),
             "u_order_amount_rounded": str(round(float(row.get("order_amount", 0)), 2)),
 
