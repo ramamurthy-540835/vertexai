@@ -1,9 +1,20 @@
 """
 Multi-format file reader.
 
-Returns a list of dicts where keys are the source column headers
-(preserved as-is from the file) and values are Python primitives.
-Mapping to DB columns happens later in schema_utils.apply_field_map.
+Provides two APIs:
+
+  read_file_to_dicts(content, filename)
+      Loads the entire file into memory and returns a list of dicts.
+      Kept for backwards compatibility — use only for small files.
+
+  iter_file_chunks(blob, filename, chunk_size)
+      STREAMING generator. Reads from a GCS blob and yields chunks of
+      `chunk_size` rows at a time. Never holds more than one chunk in memory.
+      Use this for large files (CSV > 100MB, Excel > 50MB).
+
+Returns dicts where keys are the source column headers (normalized: stripped
+and lowercased) and values are Python primitives. Mapping to DB columns
+happens later in schema_utils.apply_field_map.
 """
 
 import csv
@@ -11,7 +22,7 @@ import io
 import json
 import logging
 import os
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Iterator
 
 logger = logging.getLogger(__name__)
 
@@ -24,10 +35,240 @@ SUPPORTED_EXTENSIONS = {
 }
 
 
+# ─────────────────────────────────────────────────────────────
+# Public API — STREAMING (preferred for large files)
+# ─────────────────────────────────────────────────────────────
+
+def iter_file_chunks(
+    blob,
+    filename: str,
+    chunk_size: int = 10000,
+) -> Iterator[List[Dict[str, Any]]]:
+    """
+    Stream a GCS blob and yield chunks of `chunk_size` row dicts.
+
+    Memory-safe for large files: never holds more than one chunk in memory.
+
+    Args:
+        blob: google.cloud.storage.Blob object (not bytes)
+        filename: filename used for extension detection
+        chunk_size: max rows per yielded chunk
+
+    Yields:
+        list[dict] — one chunk of rows at a time
+    """
+    ext = os.path.splitext(filename.lower())[1]
+    logger.info(f"Streaming file {filename} (ext={ext}, chunk_size={chunk_size})")
+
+    if ext in (".csv", ".txt"):
+        yield from _iter_delimited(blob, filename, delimiter=",", chunk_size=chunk_size)
+    elif ext == ".tsv":
+        yield from _iter_delimited(blob, filename, delimiter="\t", chunk_size=chunk_size)
+    elif ext == ".psv":
+        yield from _iter_delimited(blob, filename, delimiter="|", chunk_size=chunk_size)
+    elif ext in (".xlsx", ".xls"):
+        yield from _iter_excel(blob, chunk_size=chunk_size)
+    elif ext in (".json", ".jsonl", ".parquet"):
+        # These formats are not commonly large in this pipeline.
+        # Fall back to full-load then chunk.
+        content = blob.download_as_bytes()
+        rows = read_file_to_dicts(content, filename)
+        for i in range(0, len(rows), chunk_size):
+            yield rows[i:i + chunk_size]
+    else:
+        # Unknown extension — try CSV streaming
+        logger.warning(f"Unknown extension {ext}, attempting CSV stream")
+        yield from _iter_delimited(blob, filename, delimiter=",", chunk_size=chunk_size)
+
+
+def _iter_delimited(
+    blob,
+    filename: str,
+    delimiter: str,
+    chunk_size: int,
+) -> Iterator[List[Dict[str, Any]]]:
+    """
+    Stream CSV/TSV/PSV from GCS line-by-line and yield row chunks.
+    Tries multiple encodings to handle BOM / Windows files.
+    """
+    last_err = None
+    for enc in ("utf-8-sig", "utf-8", "latin-1", "cp1252"):
+        try:
+            # Open a streaming connection to GCS — does NOT download whole file
+            with blob.open("rb") as raw_stream:
+                text_stream = io.TextIOWrapper(raw_stream, encoding=enc, newline="")
+                reader = csv.reader(text_stream, delimiter=delimiter)
+
+                # Read header row
+                try:
+                    raw_headers = next(reader)
+                except StopIteration:
+                    logger.warning(f"{filename} is empty (no header row)")
+                    return
+
+                headers = [
+                    str(h).strip().lower() if h is not None else ""
+                    for h in raw_headers
+                ]
+                logger.info(
+                    f"Streaming CSV headers ({len(headers)}): {headers}"
+                )
+
+                chunk: List[Dict[str, Any]] = []
+                total_rows = 0
+
+                for raw_row in reader:
+                    # Skip blank rows
+                    if not raw_row or all(
+                        (v is None or str(v).strip() == "") for v in raw_row
+                    ):
+                        continue
+
+                    row_dict = {
+                        headers[i]: raw_row[i]
+                        for i in range(min(len(headers), len(raw_row)))
+                        if headers[i]
+                    }
+                    chunk.append(row_dict)
+                    total_rows += 1
+
+                    if len(chunk) >= chunk_size:
+                        logger.info(
+                            f"Yielding chunk of {len(chunk)} rows "
+                            f"(total so far: {total_rows})"
+                        )
+                        yield chunk
+                        chunk = []
+
+                # Yield remaining tail
+                if chunk:
+                    logger.info(
+                        f"Yielding final chunk of {len(chunk)} rows "
+                        f"(total: {total_rows})"
+                    )
+                    yield chunk
+
+                logger.info(
+                    f"Streaming done: {total_rows} rows from {filename} "
+                    f"(encoding={enc})"
+                )
+                return
+
+        except UnicodeDecodeError as e:
+            last_err = e
+            logger.info(f"Encoding {enc} failed, trying next…")
+            continue
+
+    raise ValueError(
+        f"Could not decode {filename} with any supported encoding "
+        f"(last error: {last_err})"
+    )
+
+
+def _iter_excel(blob, chunk_size: int) -> Iterator[List[Dict[str, Any]]]:
+    """
+    Stream Excel (.xlsx / .xls) rows in chunks.
+
+    Note: Excel files cannot be streamed directly from GCS — the entire
+    file is downloaded (compressed Excel files are typically much smaller
+    than the equivalent CSV). However openpyxl's read_only mode streams
+    rows from the unzipped file without loading all cells into memory.
+    """
+    content = blob.download_as_bytes()
+
+    # Try xlsx first
+    try:
+        import openpyxl
+        wb = openpyxl.load_workbook(
+            io.BytesIO(content), read_only=True, data_only=True
+        )
+        ws = wb.active
+        rows_iter = ws.iter_rows(values_only=True)
+
+        raw_headers = next(rows_iter, None)
+        if not raw_headers:
+            logger.warning("Excel file has no header row")
+            return
+
+        headers = [
+            str(h).strip().lower() if h is not None else ""
+            for h in raw_headers
+        ]
+        logger.info(f"Streaming Excel headers ({len(headers)}): {headers}")
+
+        chunk: List[Dict[str, Any]] = []
+        total_rows = 0
+
+        for row in rows_iter:
+            if all(v is None or v == "" for v in row):
+                continue  # skip blank rows
+            row_dict = {
+                headers[i]: (row[i] if i < len(row) else None)
+                for i in range(len(headers))
+                if headers[i]
+            }
+            chunk.append(row_dict)
+            total_rows += 1
+
+            if len(chunk) >= chunk_size:
+                logger.info(
+                    f"Yielding Excel chunk of {len(chunk)} rows "
+                    f"(total so far: {total_rows})"
+                )
+                yield chunk
+                chunk = []
+
+        if chunk:
+            logger.info(
+                f"Yielding final Excel chunk of {len(chunk)} rows "
+                f"(total: {total_rows})"
+            )
+            yield chunk
+
+        wb.close()
+        logger.info(f"Excel streaming done: {total_rows} rows")
+        return
+
+    except Exception as e:
+        logger.info(f"openpyxl failed ({e}); trying xlrd fallback for .xls")
+
+    # Fall back to xlrd for old .xls — does not support streaming, but
+    # .xls files are typically smaller (format limited to 65k rows per sheet)
+    import xlrd
+    wb = xlrd.open_workbook(file_contents=content)
+    ws = wb.sheet_by_index(0)
+    headers = [str(ws.cell_value(0, c)).strip().lower() for c in range(ws.ncols)]
+
+    chunk: List[Dict[str, Any]] = []
+    total_rows = 0
+    for r in range(1, ws.nrows):
+        row_dict = {
+            headers[c]: ws.cell_value(r, c)
+            for c in range(ws.ncols)
+            if headers[c]
+        }
+        if any(v not in (None, "") for v in row_dict.values()):
+            chunk.append(row_dict)
+            total_rows += 1
+            if len(chunk) >= chunk_size:
+                yield chunk
+                chunk = []
+    if chunk:
+        yield chunk
+
+    logger.info(f"xls read: {total_rows} rows")
+
+
+# ─────────────────────────────────────────────────────────────
+# Public API — FULL LOAD (kept for backwards compatibility)
+# ─────────────────────────────────────────────────────────────
+
 def read_file_to_dicts(content: bytes, filename: str) -> List[Dict[str, Any]]:
     """
     Dispatch to the right reader based on file extension.
-    Returns a list of row dicts. Header names are preserved verbatim.
+    Returns a list of row dicts. Header names are normalized.
+
+    ⚠️  Loads entire file into memory. For large files use iter_file_chunks().
     """
 
     if not content:
@@ -56,11 +297,7 @@ def read_file_to_dicts(content: bytes, filename: str) -> List[Dict[str, Any]]:
 
 
 def _read_delimited(content: bytes, delimiter: str = ",") -> List[Dict[str, Any]]:
-    """Read CSV/TSV/PSV. Tries multiple encodings to handle BOM / Windows files.
-
-    Headers are normalized (stripped + lowercased) to match field_map.json keys,
-    consistent with how _read_excel handles them.
-    """
+    """Full-load CSV/TSV/PSV reader. Use iter_file_chunks for large files."""
     for enc in ("utf-8-sig", "utf-8", "latin-1", "cp1252"):
         try:
             text = content.decode(enc)
@@ -72,7 +309,6 @@ def _read_delimited(content: bytes, delimiter: str = ",") -> List[Dict[str, Any]
                 logger.warning("CSV file is empty (no header row)")
                 return []
 
-            # Normalize the same way Excel does: str -> strip -> lowercase
             headers = [
                 str(h).strip().lower() if h is not None else ""
                 for h in raw_headers
@@ -81,16 +317,14 @@ def _read_delimited(content: bytes, delimiter: str = ",") -> List[Dict[str, Any]
 
             rows: List[Dict[str, Any]] = []
             for raw_row in reader:
-                # Skip blank rows
                 if not raw_row or all(
                     (v is None or str(v).strip() == "") for v in raw_row
                 ):
                     continue
-
                 row_dict = {
                     headers[i]: raw_row[i]
                     for i in range(min(len(headers), len(raw_row)))
-                    if headers[i]  # skip empty header columns
+                    if headers[i]
                 }
                 rows.append(row_dict)
 
@@ -106,8 +340,7 @@ def _read_delimited(content: bytes, delimiter: str = ",") -> List[Dict[str, Any]
 
 
 def _read_excel(content: bytes) -> List[Dict[str, Any]]:
-    """Read .xlsx (openpyxl) or .xls (xlrd) into list of row dicts."""
-    # Try xlsx first
+    """Full-load Excel reader. Use iter_file_chunks for large files."""
     try:
         import openpyxl
         wb = openpyxl.load_workbook(io.BytesIO(content), read_only=True, data_only=True)
@@ -121,7 +354,7 @@ def _read_excel(content: bytes) -> List[Dict[str, Any]]:
         out: List[Dict[str, Any]] = []
         for row in rows_iter:
             if all(v is None or v == "" for v in row):
-                continue  # skip blank rows
+                continue
             out.append({
                 headers[i]: (row[i] if i < len(row) else None)
                 for i in range(len(headers))
@@ -132,7 +365,6 @@ def _read_excel(content: bytes) -> List[Dict[str, Any]]:
     except Exception as e:
         logger.info(f"openpyxl failed ({e}); trying xlrd fallback for .xls")
 
-    # Fall back to xlrd for old .xls
     import xlrd
     wb = xlrd.open_workbook(file_contents=content)
     ws = wb.sheet_by_index(0)

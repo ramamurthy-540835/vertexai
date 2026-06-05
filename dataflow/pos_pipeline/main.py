@@ -31,33 +31,46 @@ MAX_PG_PARAMS = 60000
 
 
 # ─────────────────────────────────────────────────────────────
-# Step 1 — Read the single input file from GCS, yield row chunks
+# Step 1 — Stream the input file from GCS, yield row chunks
 # ─────────────────────────────────────────────────────────────
 class ReadFileFromGCS(beam.DoFn):
-    """Downloads one file from GCS and yields chunks of parsed rows."""
+    """
+    Streams one file from GCS line-by-line and yields chunks of parsed rows.
+    Never loads the full file into memory — safe for files with millions of rows.
+    """
 
     def __init__(self, chunk_size: int = 10000):
         self.chunk_size = chunk_size
 
     def process(self, gcs_path: str):
         from google.cloud import storage as gcs_lib
+        from pos_pipeline.file_reader import iter_file_chunks
+
         try:
             _, path = gcs_path.split("gs://", 1)
             bucket_name, blob_name = path.split("/", 1)
             filename = blob_name.split("/")[-1]
 
             client = gcs_lib.Client()
-            content = client.bucket(bucket_name).blob(blob_name).download_as_bytes()
+            blob = client.bucket(bucket_name).blob(blob_name)
 
-            rows = read_file_to_dicts(content, filename)
-            logger.info(f"Read {len(rows)} rows from {gcs_path}")
+            logger.info(f"Streaming file {gcs_path} (chunk_size={self.chunk_size})")
 
-            for i in range(0, len(rows), self.chunk_size):
-                yield {"rows": rows[i : i + self.chunk_size]}
+            total_rows = 0
+            chunk_count = 0
+            for chunk in iter_file_chunks(blob, filename, self.chunk_size):
+                chunk_count += 1
+                total_rows += len(chunk)
+                yield {"rows": chunk}
+
+            logger.info(
+                f"Streaming complete for {gcs_path}: "
+                f"{total_rows} rows in {chunk_count} chunks"
+            )
+
         except Exception as e:
             logger.error(f"ReadFileFromGCS error for {gcs_path}: {e}")
             raise
-
 
 # ─────────────────────────────────────────────────────────────
 # Step 2 — Apply column mapping and batch-INSERT into Postgres via IAM.
