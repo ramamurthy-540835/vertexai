@@ -15,17 +15,19 @@ log = logging.getLogger(__name__)
 # ==============================================================
 # SCORING CONSTANTS
 # ==============================================================
+# Matching is done on *_normalized columns (created in preprocess).
+# Originals are preserved in the dataframe for the ServiceNow payload.
 KEY_FIELDS = {
-    "business_name":    40,
-    "address_line_one": 40,
-    "email":            30,
-    "phone":            20,
+    "business_name_normalized":    40,
+    "address_line_one_normalized": 40,
+    "email_normalized":            30,
+    "phone_normalized":            20,
 }
 
 SUPPLEMENTARY_FIELDS = {
-    "zip_code": 10,
-    "state":     5,
-    "city":      5,
+    "zip_code_normalized": 10,
+    "state_normalized":     5,
+    "city_normalized":      5,
 }
 
 MINIMUM_SCORE  = 80
@@ -41,14 +43,18 @@ ALL_FIELDS = (
     list(SUPPLEMENTARY_FIELDS.keys())
 )
 
+# Friendly names for matching comments (strip the _normalized suffix)
+def _friendly(field: str) -> str:
+    return field.replace("_normalized", "")
+
 
 # ==============================================================
 # MATCHING COMMENT BUILDER
 # ==============================================================
 def build_matching_comment(row: pd.Series) -> str:
     """
-    Constructs a human-readable comment explaining which fields
-    drove the exact match and what the result classification means.
+    Human-readable comment explaining match drivers and classification.
+    Field names are shown without the _normalized suffix for clarity.
     """
     score        = row["similarity_score"]
     result       = row["match_result"]
@@ -71,7 +77,8 @@ def build_matching_comment(row: pd.Series) -> str:
         parts.append(f"No match (score {score}/{MAX_POSSIBLE_SCORE}).")
 
     if matched_keys:
-        parts.append(f"Key fields matched: {', '.join(matched_keys)}.")
+        friendly_keys = [_friendly(f) for f in matched_keys]
+        parts.append(f"Key fields matched: {', '.join(friendly_keys)}.")
     else:
         parts.append(
             "No individual key fields matched exactly; "
@@ -79,7 +86,8 @@ def build_matching_comment(row: pd.Series) -> str:
         )
 
     if matched_supp:
-        parts.append(f"Supplementary fields matched: {', '.join(matched_supp)}.")
+        friendly_supp = [_friendly(f) for f in matched_supp]
+        parts.append(f"Supplementary fields matched: {', '.join(friendly_supp)}.")
 
     return " ".join(parts)
 
@@ -88,6 +96,10 @@ def build_matching_comment(row: pd.Series) -> str:
 # PREPROCESS
 # ==============================================================
 def preprocess(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Normalize warehouse_number and clean *_normalized matching columns.
+    Original (display) columns are NOT touched here.
+    """
     df = df.copy()
     df = df.dropna(subset=["warehouse_number"])
     df["warehouse_number"] = (
@@ -96,7 +108,19 @@ def preprocess(df: pd.DataFrame) -> pd.DataFrame:
         .astype(str)
     )
     df = df[df["warehouse_number"] != ""]
+
+    # Only operate on the *_normalized matching columns. If a normalized
+    # column is missing (shouldn't happen given preprocess.py), fall back
+    # to creating it from the original.
     for col in ALL_FIELDS:
+        if col not in df.columns:
+            original_col = _friendly(col)
+            if original_col in df.columns:
+                df[col] = df[original_col].astype(str).str.strip().str.lower()
+            else:
+                df[col] = pd.NA
+                continue
+
         df[col] = (
             df[col]
             .astype(str)
@@ -138,6 +162,7 @@ def classify_matches(
         no_match_df["matching_comments"] = ""
         return no_match_df
 
+    # Slim frames for the per-field merges (matching columns only)
     leads_small = leads[["lead_id", "warehouse_number"] + ALL_FIELDS].copy()
     sales_small = sales[["pos_id", "warehouse_number"] + ALL_FIELDS].copy()
 
@@ -289,6 +314,8 @@ def classify_matches(
     # ==========================================================
     # POS-DOMINANT SUBSETS FOR FINAL MERGE
     # ==========================================================
+    # Pull ORIGINAL columns for the ServiceNow payload.
+    # Normalized columns are not needed downstream.
     lead_subset = leads[[
         "lead_id",
         "updated_date",
@@ -302,26 +329,26 @@ def classify_matches(
         [[
             "pos_id",
             "account_number",
-            "business_name_transaction",
+            "business_name_transaction",   # original (renamed)
             "membership_number",
             "warehouse_number",
             "fiscal_year_transaction",
             "fiscal_period_transaction",
             "week",
-            "shop_type",
-            "sales_reference_id",
+            "shop_type",                   # passthrough
+            "sales_reference_id",          # passthrough
             "order_amount",
-            "bd_industry",
-            "first_name",
-            "last_name",
-            "address_line_one",
-            "address_line_two",
-            "city",
-            "state",
-            "zip_code",
-            "email",
-            "phone",
-            "industry_description",
+            "bd_industry",                 # passthrough
+            "first_name",                  # original
+            "last_name",                   # original
+            "address_line_one",            # original
+            "address_line_two",            # original
+            "city",                        # original
+            "state",                       # original
+            "zip_code",                    # original
+            "email",                       # original
+            "phone",                       # original
+            "industry_description",        # passthrough
         ]]
     )
 

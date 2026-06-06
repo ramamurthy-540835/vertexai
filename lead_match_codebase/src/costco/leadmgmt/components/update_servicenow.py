@@ -167,7 +167,7 @@ def generate_post_json(df):
         result = {
             # POS information
             "u_gcp_id":            str(row.get("pos_id", "")),
-            "active":              "true",
+            "active":              True,
             "u_type":              shop_type_map.get(str(row.get("shop_type", "")).strip().lower(), str(row.get("shop_type", ""))), 
             "u_business_name":     str(row.get("business_name_transaction", "")),
             "u_address_1":         str(row.get("address_line_one", "")),
@@ -191,7 +191,7 @@ def generate_post_json(df):
             "u_industry_description": str(row.get("industry_description", "")),
             "u_bd_industry_pos":   str(row.get("bd_industry", "")),
             "u_order_amount_rounded": str(round(float(row.get("order_amount", 0)), 2)),
-            "u_primary_transaction": str(row.get("primary_transaction", "")),
+            "u_primary_transaction": bool(row.get("primary_transaction", 0)),
 
             # Match details
             "u_matching_comments": str(row.get("matching_comments", "")),

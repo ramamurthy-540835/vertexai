@@ -1,10 +1,15 @@
 """
 Stream-based POS/leads data preprocessing.
 
-Reads Cloud SQL in chunks, applies the same normalization as before,
-streams each chunk to GCS as CSV. Memory stays bounded regardless of
-row count. Produces a single CSV file per type (pos_temp.csv or
-leads_temp.csv) — same output path as the original implementation.
+Reads Cloud SQL in chunks, applies normalization, streams each chunk to
+GCS as CSV. Memory stays bounded regardless of row count. Produces a
+single CSV file per type (pos_temp.csv or leads_temp.csv).
+
+Key principle: ORIGINAL columns are preserved untouched for the
+ServiceNow payload. NORMALIZED versions (_normalized suffix) are added
+for matching only. Passthrough fields (sales_reference_id, bd_industry,
+industry_description, shop_type) are stripped only — never lowercased
+or transformed.
 """
 
 import pandas as pd
@@ -17,9 +22,28 @@ from costco.leadmgmt.util.fiscal_year import get_costco_fiscal_info
 
 
 # Rows pulled from Cloud SQL per fetch. Bigger = faster but more memory.
-# At 1M rows per chunk, peak memory is ~3-4 GB during normalization.
-# Cloud Run job memory should be >= 6 GB for this setting.
 CHUNK_SIZE = 200_000
+
+
+# Fields that need normalization (lowercase + unidecode + strip non-alphanumeric).
+# Originals are preserved; a `<col>_normalized` column is added for matching.
+FIELDS_TO_NORMALIZE = [
+    'business_name',
+    'first_name', 'last_name',
+    'address_line_one', 'address_line_two',
+    'city', 'zip_code', 'email',
+    'state',
+    'phone',
+]
+
+# Fields that pass through untouched (only whitespace-stripped).
+# These go directly into the ServiceNow payload as-is.
+PASSTHROUGH_FIELDS = [
+    'sales_reference_id',
+    'bd_industry',
+    'industry_description',
+    'shop_type',
+]
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -34,28 +58,34 @@ def normalize_series(s: pd.Series) -> pd.Series:
       3. unidecode (strip accents, transliterate non-ASCII)
       4. Remove anything that isn't a letter, digit, or whitespace
       5. Lowercase
-
-    Behavior matches the original implementation for ASCII-heavy data.
-    Uses vectorized .str.replace() and unidecode_expect_ascii for speed.
     """
     return (
         s.fillna('')
          .astype(str)
-         .apply(unidecode_expect_ascii)                        # ~2-3x faster than unidecode for ASCII data
-         .str.replace(r'[^a-zA-Z0-9\s]', '', regex=True)       # vectorized — runs in C
-         .str.lower()                                          # vectorized
+         .apply(unidecode_expect_ascii)
+         .str.replace(r'[^a-zA-Z0-9\s]', '', regex=True)
+         .str.lower()
     )
 
 
 def validate_combined_field(df: pd.DataFrame) -> pd.DataFrame:
-    """Build COMBINED_FIELD, FULL_ADDRESS, CUSTOMER_NAME — unchanged logic from original."""
+    """
+    Build COMBINED_FIELD, FULL_ADDRESS, CUSTOMER_NAME from the
+    *_normalized columns (matching artifacts, not display fields).
+    Originals are not touched.
+    """
     address_fields = ['address_line_one', 'address_line_two', 'city', 'state', 'zip_code']
     name_fields = ['first_name', 'last_name']
+    other_fields = ['business_name', 'phone', 'email']
 
-    # Normalize each input column. Missing columns become empty Series.
+    # Pull from *_normalized columns (created by clean_required_columns)
     norm = {}
-    for col in address_fields + name_fields + ['business_name', 'phone', 'email']:
-        if col in df.columns:
+    for col in address_fields + name_fields + other_fields:
+        norm_col = f"{col}_normalized"
+        if norm_col in df.columns:
+            norm[col] = df[norm_col].fillna('').astype(str).str.strip()
+        elif col in df.columns:
+            # Fallback: normalize on the fly from original
             norm[col] = normalize_series(df[col]).str.strip()
         else:
             norm[col] = pd.Series('', index=df.index)
@@ -88,44 +118,98 @@ def validate_combined_field(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def enforce_required_columns(df: pd.DataFrame, required_columns) -> pd.DataFrame:
-    """Ensure required columns exist; truncate zip_code to 5 chars. Vectorized."""
+    """
+    Ensure required columns exist with default empty values.
+    For zip_code: create a normalized 5-char version WITHOUT
+    touching the original.
+    """
     for col in required_columns:
         if col not in df.columns:
             df[col] = ''
             print(f"⚠️ Column '{col}' added with default empty values.")
 
-    # Vectorized zip_code truncation (no apply)
-    if 'zip_code' in df.columns:
-        df['zip_code'] = df['zip_code'].fillna('').astype(str).str[:5]
-
+    # NOTE: zip_code original is left intact. The 5-char truncation is
+    # applied later in clean_required_columns as zip_code_normalized.
     return df
 
 
-def clean_required_columns(df: pd.DataFrame, required_columns) -> pd.DataFrame:
-    """Strip + lowercase the listed columns."""
-    for col in required_columns:
+def clean_required_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Create *_normalized columns for matching fields. Originals are
+    PRESERVED untouched. Passthrough fields are only whitespace-stripped
+    (no case change, no character stripping).
+    """
+    # ── Normalized versions (for matching only) ──
+    for col in FIELDS_TO_NORMALIZE:
+        if col not in df.columns:
+            continue
+
+        if col == 'zip_code':
+            # zip_code: strip + truncate to 5 chars + lowercase
+            df['zip_code_normalized'] = (
+                df['zip_code'].fillna('').astype(str).str.strip().str[:5].str.lower()
+            )
+        else:
+            # Full normalization: unidecode + remove special chars + lowercase
+            df[f"{col}_normalized"] = normalize_series(df[col]).str.strip()
+
+    # ── Passthrough fields: only strip whitespace, preserve everything else ──
+    for col in PASSTHROUGH_FIELDS:
         if col in df.columns:
-            df[col] = df[col].fillna('').astype(str).str.strip().str.lower()
+            df[col] = df[col].fillna('').astype(str).str.strip()
+
+    # ── Originals: just ensure they are strings with NaN → '' (no case/char changes) ──
+    for col in FIELDS_TO_NORMALIZE:
+        if col in df.columns:
+            df[col] = df[col].fillna('').astype(str).str.strip()
+
     return df
 
 
 def _get_required_columns(base_name: str, stage: str):
-    """Centralize the required-column lists used at enforce and clean stages."""
+    """
+    Required column lists for enforce and clean stages.
+    `clean` stage now returns the FULL set of columns that should exist
+    in the output CSV: originals + normalized + derived + passthrough.
+    """
     if base_name == 'pos':
         if stage == "enforce":
+            # Columns expected to exist on input (from SQL).
             return [
                 'warehouse_number', 'membership_number', 'business_name',
                 'first_name', 'last_name', 'address_line_one', 'address_line_two',
                 'city', 'state', 'zip_code', 'phone', 'email',
                 'shop_type', 'order_amount', 'bd_industry', 'sales_reference_id',
+                'industry_description', 'account_number',
+                'fiscal_year_transaction', 'fiscal_period_transaction', 'week',
+                'updated_date', 'pos_id',
             ]
-        else:  # clean
+        else:  # clean — full output column set
             return [
-                'warehouse_number', 'membership_number', 'business_name',
-                'first_name', 'last_name', 'city', 'state', 'zip_code',
-                'phone', 'email', 'address_line_one', 'address_line_two',
+                # Identifiers / IDs (passthrough)
+                'pos_id', 'account_number', 'membership_number', 'warehouse_number',
+
+                # Originals — preserved for ServiceNow payload
+                'business_name', 'first_name', 'last_name',
+                'address_line_one', 'address_line_two',
+                'city', 'state', 'zip_code', 'email', 'phone',
+
+                # Normalized versions — for matching only
+                'business_name_normalized', 'first_name_normalized', 'last_name_normalized',
+                'address_line_one_normalized', 'address_line_two_normalized',
+                'city_normalized', 'state_normalized',
+                'zip_code_normalized', 'email_normalized', 'phone_normalized',
+
+                # Derived matching fields
                 'COMBINED_FIELD', 'FULL_ADDRESS', 'CUSTOMER_NAME',
-                'shop_type', 'order_amount', 'bd_industry', 'sales_reference_id',
+
+                # Passthrough — untransformed, only stripped
+                'shop_type', 'sales_reference_id', 'bd_industry', 'industry_description',
+                'order_amount',
+
+                # Transaction metadata
+                'fiscal_year_transaction', 'fiscal_period_transaction', 'week',
+                'updated_date',
             ]
     else:  # leads
         if stage == "enforce":
@@ -133,13 +217,30 @@ def _get_required_columns(base_name: str, stage: str):
                 'warehouse_number', 'membership_number', 'business_name',
                 'first_name', 'last_name', 'address_line_one', 'address_line_two',
                 'city', 'state', 'zip_code', 'phone', 'email',
+                'lead_id', 'updated_date',
+                'fiscal_year_lead', 'fiscal_period_lead',
             ]
-        else:  # clean
+        else:  # clean — full output column set
             return [
-                'warehouse_number', 'membership_number', 'business_name',
-                'first_name', 'last_name', 'city', 'state', 'zip_code',
-                'phone', 'email', 'address_line_one', 'address_line_two',
+                # Identifiers
+                'lead_id', 'membership_number', 'warehouse_number',
+
+                # Originals — preserved
+                'business_name', 'first_name', 'last_name',
+                'address_line_one', 'address_line_two',
+                'city', 'state', 'zip_code', 'email', 'phone',
+
+                # Normalized — for matching
+                'business_name_normalized', 'first_name_normalized', 'last_name_normalized',
+                'address_line_one_normalized', 'address_line_two_normalized',
+                'city_normalized', 'state_normalized',
+                'zip_code_normalized', 'email_normalized', 'phone_normalized',
+
+                # Derived
                 'COMBINED_FIELD', 'FULL_ADDRESS', 'CUSTOMER_NAME',
+
+                # Lead metadata
+                'updated_date', 'fiscal_year_lead', 'fiscal_period_lead',
             ]
 
 
@@ -150,9 +251,8 @@ def _get_required_columns(base_name: str, stage: str):
 def load_and_preprocess_data_cloud_sql(base_name: str, config_file_path: str) -> str:
     """
     Stream POS or leads data from Cloud SQL through pandas preprocessing
-    to a single GCS CSV. Behavior identical to the original — same
-    normalization, same output path, same CSV format. Only the read path
-    is chunked to bound memory.
+    to a single GCS CSV. Output preserves original column values and
+    adds *_normalized columns for downstream matching.
 
     Parameters
     ----------
@@ -179,7 +279,7 @@ def load_and_preprocess_data_cloud_sql(base_name: str, config_file_path: str) ->
     storage_client = storage.Client()
     fiscal_info = get_costco_fiscal_info()
 
-    # ── Build query (same pattern as original: append fiscal year filter) ──
+    # ── Build query ──
     if base_name == "pos":
         query_input = f'''{query_config.query_pos} = {fiscal_info["fiscal_year"]}'''
         source_folder_input = storage_config.source_folder_input_pos
@@ -189,7 +289,7 @@ def load_and_preprocess_data_cloud_sql(base_name: str, config_file_path: str) ->
         source_folder_input = storage_config.source_folder_input_leads
         destination_folder_input = storage_config.destination_folder_input_leads
 
-    # ── Setup output GCS blob (single file: pos_temp.csv or leads_temp.csv) ──
+    # ── Setup output GCS blob ──
     output_bucket = storage_config.output_bucket_name
     preprocessed_folder = storage_config.temporary_folder
     source_bucket_name = storage_config.source_bucket_name
@@ -202,15 +302,9 @@ def load_and_preprocess_data_cloud_sql(base_name: str, config_file_path: str) ->
 
     # ── Required-column lists ──
     enforce_cols = _get_required_columns(base_name, "enforce")
-    clean_cols = _get_required_columns(base_name, "clean")
+    output_cols = _get_required_columns(base_name, "clean")
 
     # ── Archive source files ──
-    # NOTE: original passed the full DataFrame. Since we no longer load
-    # the full df at once, we pass None. Verify what process_and_archive_files
-    # does with this argument:
-    #   - if it only needs file/bucket metadata → None is fine
-    #   - if it uses len(df) for logging → pass total_rows after the loop
-    #   - if it iterates df contents → refactor to use file-listing instead
     archive_uri = process_and_archive_files(
         source_bucket_name,
         source_folder_input,
@@ -227,25 +321,24 @@ def load_and_preprocess_data_cloud_sql(base_name: str, config_file_path: str) ->
     total_rows = 0
     chunk_count = 0
 
-    # blob.open('w') opens a streaming text upload to GCS.
-    # Flow: SQL → DataFrame chunk → CSV text → gcs_writer → GCS object.
-    # GCS sees a single growing object; the final result is one CSV file.
     with output_blob.open("w") as gcs_writer:
 
-        # pd.read_sql with chunksize returns an iterator of DataFrames
-        # instead of materializing the whole result at once.
         for chunk_df in pd.read_sql(query_input, engine, chunksize=CHUNK_SIZE):
             chunk_count += 1
             chunk_rows = len(chunk_df)
 
-            # Run the existing preprocessing pipeline on this chunk only
+            # Pipeline (originals preserved throughout)
             chunk_df = chunk_df.fillna("")
             chunk_df = enforce_required_columns(chunk_df, enforce_cols)
-            chunk_df = validate_combined_field(chunk_df)
-            chunk_df = clean_required_columns(chunk_df, clean_cols)
+            chunk_df = clean_required_columns(chunk_df)        # creates *_normalized
+            chunk_df = validate_combined_field(chunk_df)       # uses *_normalized
 
-            # Write to CSV stream. Write header only on the first chunk so the
-            # final file has exactly one header row at the top.
+            # Restrict to the output column set (in defined order),
+            # but only include columns that actually exist in the chunk.
+            cols_to_write = [c for c in output_cols if c in chunk_df.columns]
+            chunk_df = chunk_df[cols_to_write]
+
+            # Write header only on first chunk
             chunk_df.to_csv(
                 gcs_writer,
                 index=False,
