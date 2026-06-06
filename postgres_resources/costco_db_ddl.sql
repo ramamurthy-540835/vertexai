@@ -257,7 +257,7 @@ CONSTRAINT unique_confidence_level UNIQUE (confidence_level)
   REFERENCES
     "$SCHEMA_NAME".lead (lead_id) ) ;
 	
---CREATE UNIQUE index IF NOT EXISTS txn_uniq_sales_reference_id_idx  ON "$SCHEMA_NAME".transaction ( sales_reference_id);
+CREATE UNIQUE index IF NOT EXISTS txn_uniq_sales_reference_id_idx  ON "$SCHEMA_NAME".transaction ( sales_reference_id);
 CREATE index IF NOT EXISTS txn_fiscal_year_period_idx  ON "$SCHEMA_NAME".transaction ( fiscal_year,fiscal_period);
 GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA  "$SCHEMA_NAME" TO "$NEW_IAM_USER";
 GRANT USAGE, SELECT ON SEQUENCE "$SCHEMA_NAME".transaction_pos_id_seq TO "$NEW_IAM_USER";
