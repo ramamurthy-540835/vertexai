@@ -5,15 +5,6 @@ on:
     tags:
       - release-spt*
 
-  pull_request:
-    branches:
-      - main
-    paths:
-      - 'terraform/environments/spt/schema/**.tf'
-      - 'postgres_resources/**.sql'
-      - '.github/workflows/provision_spt_schema.yml'
-
-
 jobs:
   run:
     name: "Provision schema"

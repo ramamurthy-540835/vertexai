@@ -84,13 +84,7 @@ ADD COLUMN matching_comments TEXT;
 -- GRANT STATEMENTS
 -- ============================================================
 
-GRANT SELECT ON ALL TABLES IN SCHEMA "$SCHEMA_NAME" TO "postgres";
-
-GRANT DELETE ON ALL TABLES IN SCHEMA "$SCHEMA_NAME" TO "postgres";
-
-GRANT INSERT ON ALL TABLES IN SCHEMA "$SCHEMA_NAME" TO "postgres";
-
-GRANT SELECT, INSERT, UPDATE, DELETE ON 
+GRANT SELECT, INSERT, UPDATE, DELETE , TRUNCATE ON 
     "$SCHEMA_NAME".lead,
     "$SCHEMA_NAME".transaction,
     "$SCHEMA_NAME".leads_embeddings,
@@ -108,19 +102,6 @@ TO "postgres";
 -- ALTER STATEMENTS — Expand all VARCHAR columns < 100 to VARCHAR(100)
 -- Table: lead-mgmt-spt.transaction
 -- ============================================================
-
--- pos_id is excluded — it's the PRIMARY KEY at varchar(120), already > 100
--- lead_id excluded — it's a FK referencing lead.lead_id (varchar(20)),
---                    can't expand without expanding the parent column
-
--- ============================================================
--- ALTER STATEMENTS — Expand all VARCHAR columns < 100 to VARCHAR(100)
--- Table: "$SCHEMA_NAME".transaction
--- ============================================================
-
--- pos_id is excluded — it's the PRIMARY KEY at varchar(120), already > 100
--- lead_id excluded — it's a FK referencing lead.lead_id (varchar(20)),
---                    can't expand without expanding the parent column
 
 -- city: VARCHAR(30) → VARCHAR(100)
 ALTER TABLE "$SCHEMA_NAME".transaction
