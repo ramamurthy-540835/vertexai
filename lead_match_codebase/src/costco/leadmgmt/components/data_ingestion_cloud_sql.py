@@ -52,21 +52,23 @@ PASSTHROUGH_FIELDS = [
 
 def normalize_series(s: pd.Series) -> pd.Series:
     """
-    Normalize a string column:
+    Normalize a string column for matching:
       1. NULL → ''
       2. Cast to string
       3. unidecode (strip accents, transliterate non-ASCII)
-      4. Remove anything that isn't a letter, digit, or whitespace
-      5. Lowercase
+      4. Collapse multiple whitespace to single space
+      5. Strip leading/trailing whitespace
+      6. Lowercase
+    Special characters (&, @, ., -, ', etc.) are PRESERVED.
     """
     return (
         s.fillna('')
          .astype(str)
          .apply(unidecode_expect_ascii)
-         .str.replace(r'[^a-zA-Z0-9\s]', '', regex=True)
+         .str.replace(r'\s+', ' ', regex=True)
+         .str.strip()
          .str.lower()
     )
-
 
 def validate_combined_field(df: pd.DataFrame) -> pd.DataFrame:
     """
@@ -351,4 +353,4 @@ def load_and_preprocess_data_cloud_sql(base_name: str, config_file_path: str) ->
     output_uri = f"gs://{bucket.name}/{output_file}"
     print(f"✅ Wrote {total_rows:,} rows to {output_uri} in {chunk_count} chunks")
 
-    return output_uri
+    return output_uri       
