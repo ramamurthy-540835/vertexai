@@ -1,0 +1,146 @@
+name: "run_adhoc_sql"
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to run SQL against'
+        required: true
+        default: 'spt'
+        type: choice
+        options:
+          - 'adt'
+          - 'qat'
+          - 'spt'
+          - 'prd'
+      sql_file:
+        description: 'Path to SQL file (relative to repo root)'
+        required: true
+        default: 'postgres_resources/adhoc_query.sql'
+        type: string
+      dry_run:
+        description: 'Dry run (terraform plan only)'
+        required: true
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+
+jobs:
+  run_sql:
+    name: "Run ad-hoc SQL on ${{ github.event.inputs.environment }}"
+    runs-on:
+      - self-hosted
+      - us-central1
+
+    permissions:
+      id-token: write
+      contents: read
+
+    env:
+      TF_VAR_gcp_workload_identity_sa_email: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
+
+    steps:
+      - name: "Checkout code"
+        uses: actions/checkout@v4
+
+      - name: "Set environment variables"
+        run: |
+          ENV="${{ github.event.inputs.environment }}"
+          if [[ "$ENV" == "prd" ]]; then
+            echo "PROJECT_ID=p-601-pd-bcleadsmgmt-prd" >> $GITHUB_ENV
+            echo "SCHEMA_NAME=lead_mgmt_prd" >> $GITHUB_ENV
+            echo "INSTANCE_NAME=lead-mgmt-prd" >> $GITHUB_ENV
+            echo "SA_EMAIL_KEY=GCP_WORKLOAD_IDENTITY_SA_EMAIL_PRD" >> $GITHUB_ENV
+          else
+            echo "PROJECT_ID=p-601-np-bcleadsmgmt-${ENV}" >> $GITHUB_ENV
+            echo "SCHEMA_NAME=lead_mgmt_${ENV}" >> $GITHUB_ENV
+            echo "INSTANCE_NAME=lead-mgmt-${ENV}" >> $GITHUB_ENV
+            echo "SA_EMAIL_KEY=GCP_WORKLOAD_IDENTITY_SA_EMAIL" >> $GITHUB_ENV
+          fi
+
+      - name: "Auth in GCP"
+        id: "auth"
+        uses: "google-github-actions/auth@v2"
+        with:
+          create_credentials_file: true
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
+          service_account: ${{ github.event.inputs.environment == 'prd' && secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL_PRD || secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
+          project_id: ${{ env.PROJECT_ID }}
+
+      - name: "Install utilities"
+        run: |
+          if ! command -v psql >/dev/null 2>&1; then
+            sudo apt-get update && sudo apt-get install -y postgresql-client
+          fi
+          if ! command -v unzip >/dev/null 2>&1; then
+            sudo apt-get install -y unzip
+          fi
+
+      - name: "Setup Cloud SQL Proxy"
+        run: |
+          if ! command -v cloud-sql-proxy >/dev/null 2>&1; then
+            wget https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/v2.8.0/cloud-sql-proxy.linux.amd64 -O cloud-sql-proxy
+            chmod +x cloud-sql-proxy
+          fi
+
+          ./cloud-sql-proxy ${{ env.PROJECT_ID }}:us-central1:${{ env.INSTANCE_NAME }} \
+            --port 5432 \
+            --private-ip \
+            --auto-iam-authn &
+
+          sleep 10
+
+          PGPASSWORD="$(gcloud auth print-access-token)" psql \
+            "hostaddr=127.0.0.1 port=5432 dbname=lead-mgmt-db user=gco-iam-svc-cicd-mbr-bc-np@gcp-prj-cicd-core.iam sslmode=disable" \
+            --no-password -c '\conninfo'
+
+      - name: "Show SQL file contents"
+        run: |
+          echo "─────────────────────────────────────────────"
+          echo "SQL file: ${{ github.event.inputs.sql_file }}"
+          echo "─────────────────────────────────────────────"
+          cat "${{ github.event.inputs.sql_file }}"
+          echo "─────────────────────────────────────────────"
+
+      - name: "Setup Terraform"
+        uses: hashicorp/setup-terraform@v3
+
+      - name: "Terraform Init"
+        working-directory: ./terraform/adhoc_sql
+        run: terraform init
+
+      - name: "Terraform Plan"
+        working-directory: ./terraform/adhoc_sql
+        run: |
+          terraform plan \
+            -var="project_id=${{ env.PROJECT_ID }}" \
+            -var="schema_name=${{ env.SCHEMA_NAME }}" \
+            -var="sql_file=../../${{ github.event.inputs.sql_file }}" \
+            -var="run_id=${{ github.run_id }}" \
+            -out=plan.tfplan -input=false
+
+      - name: "Terraform Apply"
+        if: github.event.inputs.dry_run == 'false'
+        working-directory: ./terraform/adhoc_sql
+        run: terraform apply -input=false -auto-approve plan.tfplan
+
+      - name: "Summary"
+        if: always()
+        run: |
+          {
+            echo "## Ad-hoc SQL Run — ${{ github.event.inputs.environment }}"
+            echo ""
+            echo "- **Environment:**  \`${{ github.event.inputs.environment }}\`"
+            echo "- **Project:**      \`${{ env.PROJECT_ID }}\`"
+            echo "- **Database:**     \`lead-mgmt-db\`"
+            echo "- **Schema:**       \`${{ env.SCHEMA_NAME }}\`"
+            echo "- **SQL File:**     \`${{ github.event.inputs.sql_file }}\`"
+            echo "- **Dry Run:**      \`${{ github.event.inputs.dry_run }}\`"
+            echo ""
+            echo "### SQL Content"
+            echo '```sql'
+            cat "${{ github.event.inputs.sql_file }}"
+            echo '```'
+          } >> $GITHUB_STEP_SUMMARY

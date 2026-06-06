@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX IF NOT EXISTS txn_uniq_sales_reference_id_idx  ON "$SCHEMA_NAME".transaction (sales_reference_id);
