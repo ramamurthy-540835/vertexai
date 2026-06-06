@@ -156,7 +156,6 @@ def generate_post_json(df):
     # ── Build result payload ──
     results = []
     # Simple lookup dicts defined inline
-    shop_type_map = {"delivery": "Delivery", "walk-in": "Walk-in", "walk in": "Walk-in"}
     match_result_map = {"match": "Complete Match", "potential": "Potential Match"}
 
     for _, row in df.iterrows():
@@ -166,11 +165,11 @@ def generate_post_json(df):
         zip_code = str(int(float(zip_val))) if zip_val not in ("", None, "nan") else ""
         result = {
             # POS information
-            "u_gcp_id":            str(row.get("pos_id", "")),
+            "u_gcp_id":            (row.get("pos_id", "")),
             "active":              True,
-            "u_type":              shop_type_map.get(str(row.get("shop_type", "")).strip().lower(), str(row.get("shop_type", ""))), 
+            "u_type":              str((row.get("shop_type", ""))),
             "u_business_name":     str(row.get("business_name_transaction", "")),
-            "u_address_1":         str(row.get("address_line_one", "")),
+            "u_address_1":         str(row.get("address_line_onestr", "")),
             "u_address_2":         str(row.get("address_line_two", "")),
             "u_first":             str(row.get("first_name", "")),
             "u_last":              str(row.get("last_name", "")),
