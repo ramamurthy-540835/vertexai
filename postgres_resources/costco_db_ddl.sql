@@ -257,10 +257,10 @@ CONSTRAINT unique_confidence_level UNIQUE (confidence_level)
   REFERENCES
     "$SCHEMA_NAME".lead (lead_id) ) ;
 	
-CREATE UNIQUE index IF NOT EXISTS txn_uniq_sales_reference_id_idx  ON "$SCHEMA_NAME".transaction ( sales_reference_id);
+CREATE UNIQUE INDEX IF NOT EXISTS txn_uniq_sales_reference_id_idx  ON "$SCHEMA_NAME".transaction (sales_reference_id);
 CREATE index IF NOT EXISTS txn_fiscal_year_period_idx  ON "$SCHEMA_NAME".transaction ( fiscal_year,fiscal_period);
-GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA  "$SCHEMA_NAME" TO "$NEW_IAM_USER";
-GRANT USAGE, SELECT ON SEQUENCE "$SCHEMA_NAME".transaction_pos_id_seq TO "$NEW_IAM_USER";
+-- GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA  "$SCHEMA_NAME" TO "$NEW_IAM_USER";
+-- GRANT USAGE, SELECT ON SEQUENCE "$SCHEMA_NAME".transaction_pos_id_seq TO "$NEW_IAM_USER";
 
 
 -- Additional index 
@@ -280,3 +280,19 @@ CREATE INDEX IF NOT EXISTS lead_fiscal_year_idx
 -- 4. pos_embeddings composite — used by fuzzy matching queries
 CREATE INDEX IF NOT EXISTS pos_embeddings_warehouse_fiscal_idx 
     ON "$SCHEMA_NAME".pos_embeddings (warehouse_number, fiscal_year, fiscal_period);
+
+
+GRANT ALL PRIVILEGES ON "$SCHEMA_NAME".account, 
+                       "$SCHEMA_NAME".lead, 
+                       "$SCHEMA_NAME".contact,
+                       "$SCHEMA_NAME".transaction,
+                       "$SCHEMA_NAME".batch_audit,
+                       "$SCHEMA_NAME".match_audit,
+                       "$SCHEMA_NAME".error_audit,
+                       "$SCHEMA_NAME".api_audit,
+                       "$SCHEMA_NAME".leads_embeddings,
+                       "$SCHEMA_NAME".pos_embeddings,
+                       "$SCHEMA_NAME".match_configuration
+TO "$NEW_IAM_USER";
+
+GRANT USAGE, SELECT ON SEQUENCE "$SCHEMA_NAME".transaction_pos_id_seq TO "$NEW_IAM_USER";
