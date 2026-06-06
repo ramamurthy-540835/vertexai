@@ -16,17 +16,20 @@ log = logging.getLogger(__name__)
 # ==============================================================
 # SCORING CONSTANTS
 # ==============================================================
+# Matching is done on *_normalized columns (created in preprocess).
+# Originals (e.g. business_name, address_line_one) are preserved in
+# the dataframe and used for the ServiceNow payload.
 KEY_FIELDS = {
-    "business_name":    40,
-    "address_line_one": 40,
-    "email":            30,
-    "phone":            20,
+    "business_name_normalized":    40,
+    "address_line_one_normalized": 40,
+    "email_normalized":            30,
+    "phone_normalized":            20,
 }
 
 SUPPLEMENTARY_FIELDS = {
-    "zip_code": 10,
-    "state":     5,
-    "city":      5,
+    "zip_code_normalized": 10,
+    "state_normalized":     5,
+    "city_normalized":      5,
 }
 
 MINIMUM_SCORE  = 80
@@ -43,6 +46,11 @@ ALL_FIELDS = (
 )
 
 
+# Friendly names for matching comments (strip the _normalized suffix)
+def _friendly(field: str) -> str:
+    return field.replace("_normalized", "")
+
+
 # ==============================================================
 # MATCHING COMMENT BUILDER
 # ==============================================================
@@ -57,7 +65,8 @@ def build_matching_comment(row: pd.Series) -> str:
     Architecture note: GCP owns matching logic; ServiceNow receives
     this comment as part of the confirmed match record payload so
     agents can understand why the system matched a lead to a POS
-    transaction without re-running the algorithm.
+    transaction without re-running the algorithm. Field names are
+    shown without the _normalized suffix for human readability.
     """
     score        = row["similarity_score"]
     result       = row["match_result"]
@@ -80,7 +89,8 @@ def build_matching_comment(row: pd.Series) -> str:
 
     # -- Key fields that matched ------------------------------
     if matched_keys:
-        parts.append(f"Key fields matched: {', '.join(matched_keys)}.")
+        friendly_keys = [_friendly(f) for f in matched_keys]
+        parts.append(f"Key fields matched: {', '.join(friendly_keys)}.")
     else:
         parts.append(
             "No individual key fields matched exactly; "
@@ -89,7 +99,8 @@ def build_matching_comment(row: pd.Series) -> str:
 
     # -- Supplementary fields that matched --------------------
     if matched_supp:
-        parts.append(f"Supplementary fields matched: {', '.join(matched_supp)}.")
+        friendly_supp = [_friendly(f) for f in matched_supp]
+        parts.append(f"Supplementary fields matched: {', '.join(friendly_supp)}.")
 
     # -- Primary transaction note ----------------------------
     if row.get("primary_transaction"):
@@ -105,6 +116,11 @@ def build_matching_comment(row: pd.Series) -> str:
 # PREPROCESS
 # ==============================================================
 def preprocess(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Normalize warehouse_number and clean *_normalized matching columns.
+    Original (display) columns are NOT touched here — they flow through
+    to the ServiceNow payload with their original casing intact.
+    """
     df = df.copy()
     df = df.dropna(subset=["warehouse_number"])
     df["warehouse_number"] = (
@@ -113,7 +129,19 @@ def preprocess(df: pd.DataFrame) -> pd.DataFrame:
         .astype(str)
     )
     df = df[df["warehouse_number"] != ""]
+
+    # Only operate on the *_normalized matching columns. If a normalized
+    # column is missing (shouldn't happen given preprocess.py output),
+    # fall back to creating it from the original.
     for col in ALL_FIELDS:
+        if col not in df.columns:
+            original_col = _friendly(col)
+            if original_col in df.columns:
+                df[col] = df[original_col].astype(str).str.strip().str.lower()
+            else:
+                df[col] = pd.NA
+                continue
+
         df[col] = (
             df[col]
             .astype(str)
@@ -332,7 +360,9 @@ def classify_matches(
 
     # ==========================================================
     # BUILD SUBSETS FOR FINAL MERGE
-    # Rename only inside subset — original sales df untouched
+    # Pull ORIGINAL columns (not normalized) so the ServiceNow
+    # payload carries original casing and special characters.
+    # Rename only inside subset — original sales df untouched.
     # ==========================================================
     lead_subset = leads[[
         "lead_id",
@@ -347,26 +377,26 @@ def classify_matches(
         [[
             "pos_id",
             "account_number",
-            "business_name_transaction",
+            "business_name_transaction",   # original (renamed)
             "membership_number",
             "warehouse_number",
             "fiscal_year_transaction",
             "fiscal_period_transaction",
             "week",
-            "shop_type",
-            "sales_reference_id",
+            "shop_type",                   # passthrough
+            "sales_reference_id",          # passthrough
             "order_amount",
-            "bd_industry",
-            "first_name",
-            "last_name",
-            "address_line_one",
-            "address_line_two",
-            "city",
-            "state",
-            "zip_code",
-            "email",
-            "phone",
-            "industry_description"
+            "bd_industry",                 # passthrough
+            "first_name",                  # original
+            "last_name",                   # original
+            "address_line_one",            # original
+            "address_line_two",            # original
+            "city",                        # original
+            "state",                       # original
+            "zip_code",                    # original
+            "email",                       # original
+            "phone",                       # original
+            "industry_description"         # passthrough
         ]]
     )
 
@@ -472,7 +502,7 @@ def classify_matches(
         "order_amount",
         "industry_description",
 
-        # POS customer details
+        # POS customer details (originals — for ServiceNow payload)
         "first_name",
         "last_name",
         "address_line_one",
