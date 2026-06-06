@@ -171,7 +171,7 @@ class WriteToPostgresIAM(beam.DoFn):
                 sql = (
                     f'INSERT INTO "{self.db_schema}".{self.db_table} ({col_list}) '
                     f'VALUES {values_ph} '
-                    f'ON CONFLICT DO NOTHING'
+                    f'ON CONFLICT (sales_reference_id) DO NOTHING'
                 )
 
                 flat_values = tuple(
