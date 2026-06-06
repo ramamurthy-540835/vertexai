@@ -170,7 +170,7 @@ def generate_post_json(df):
             "active":              True,
             "u_type":              str((row.get("shop_type", ""))),
             "u_business_name":     str(row.get("business_name_transaction", "")),
-            "u_address_1":         str(row.get("address_line_onestr", "")),
+            "u_address_1":         str(row.get("address_line_one", "")),
             "u_address_2":         str(row.get("address_line_two", "")),
             "u_first":             str(row.get("first_name", "")),
             "u_last":              str(row.get("last_name", "")),
