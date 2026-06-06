@@ -56,20 +56,21 @@ def normalize_series(s: pd.Series) -> pd.Series:
       1. NULL → ''
       2. Cast to string
       3. unidecode (strip accents, transliterate non-ASCII)
-      4. Collapse multiple whitespace to single space
-      5. Strip leading/trailing whitespace
-      6. Lowercase
-    Special characters (&, @, ., -, ', etc.) are PRESERVED.
+      4. Remove anything that isn't a letter, digit, or whitespace
+      5. Collapse multiple whitespace to single space
+      6. Strip leading/trailing whitespace
+      7. Lowercase
+    Special characters (&, @, ., -, ', etc.) are REMOVED.
     """
     return (
         s.fillna('')
          .astype(str)
          .apply(unidecode_expect_ascii)
+         .str.replace(r'[^a-zA-Z0-9\s]', '', regex=True)
          .str.replace(r'\s+', ' ', regex=True)
          .str.strip()
          .str.lower()
     )
-
 def validate_combined_field(df: pd.DataFrame) -> pd.DataFrame:
     """
     Build COMBINED_FIELD, FULL_ADDRESS, CUSTOMER_NAME from the
