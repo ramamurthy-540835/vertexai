@@ -161,8 +161,9 @@ def generate_post_json(df):
     for _, row in df.iterrows():
 
         # Zip code — just convert to int then string to strip the .0
+        # Zip code — pass through as string, handles both 5-digit and ZIP+4 ("98133-5628")
         zip_val = row.get("zip_code", "")
-        zip_code = str(int(float(zip_val))) if zip_val not in ("", None, "nan") else ""
+        zip_code = str(zip_val).strip() if zip_val not in ("", None, "nan") else ""
         result = {
             # POS information
             "u_gcp_id":            (row.get("pos_id", "")),
