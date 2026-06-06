@@ -1,10 +1,10 @@
-name: "run_adhoc_sql"
+name: "run_sql_query"
 
 on:
   workflow_dispatch:
     inputs:
       environment:
-        description: 'Environment to run SQL against'
+        description: 'Environment'
         required: true
         default: 'spt'
         type: choice
@@ -13,13 +13,12 @@ on:
           - 'qat'
           - 'spt'
           - 'prd'
-      sql_file:
-        description: 'Path to SQL file (relative to repo root)'
+      sql_query:
+        description: 'SQL query to execute (use $SCHEMA_NAME placeholder for schema)'
         required: true
-        default: 'postgres_resources/adhoc_query.sql'
         type: string
       dry_run:
-        description: 'Dry run (terraform plan only)'
+        description: 'Dry run (print SQL only, do not execute)'
         required: true
         default: 'true'
         type: choice
@@ -28,8 +27,8 @@ on:
           - 'false'
 
 jobs:
-  run_sql:
-    name: "Run ad-hoc SQL on ${{ github.event.inputs.environment }}"
+  run:
+    name: "Run SQL on ${{ github.event.inputs.environment }}"
     runs-on:
       - self-hosted
       - us-central1
@@ -38,13 +37,7 @@ jobs:
       id-token: write
       contents: read
 
-    env:
-      TF_VAR_gcp_workload_identity_sa_email: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
-
     steps:
-      - name: "Checkout code"
-        uses: actions/checkout@v4
-
       - name: "Set environment variables"
         run: |
           ENV="${{ github.event.inputs.environment }}"
@@ -52,16 +45,13 @@ jobs:
             echo "PROJECT_ID=p-601-pd-bcleadsmgmt-prd" >> $GITHUB_ENV
             echo "SCHEMA_NAME=lead_mgmt_prd" >> $GITHUB_ENV
             echo "INSTANCE_NAME=lead-mgmt-prd" >> $GITHUB_ENV
-            echo "SA_EMAIL_KEY=GCP_WORKLOAD_IDENTITY_SA_EMAIL_PRD" >> $GITHUB_ENV
           else
             echo "PROJECT_ID=p-601-np-bcleadsmgmt-${ENV}" >> $GITHUB_ENV
             echo "SCHEMA_NAME=lead_mgmt_${ENV}" >> $GITHUB_ENV
             echo "INSTANCE_NAME=lead-mgmt-${ENV}" >> $GITHUB_ENV
-            echo "SA_EMAIL_KEY=GCP_WORKLOAD_IDENTITY_SA_EMAIL" >> $GITHUB_ENV
           fi
 
       - name: "Auth in GCP"
-        id: "auth"
         uses: "google-github-actions/auth@v2"
         with:
           create_credentials_file: true
@@ -69,19 +59,16 @@ jobs:
           service_account: ${{ github.event.inputs.environment == 'prd' && secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL_PRD || secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
           project_id: ${{ env.PROJECT_ID }}
 
-      - name: "Install utilities"
+      - name: "Install psql"
         run: |
           if ! command -v psql >/dev/null 2>&1; then
             sudo apt-get update && sudo apt-get install -y postgresql-client
-          fi
-          if ! command -v unzip >/dev/null 2>&1; then
-            sudo apt-get install -y unzip
           fi
 
       - name: "Setup Cloud SQL Proxy"
         run: |
           if ! command -v cloud-sql-proxy >/dev/null 2>&1; then
-            wget https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/v2.8.0/cloud-sql-proxy.linux.amd64 -O cloud-sql-proxy
+            wget -q https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/v2.8.0/cloud-sql-proxy.linux.amd64 -O cloud-sql-proxy
             chmod +x cloud-sql-proxy
           fi
 
@@ -91,56 +78,68 @@ jobs:
             --auto-iam-authn &
 
           sleep 10
+          echo "Cloud SQL Proxy started"
 
-          PGPASSWORD="$(gcloud auth print-access-token)" psql \
-            "hostaddr=127.0.0.1 port=5432 dbname=lead-mgmt-db user=gco-iam-svc-cicd-mbr-bc-np@gcp-prj-cicd-core.iam sslmode=disable" \
-            --no-password -c '\conninfo'
-
-      - name: "Show SQL file contents"
+      - name: "Prepare SQL"
+        env:
+          SQL_INPUT: ${{ github.event.inputs.sql_query }}
         run: |
+          # Write the query to a temp file (handles multi-line, special chars safely)
+          echo "$SQL_INPUT" > /tmp/query_raw.sql
+
+          # Substitute $SCHEMA_NAME placeholder
+          export SCHEMA_NAME="${{ env.SCHEMA_NAME }}"
+          envsubst < /tmp/query_raw.sql > /tmp/query.sql
+
           echo "─────────────────────────────────────────────"
-          echo "SQL file: ${{ github.event.inputs.sql_file }}"
+          echo "Environment:  ${{ github.event.inputs.environment }}"
+          echo "Project:      ${{ env.PROJECT_ID }}"
+          echo "Database:     lead-mgmt-db"
+          echo "Schema:       ${{ env.SCHEMA_NAME }}"
+          echo "Dry run:      ${{ github.event.inputs.dry_run }}"
           echo "─────────────────────────────────────────────"
-          cat "${{ github.event.inputs.sql_file }}"
+          echo "SQL to execute:"
+          echo "─────────────────────────────────────────────"
+          cat /tmp/query.sql
           echo "─────────────────────────────────────────────"
 
-      - name: "Setup Terraform"
-        uses: hashicorp/setup-terraform@v3
-
-      - name: "Terraform Init"
-        working-directory: ./terraform/adhoc_sql
-        run: terraform init
-
-      - name: "Terraform Plan"
-        working-directory: ./terraform/adhoc_sql
-        run: |
-          terraform plan \
-            -var="project_id=${{ env.PROJECT_ID }}" \
-            -var="schema_name=${{ env.SCHEMA_NAME }}" \
-            -var="sql_file=../../${{ github.event.inputs.sql_file }}" \
-            -var="run_id=${{ github.run_id }}" \
-            -out=plan.tfplan -input=false
-
-      - name: "Terraform Apply"
+      - name: "Execute SQL"
         if: github.event.inputs.dry_run == 'false'
-        working-directory: ./terraform/adhoc_sql
-        run: terraform apply -input=false -auto-approve plan.tfplan
+        run: |
+          set -euo pipefail
+          export PGPASSWORD=$(gcloud auth print-access-token)
+
+          psql "host=127.0.0.1 \
+                port=5432 \
+                dbname=lead-mgmt-db \
+                user=gco-iam-svc-cicd-mbr-bc-np@gcp-prj-cicd-core.iam \
+                sslmode=disable" \
+            -v ON_ERROR_STOP=1 \
+            -f /tmp/query.sql
+
+          echo ""
+          echo "✅ SQL executed successfully"
+
+      - name: "Dry run notice"
+        if: github.event.inputs.dry_run == 'true'
+        run: |
+          echo "⚠️  Dry run mode — SQL was NOT executed."
+          echo "    Re-run with dry_run=false to apply."
 
       - name: "Summary"
         if: always()
         run: |
           {
-            echo "## Ad-hoc SQL Run — ${{ github.event.inputs.environment }}"
+            echo "## SQL Execution — ${{ github.event.inputs.environment }}"
             echo ""
             echo "- **Environment:**  \`${{ github.event.inputs.environment }}\`"
             echo "- **Project:**      \`${{ env.PROJECT_ID }}\`"
             echo "- **Database:**     \`lead-mgmt-db\`"
             echo "- **Schema:**       \`${{ env.SCHEMA_NAME }}\`"
-            echo "- **SQL File:**     \`${{ github.event.inputs.sql_file }}\`"
             echo "- **Dry Run:**      \`${{ github.event.inputs.dry_run }}\`"
             echo ""
-            echo "### SQL Content"
+            echo "### SQL Query"
             echo '```sql'
-            cat "${{ github.event.inputs.sql_file }}"
+            cat /tmp/query.sql 2>/dev/null || echo "(SQL prep step did not run)"
             echo '```'
           } >> $GITHUB_STEP_SUMMARY
