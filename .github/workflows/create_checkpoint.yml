@@ -1,5 +1,9 @@
 name: "create_checkpoint_state"
 
+# Creates a Cloud Workflow checkpoint state file in GCS.
+# Multi-line inputs are handled via heredoc-to-file (not env vars) to avoid
+# GitHub Actions collapsing newlines into spaces.
+
 on:
   workflow_dispatch:
     inputs:
@@ -14,7 +18,7 @@ on:
           - 'spt'
           - 'prd'
       run_id:
-        description: 'Manifest run_id (e.g. run-20260606-202446) — state file will be saved as state/<run_id>.json'
+        description: 'Manifest run_id (e.g. run-20260606-202446) — state file saved as state/<run_id>.json'
         required: true
         type: string
       stage:
@@ -80,31 +84,75 @@ jobs:
       - name: "Set up gcloud"
         uses: google-github-actions/setup-gcloud@v2
 
-      - name: "Build state file"
+      # CRITICAL FIX: write multi-line inputs to files via heredoc.
+      # Passing them through env vars (env: VAR: ${{ inputs.x }}) causes GitHub
+      # Actions to collapse newlines into spaces. The heredoc preserves newlines
+      # because expression substitution happens BEFORE shell interpretation,
+      # and 'INPUT_EOF' is quoted so bash doesn't try to expand the contents.
+      - name: "Write inputs to files (preserves newlines)"
+        run: |
+          # Write successful_files input to file
+          cat > /tmp/successful_raw.txt <<'INPUT_EOF'
+          ${{ github.event.inputs.successful_files }}
+          INPUT_EOF
+
+          # Write failed_files input to file (may be empty)
+          cat > /tmp/failed_raw.txt <<'INPUT_EOF'
+          ${{ github.event.inputs.failed_files }}
+          INPUT_EOF
+
+          echo "─── Raw successful_files input (${WCSUCCESS:-?} lines) ───"
+          cat /tmp/successful_raw.txt
+          echo "─── (end of raw input) ───"
+          echo ""
+          echo "Line count: $(wc -l < /tmp/successful_raw.txt)"
+          echo "Char count: $(wc -c < /tmp/successful_raw.txt)"
+
+      - name: "Build state file from raw inputs"
         env:
-          SUCCESSFUL_INPUT: ${{ github.event.inputs.successful_files }}
-          FAILED_INPUT: ${{ github.event.inputs.failed_files }}
           RUN_ID: ${{ github.event.inputs.run_id }}
           STAGE: ${{ github.event.inputs.stage }}
           BATCH_ID: ${{ github.event.inputs.batch_id }}
         run: |
           set -euo pipefail
 
-          # Use python to build JSON safely — handles quotes, spaces, special chars
           python3 <<'PYEOF' > /tmp/state.json
           import json
           import os
           from datetime import datetime, timezone
 
-          def parse_lines(raw):
-              if not raw or not raw.strip():
+          def parse_file(path):
+              """Read a file and return list of non-empty, stripped lines.
+              Tolerates space-separated input as a fallback if newlines were lost."""
+              if not os.path.exists(path):
                   return []
-              return [line.strip() for line in raw.splitlines() if line.strip()]
+              with open(path) as f:
+                  raw = f.read()
+              if not raw.strip():
+                  return []
+
+              # Primary: newline-separated
+              lines = [line.strip() for line in raw.splitlines() if line.strip()]
+
+              # Fallback: if we got 1 line but it contains multiple 'gs://' tokens,
+              # the user's newlines were mangled. Split on 'gs://' boundaries.
+              if len(lines) == 1 and lines[0].count('gs://') > 1:
+                  text = lines[0]
+                  parts = text.split('gs://')
+                  # First element is empty (text starts with 'gs://'), skip it
+                  lines = ['gs://' + p.strip() for p in parts if p.strip()]
+                  print(f"WARN: newlines were lost; recovered {len(lines)} entries by splitting on 'gs://'",
+                        flush=True)
+
+              return lines
+
+          successful = parse_file('/tmp/successful_raw.txt')
+          failed = parse_file('/tmp/failed_raw.txt')
 
           state = {
               "stage": os.environ["STAGE"],
-              "successful_files": parse_lines(os.environ.get("SUCCESSFUL_INPUT", "")),
-              "failed_files": parse_lines(os.environ.get("FAILED_INPUT", "")),
+              "successful_files": successful,
+              "failed_files": failed,
               "batch_id": os.environ["BATCH_ID"],
               "updated_at": datetime.now(timezone.utc).isoformat(),
               "created_by": "github-actions-manual-checkpoint",
@@ -116,25 +164,22 @@ jobs:
 
           echo ""
           echo "============================================================"
-          echo "State file content:"
+          echo "Generated state file:"
           echo "============================================================"
           cat /tmp/state.json
-          echo ""
           echo "============================================================"
 
-          # Count files for summary
           SUCCESS_COUNT=$(jq '.successful_files | length' /tmp/state.json)
           FAILED_COUNT=$(jq '.failed_files | length' /tmp/state.json)
 
+          echo ""
           echo "Summary:"
           echo "  Stage:            ${STAGE}"
           echo "  Run ID:           ${RUN_ID}"
           echo "  Batch ID:         ${BATCH_ID}"
           echo "  Successful files: ${SUCCESS_COUNT}"
           echo "  Failed files:     ${FAILED_COUNT}"
-          echo "============================================================"
 
-          # Export for next step
           echo "SUCCESS_COUNT=${SUCCESS_COUNT}" >> $GITHUB_ENV
           echo "FAILED_COUNT=${FAILED_COUNT}" >> $GITHUB_ENV
 
@@ -142,14 +187,15 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Validate JSON syntax
+          # JSON syntax
           jq empty /tmp/state.json
           echo "✅ JSON is valid"
 
-          # Validate required fields
+          # Required fields
           STAGE=$(jq -r '.stage' /tmp/state.json)
           BATCH_ID=$(jq -r '.batch_id' /tmp/state.json)
           SUCCESS_COUNT=$(jq '.successful_files | length' /tmp/state.json)
+          SUCCESS_TYPE=$(jq -r '.successful_files | type' /tmp/state.json)
 
           if [[ -z "$STAGE" || "$STAGE" == "null" ]]; then
             echo "❌ stage is missing or null"
@@ -161,18 +207,46 @@ jobs:
             exit 1
           fi
 
-          if [[ "$SUCCESS_COUNT" -eq 0 ]] && [[ "$STAGE" != "snow_sync_done" ]]; then
-            echo "⚠️  WARNING: no successful_files but stage is '$STAGE'"
-            echo "    This means resume will skip the move step. Continuing anyway."
+          # Critical: successful_files must be an array, not a string
+          if [[ "$SUCCESS_TYPE" != "array" ]]; then
+            echo "❌ successful_files is type '${SUCCESS_TYPE}', expected 'array'"
+            exit 1
+          fi
+          echo "✅ successful_files is array of length ${SUCCESS_COUNT}"
+
+          # Sanity check: each entry should look like a gs:// path
+          INVALID=$(jq -r '.successful_files[] | select(startswith("gs://") | not)' /tmp/state.json | head -5)
+          if [[ -n "$INVALID" ]]; then
+            echo "⚠️  WARNING: some entries don't start with gs://"
+            echo "$INVALID"
           fi
 
-          echo "✅ State file passes validation"
+          # Check no entry is suspiciously long (indicates concatenation bug)
+          MAX_LEN=$(jq '[.successful_files[] | length] | max // 0' /tmp/state.json)
+          if [[ "$MAX_LEN" -gt 500 ]]; then
+            echo "❌ Suspiciously long entry detected (max length: ${MAX_LEN})"
+            echo "   This usually means newlines were mangled."
+            jq -r '.successful_files[] | select(length > 500)' /tmp/state.json | head -1
+            exit 1
+          fi
+          echo "✅ All entries are reasonable length (max: ${MAX_LEN})"
+
+          echo ""
+          echo "Files in successful_files:"
+          jq -r '.successful_files[]' /tmp/state.json | nl
+
+          if [[ "$SUCCESS_COUNT" -eq 0 ]] && [[ "$STAGE" != "snow_sync_done" ]]; then
+            echo "⚠️  WARNING: no successful_files but stage is '$STAGE'"
+          fi
+
+          echo ""
+          echo "✅ State file passes all validation"
 
       - name: "Check if state file already exists"
         run: |
           set -euo pipefail
           STATE_PATH="gs://${{ env.BUCKET_NAME }}/state/${{ github.event.inputs.run_id }}.json"
-          
+
           if gcloud storage ls "$STATE_PATH" --project="${{ env.PROJECT_ID }}" 2>/dev/null; then
             echo "⚠️  State file already exists at: $STATE_PATH"
             echo "    Will overwrite if dry_run=false."
