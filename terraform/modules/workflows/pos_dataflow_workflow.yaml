@@ -1,27 +1,14 @@
-# pos_dataflow_workflow.yaml
-# Triggered by Eventarc → Pub/Sub when a manifest.json lands in the
-# configured manifests folder.
+# pos_dataflow_workflow.yaml — with checkpoint/resume support
 #
-# Flow:
-#   1. Decode the Pub/Sub event → get manifest path + bucket
-#   2. Read env config from gs://<bucket>/config/workflow-config.json
-#   3. Validate manifest path matches expected prefix
-#   4. Read the manifest from GCS
-#   5. Launch Dataflow Flex Template jobs in parallel (bounded concurrency)
-#      — successful files tracked separately from failed ones
-#   6. After Dataflow: MOVE only successfully processed files to processed/
-#   7. Raise error if any jobs failed (after moving successful files)
-#   8. Trigger downstream snow_sync_workflow (optional, default: false)
-#   9. Wait for downstream to complete
-#  10. Done — workflow SUCCEEDED if downstream also succeeded, FAILED otherwise
-#      (but files are already moved and data is already in DB by step 6)
+# CHECKPOINT MODEL:
+#   State stored at gs://<bucket>/state/<run_id>.json
+#   { "stage": "dataflow_done" | "moved" | "snow_sync_done",
+#     "successful_files": [...], "failed_files": [...], "batch_id": "..." }
 #
-# FIXES applied vs original:
-#   - parse_path: removed all split/index logic. bucket is already known from
-#     the Pub/Sub event so object_only is derived with a single text.substring.
-#     This avoids list indexing entirely (unsupported in Cloud Workflows).
-#   - move_files_to_processed: added shared: [bucket, incoming_prefix,
-#     processed_prefix] so parallel branches can read those variables safely.
+# On every execution:
+#   - Read state file (if exists) to determine where to resume
+#   - Skip stages that are already complete
+#   - Write/update state after each successful stage
 
 main:
   params: [event]
@@ -68,10 +55,10 @@ main:
           - processed_prefix: '${cfg.processed_prefix}'
           - next_workflow: '${cfg.downstream.next_workflow}'
           - next_wf_location: '${cfg.downstream.next_workflow_location}'
-          - all_job_states: []
           - successful_files: []
           - failed_files: []
           - downstream_execution: null
+          - checkpoint_stage: "none"   # tracks where to resume from
 
     # ── 3. Defensive: ignore non-manifest uploads ──────────────────────
     - validate_manifest_path:
@@ -94,21 +81,64 @@ main:
           - run_id: '${default(map.get(manifest, "run_id"), manifest_object)}'
           - all_files: '${manifest.files}'
           - file_count: '${len(all_files)}'
-          - batch_id: '${uuid.generate()}'
+          - state_object: '${"state/" + run_id + ".json"}'
+
+    # ── 4b. CHECKPOINT — read state file if it exists ──────────────────
+    - try_read_state:
+        try:
+          call: googleapis.storage.v1.objects.get
+          args:
+            bucket: '${bucket}'
+            object: '${text.url_encode(state_object)}'
+            alt: media
+          result: state
+        except:
+          as: e
+          steps:
+            - no_state_yet:
+                assign:
+                  - state: null
+                  - batch_id: '${uuid.generate()}'
+
+    - apply_checkpoint:
+        switch:
+          # State exists → resume from where we left off
+          - condition: '${state != null}'
+            steps:
+              - load_checkpoint:
+                  assign:
+                    - checkpoint_stage: '${state.stage}'
+                    - successful_files: '${default(map.get(state, "successful_files"), [])}'
+                    - failed_files: '${default(map.get(state, "failed_files"), [])}'
+                    - batch_id: '${default(map.get(state, "batch_id"), uuid.generate())}'
+              - log_resume:
+                  call: sys.log
+                  args:
+                    severity: INFO
+                    text: '${"[" + environment + "] RESUMING run " + run_id + " from stage=" + checkpoint_stage + " (succeeded=" + string(len(successful_files)) + " failed=" + string(len(failed_files)) + ")"}'
 
     - log_run_start:
         call: sys.log
         args:
           severity: INFO
-          text: '${"[" + environment + "] run " + run_id + ": " + string(file_count) + " files, max " + string(chunk_size) + " in parallel, run_snow_sync=" + string(run_snow_sync)}'
+          text: '${"[" + environment + "] run " + run_id + ": " + string(file_count) + " files, stage=" + checkpoint_stage + ", run_snow_sync=" + string(run_snow_sync)}'
 
-    # ── 5. Launch all Dataflow jobs in parallel with concurrency cap ───
-    # Successful and failed files tracked separately.
-    # Does NOT raise on individual job failure — collects all results first
-    # so successful files can still be moved to processed/.
+    # ── 5. ROUTE based on checkpoint stage ─────────────────────────────
+    - route_by_checkpoint:
+        switch:
+          - condition: '${checkpoint_stage == "snow_sync_done"}'
+            next: done
+          - condition: '${checkpoint_stage == "moved"}'
+            next: check_for_failures
+          - condition: '${checkpoint_stage == "dataflow_done"}'
+            next: check_files_to_move
+          - condition: true
+            next: launch_all_jobs
+
+    # ── 6. Launch all Dataflow jobs in parallel ────────────────────────
     - launch_all_jobs:
         parallel:
-          shared: [all_job_states, successful_files, failed_files]
+          shared: [successful_files, failed_files]
           concurrency_limit: '${chunk_size}'
           for:
             value: file_path
@@ -160,17 +190,11 @@ main:
                     job_id: '${launch_resp.job.id}'
                   result: final_state
 
-              - record_state:
-                  assign:
-                    - all_job_states: '${list.concat(all_job_states, final_state)}'
-
-              # Track success/failure per file — do NOT raise here
-              # so other parallel jobs can still complete
               - classify_result:
                   switch:
                     - condition: '${final_state == "JOB_STATE_DONE"}'
                       assign:
-                        - successful_files: '${list.concat(successful_files, [file_path])}'
+                        - successful_files: '${successful_files + [file_path]}'
                     - condition: true
                       steps:
                         - log_job_failure:
@@ -180,7 +204,7 @@ main:
                               text: '${"[" + environment + "] FAILED: " + file_path + " ended in state " + final_state}'
                         - record_failure:
                             assign:
-                              - failed_files: '${list.concat(failed_files, [file_path])}'
+                              - failed_files: '${failed_files + [file_path]}'
 
     - log_all_done:
         call: sys.log
@@ -188,9 +212,18 @@ main:
           severity: INFO
           text: '${"[" + environment + "] Dataflow complete. succeeded=" + string(len(successful_files)) + " failed=" + string(len(failed_files))}'
 
-    # ── 6. Move only successfully processed files to processed/ ────────
-    # Files move as soon as Dataflow ingestion succeeds. Failed files
-    # stay in incoming/ so they can be retried on the next run.
+    # ── 6b. CHECKPOINT — save state after Dataflow ─────────────────────
+    - save_checkpoint_dataflow:
+        call: save_state
+        args:
+          bucket: '${bucket}'
+          state_object: '${state_object}'
+          stage: "dataflow_done"
+          successful_files: '${successful_files}'
+          failed_files: '${failed_files}'
+          batch_id: '${batch_id}'
+
+    # ── 7. Move only successfully processed files to processed/ ────────
     - check_files_to_move:
         switch:
           - condition: '${len(successful_files) == 0}'
@@ -198,8 +231,6 @@ main:
           - condition: true
             next: move_files_to_processed
 
-    # FIX: added shared: [incoming_prefix, processed_prefix] so the parallel
-    # branches can read those variables assigned in extract_config above.
     - move_files_to_processed:
         parallel:
           shared: [incoming_prefix, processed_prefix, bucket]
@@ -207,34 +238,69 @@ main:
             value: file_path
             in: '${successful_files}'
             steps:
-              # FIX: avoid all list indexing entirely — bucket is already known
-              # from the event (step 1). Strip the "gs://<bucket>/" prefix with
-              # text.substring + len() to get object_only directly, no split needed.
               - parse_path:
                   assign:
                     - gs_prefix:   '${"gs://" + bucket + "/"}'
                     - object_only: '${text.substring(file_path, len(gs_prefix), len(file_path))}'
                     - dest_object: '${text.replace_all(object_only, incoming_prefix, processed_prefix)}'
-              - rewrite:
-                  call: googleapis.storage.v1.objects.rewrite
-                  args:
-                    sourceBucket: '${bucket}'
-                    sourceObject: '${text.url_encode(object_only)}'
-                    destinationBucket: '${bucket}'
-                    destinationObject: '${text.url_encode(dest_object)}'
-              - delete_source:
-                  call: googleapis.storage.v1.objects.delete
-                  args:
-                    bucket: '${bucket}'
-                    object: '${text.url_encode(object_only)}'
+              # Idempotent move: check if already at destination first
+              - check_dest:
+                  try:
+                    call: googleapis.storage.v1.objects.get
+                    args:
+                      bucket: '${bucket}'
+                      object: '${text.url_encode(dest_object)}'
+                    result: dest_check
+                  except:
+                    as: e
+                    steps:
+                      - mark_not_at_dest:
+                          assign:
+                            - dest_check: null
+              - conditional_move:
+                  switch:
+                    - condition: '${dest_check == null}'
+                      steps:
+                        - rewrite:
+                            call: googleapis.storage.v1.objects.rewrite
+                            args:
+                              sourceBucket: '${bucket}'
+                              sourceObject: '${text.url_encode(object_only)}'
+                              destinationBucket: '${bucket}'
+                              destinationObject: '${text.url_encode(dest_object)}'
+                        - delete_source:
+                            try:
+                              call: googleapis.storage.v1.objects.delete
+                              args:
+                                bucket: '${bucket}'
+                                object: '${text.url_encode(object_only)}'
+                            except:
+                              as: e
+                              steps:
+                                - log_already_deleted:
+                                    call: sys.log
+                                    args:
+                                      severity: INFO
+                                      text: '${"Source already deleted: " + object_only}'
 
     - log_files_moved:
         call: sys.log
         args:
           severity: INFO
-          text: '${"[" + environment + "] " + string(len(successful_files)) + " file(s) moved to processed/. " + string(len(failed_files)) + " file(s) left in incoming/ for retry."}'
+          text: '${"[" + environment + "] " + string(len(successful_files)) + " file(s) moved to processed/."}'
 
-    # ── 7. Raise if any jobs failed (after moving successful files) ────
+    # ── 7b. CHECKPOINT — save state after move ─────────────────────────
+    - save_checkpoint_moved:
+        call: save_state
+        args:
+          bucket: '${bucket}'
+          state_object: '${state_object}'
+          stage: "moved"
+          successful_files: '${successful_files}'
+          failed_files: '${failed_files}'
+          batch_id: '${batch_id}'
+
+    # ── 8. Raise if any jobs failed ────────────────────────────────────
     - check_for_failures:
         switch:
           - condition: '${len(failed_files) > 0}'
@@ -242,22 +308,22 @@ main:
           - condition: true
             next: check_run_snow_sync
 
-    # ── 8. Check whether to trigger downstream snow_sync ──────────────
+    # ── 9. Check whether to trigger downstream snow_sync ──────────────
     - check_run_snow_sync:
         switch:
           - condition: '${run_snow_sync == true}'
             next: trigger_downstream
           - condition: true
-            next: log_snow_sync_skipped
+            next: skip_snow_sync
 
-    - log_snow_sync_skipped:
+    - skip_snow_sync:
         call: sys.log
         args:
           severity: INFO
           text: '${"[" + environment + "] snow_sync skipped (run_snow_sync=false)"}'
-        next: done
+        next: save_checkpoint_snow_sync
 
-    # ── 9. Trigger downstream workflow (snow_sync) ─────────────────────
+    # ── 10. Trigger downstream workflow (snow_sync) ────────────────────
     - trigger_downstream:
         steps:
           - build_payload:
@@ -278,7 +344,7 @@ main:
                   argument: '${downstream_args}'
               result: downstream_execution
 
-    # ── 10. Wait for downstream to complete ────────────────────────────
+    # ── 11. Wait for downstream to complete ────────────────────────────
     - wait_for_downstream:
         call: googleapis.workflowexecutions.v1.projects.locations.workflows.executions.get
         args:
@@ -289,7 +355,7 @@ main:
     - check_downstream_status:
         switch:
           - condition: '${downstream_result.state == "SUCCEEDED"}'
-            next: done
+            next: save_checkpoint_snow_sync
           - condition: '${downstream_result.state == "FAILED"}'
             raise: '${downstream_result.error}'
           - condition: true
@@ -301,30 +367,57 @@ main:
           seconds: 15
         next: wait_for_downstream
 
-    # ── 11. Success terminal ───────────────────────────────────────────
-    - done:
-        switch:
-          - condition: '${run_snow_sync == true}'
-            return:
-              status: "success"
-              environment: '${environment}'
-              run_id: '${run_id}'
-              file_count: '${file_count}'
-              successful_files: '${len(successful_files)}'
-              failed_files: '${len(failed_files)}'
-              run_snow_sync: '${run_snow_sync}'
-              downstream_execution: '${downstream_execution.name}'
-          - condition: true
-            return:
-              status: "success"
-              environment: '${environment}'
-              run_id: '${run_id}'
-              file_count: '${file_count}'
-              successful_files: '${len(successful_files)}'
-              failed_files: '${len(failed_files)}'
-              run_snow_sync: '${run_snow_sync}'
-              downstream_execution: "skipped"
+    # ── 11b. CHECKPOINT — save state after snow_sync ───────────────────
+    - save_checkpoint_snow_sync:
+        call: save_state
+        args:
+          bucket: '${bucket}'
+          state_object: '${state_object}'
+          stage: "snow_sync_done"
+          successful_files: '${successful_files}'
+          failed_files: '${failed_files}'
+          batch_id: '${batch_id}'
+        next: done
 
+    # ── 12. Success terminal ───────────────────────────────────────────
+    - done:
+        return:
+          status: "success"
+          environment: '${environment}'
+          run_id: '${run_id}'
+          file_count: '${file_count}'
+          successful_files: '${len(successful_files)}'
+          failed_files: '${len(failed_files)}'
+          run_snow_sync: '${run_snow_sync}'
+          resumed_from_stage: '${checkpoint_stage}'
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Subworkflow — save state to GCS
+# ─────────────────────────────────────────────────────────────────────
+save_state:
+  params: [bucket, state_object, stage, successful_files, failed_files, batch_id]
+  steps:
+    - build_state:
+        assign:
+          - state_map:
+              stage: '${stage}'
+              successful_files: '${successful_files}'
+              failed_files: '${failed_files}'
+              batch_id: '${batch_id}'
+              updated_at: '${time.format(sys.now())}'
+    - write_state:
+        call: googleapis.storage.v1.objects.insert
+        args:
+          bucket: '${bucket}'
+          uploadType: "media"
+          name: '${state_object}'
+          body: '${state_map}'
+    - log_checkpoint:
+        call: sys.log
+        args:
+          severity: INFO
+          text: '${"CHECKPOINT saved: stage=" + stage + " object=" + state_object}'
 
 # ─────────────────────────────────────────────────────────────────────
 # Subworkflow — poll one Dataflow job until terminal state

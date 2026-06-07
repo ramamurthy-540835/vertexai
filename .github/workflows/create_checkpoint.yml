@@ -1,0 +1,240 @@
+name: "create_checkpoint_state"
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment'
+        required: true
+        default: 'spt'
+        type: choice
+        options:
+          - 'adt'
+          - 'qat'
+          - 'spt'
+          - 'prd'
+      run_id:
+        description: 'Manifest run_id (e.g. run-20260606-202446) — state file will be saved as state/<run_id>.json'
+        required: true
+        type: string
+      stage:
+        description: 'Checkpoint stage to set'
+        required: true
+        default: 'dataflow_done'
+        type: choice
+        options:
+          - 'dataflow_done'
+          - 'moved'
+          - 'snow_sync_done'
+      successful_files:
+        description: 'Successful files — one gs:// path per line'
+        required: true
+        type: string
+      failed_files:
+        description: 'Failed files (optional) — one gs:// path per line, leave blank if none'
+        required: false
+        default: ''
+        type: string
+      batch_id:
+        description: 'Batch UUID from batch_audit table or workflow logs'
+        required: true
+        type: string
+      dry_run:
+        description: 'Dry run (preview only — no upload)'
+        required: true
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+
+jobs:
+  create_state:
+    name: "Create checkpoint state — ${{ github.event.inputs.environment }}"
+    runs-on:
+      - self-hosted
+      - us-central1
+
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: "Set environment variables"
+        run: |
+          ENV="${{ github.event.inputs.environment }}"
+          if [[ "$ENV" == "prd" ]]; then
+            echo "PROJECT_ID=p-601-pd-bcleadsmgmt-prd" >> $GITHUB_ENV
+            echo "BUCKET_NAME=gcp-gcs-lead-mgmt-us-prd-pos-raw" >> $GITHUB_ENV
+          else
+            echo "PROJECT_ID=p-601-np-bcleadsmgmt-${ENV}" >> $GITHUB_ENV
+            echo "BUCKET_NAME=gcp-gcs-lead-mgmt-us-${ENV}-pos-raw" >> $GITHUB_ENV
+          fi
+
+      - name: "Auth to GCP"
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
+          service_account: ${{ github.event.inputs.environment == 'prd' && secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL_PRD || secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
+
+      - name: "Set up gcloud"
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: "Build state file"
+        env:
+          SUCCESSFUL_INPUT: ${{ github.event.inputs.successful_files }}
+          FAILED_INPUT: ${{ github.event.inputs.failed_files }}
+          RUN_ID: ${{ github.event.inputs.run_id }}
+          STAGE: ${{ github.event.inputs.stage }}
+          BATCH_ID: ${{ github.event.inputs.batch_id }}
+        run: |
+          set -euo pipefail
+
+          # Use python to build JSON safely — handles quotes, spaces, special chars
+          python3 <<'PYEOF' > /tmp/state.json
+          import json
+          import os
+          from datetime import datetime, timezone
+
+          def parse_lines(raw):
+              if not raw or not raw.strip():
+                  return []
+              return [line.strip() for line in raw.splitlines() if line.strip()]
+
+          state = {
+              "stage": os.environ["STAGE"],
+              "successful_files": parse_lines(os.environ.get("SUCCESSFUL_INPUT", "")),
+              "failed_files": parse_lines(os.environ.get("FAILED_INPUT", "")),
+              "batch_id": os.environ["BATCH_ID"],
+              "updated_at": datetime.now(timezone.utc).isoformat(),
+              "created_by": "github-actions-manual-checkpoint",
+              "run_id": os.environ["RUN_ID"]
+          }
+
+          print(json.dumps(state, indent=2))
+          PYEOF
+
+          echo ""
+          echo "============================================================"
+          echo "State file content:"
+          echo "============================================================"
+          cat /tmp/state.json
+          echo ""
+          echo "============================================================"
+
+          # Count files for summary
+          SUCCESS_COUNT=$(jq '.successful_files | length' /tmp/state.json)
+          FAILED_COUNT=$(jq '.failed_files | length' /tmp/state.json)
+
+          echo "Summary:"
+          echo "  Stage:            ${STAGE}"
+          echo "  Run ID:           ${RUN_ID}"
+          echo "  Batch ID:         ${BATCH_ID}"
+          echo "  Successful files: ${SUCCESS_COUNT}"
+          echo "  Failed files:     ${FAILED_COUNT}"
+          echo "============================================================"
+
+          # Export for next step
+          echo "SUCCESS_COUNT=${SUCCESS_COUNT}" >> $GITHUB_ENV
+          echo "FAILED_COUNT=${FAILED_COUNT}" >> $GITHUB_ENV
+
+      - name: "Validate state file"
+        run: |
+          set -euo pipefail
+
+          # Validate JSON syntax
+          jq empty /tmp/state.json
+          echo "✅ JSON is valid"
+
+          # Validate required fields
+          STAGE=$(jq -r '.stage' /tmp/state.json)
+          BATCH_ID=$(jq -r '.batch_id' /tmp/state.json)
+          SUCCESS_COUNT=$(jq '.successful_files | length' /tmp/state.json)
+
+          if [[ -z "$STAGE" || "$STAGE" == "null" ]]; then
+            echo "❌ stage is missing or null"
+            exit 1
+          fi
+
+          if [[ -z "$BATCH_ID" || "$BATCH_ID" == "null" ]]; then
+            echo "❌ batch_id is missing"
+            exit 1
+          fi
+
+          if [[ "$SUCCESS_COUNT" -eq 0 ]] && [[ "$STAGE" != "snow_sync_done" ]]; then
+            echo "⚠️  WARNING: no successful_files but stage is '$STAGE'"
+            echo "    This means resume will skip the move step. Continuing anyway."
+          fi
+
+          echo "✅ State file passes validation"
+
+      - name: "Check if state file already exists"
+        run: |
+          set -euo pipefail
+          STATE_PATH="gs://${{ env.BUCKET_NAME }}/state/${{ github.event.inputs.run_id }}.json"
+          
+          if gcloud storage ls "$STATE_PATH" --project="${{ env.PROJECT_ID }}" 2>/dev/null; then
+            echo "⚠️  State file already exists at: $STATE_PATH"
+            echo "    Will overwrite if dry_run=false."
+            echo ""
+            echo "Existing content:"
+            gcloud storage cat "$STATE_PATH" --project="${{ env.PROJECT_ID }}" || true
+            echo "STATE_EXISTS=true" >> $GITHUB_ENV
+          else
+            echo "✅ No existing state file — will create new"
+            echo "STATE_EXISTS=false" >> $GITHUB_ENV
+          fi
+
+      - name: "Upload state file"
+        if: github.event.inputs.dry_run == 'false'
+        run: |
+          set -euo pipefail
+          STATE_PATH="gs://${{ env.BUCKET_NAME }}/state/${{ github.event.inputs.run_id }}.json"
+
+          gcloud storage cp /tmp/state.json "$STATE_PATH" \
+            --project="${{ env.PROJECT_ID }}"
+
+          echo "✅ Uploaded to: $STATE_PATH"
+          echo ""
+          echo "Next steps:"
+          echo "  1. Re-trigger pos_dataflow_workflow with the same manifest"
+          echo "  2. Workflow will read this state and resume from stage='${{ github.event.inputs.stage }}'"
+
+      - name: "Dry run notice"
+        if: github.event.inputs.dry_run == 'true'
+        run: |
+          echo "⚠️  DRY RUN — state file was NOT uploaded."
+          echo "    Re-run with dry_run=false to upload to:"
+          echo "    gs://${{ env.BUCKET_NAME }}/state/${{ github.event.inputs.run_id }}.json"
+
+      - name: "Summary"
+        if: always()
+        run: |
+          {
+            echo "## Checkpoint State Creation — ${{ github.event.inputs.environment }}"
+            echo ""
+            echo "- **Environment:**       \`${{ github.event.inputs.environment }}\`"
+            echo "- **Bucket:**            \`${{ env.BUCKET_NAME }}\`"
+            echo "- **Run ID:**            \`${{ github.event.inputs.run_id }}\`"
+            echo "- **State path:**        \`gs://${{ env.BUCKET_NAME }}/state/${{ github.event.inputs.run_id }}.json\`"
+            echo "- **Stage:**             \`${{ github.event.inputs.stage }}\`"
+            echo "- **Batch ID:**          \`${{ github.event.inputs.batch_id }}\`"
+            echo "- **Successful files:**  ${{ env.SUCCESS_COUNT }}"
+            echo "- **Failed files:**      ${{ env.FAILED_COUNT }}"
+            echo "- **Already existed:**   \`${{ env.STATE_EXISTS }}\`"
+            echo "- **Dry run:**           \`${{ github.event.inputs.dry_run }}\`"
+            echo ""
+            echo "### State file content"
+            echo '```json'
+            cat /tmp/state.json 2>/dev/null || echo "(state file not generated)"
+            echo '```'
+            echo ""
+            if [ "${{ github.event.inputs.dry_run }}" == "false" ]; then
+              echo "### Next steps"
+              echo "1. Re-trigger \`pos_dataflow_workflow\` with the manifest \`${{ github.event.inputs.run_id }}\`"
+              echo "2. Workflow reads state and resumes from \`${{ github.event.inputs.stage }}\`"
+            else
+              echo "### ⚠️ Dry run mode"
+              echo "State file was generated but NOT uploaded. Re-run with \`dry_run: false\` to upload."
+            fi
+          } >> $GITHUB_STEP_SUMMARY
