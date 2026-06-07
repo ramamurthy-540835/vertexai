@@ -1,8 +1,12 @@
 name: "create_checkpoint_state"
 
 # Creates a Cloud Workflow checkpoint state file in GCS.
-# Multi-line inputs are handled via heredoc-to-file (not env vars) to avoid
-# GitHub Actions collapsing newlines into spaces.
+#
+# PREFERRED: pass a manifest_path — the GHA reads it from GCS and uses ALL files
+# in manifest.files as the successful_files list. This is bulletproof.
+#
+# FALLBACK: paste file paths directly (one per line, but GHA may truncate long
+# inputs around 60KB). Only use for small lists.
 
 on:
   workflow_dispatch:
@@ -18,8 +22,13 @@ on:
           - 'spt'
           - 'prd'
       run_id:
-        description: 'Manifest run_id (e.g. run-20260606-202446) — state file saved as state/<run_id>.json'
+        description: 'Run ID (e.g. run-20260606-202446) — state saved as state/<run_id>.json'
         required: true
+        type: string
+      manifest_path:
+        description: 'PREFERRED: Manifest path (e.g. manifests/run-20260606-202446.json). If set, successful_files = manifest.files. Leave empty to use direct_paste below.'
+        required: false
+        default: ''
         type: string
       stage:
         description: 'Checkpoint stage to set'
@@ -30,12 +39,8 @@ on:
           - 'dataflow_done'
           - 'moved'
           - 'snow_sync_done'
-      successful_files:
-        description: 'Successful files — one gs:// path per line'
-        required: true
-        type: string
-      failed_files:
-        description: 'Failed files (optional) — one gs:// path per line, leave blank if none'
+      direct_paste_files:
+        description: 'FALLBACK: paste gs:// paths, one per line (only if manifest_path is empty)'
         required: false
         default: ''
         type: string
@@ -84,31 +89,56 @@ jobs:
       - name: "Set up gcloud"
         uses: google-github-actions/setup-gcloud@v2
 
-      # CRITICAL FIX: write multi-line inputs to files via heredoc.
-      # Passing them through env vars (env: VAR: ${{ inputs.x }}) causes GitHub
-      # Actions to collapse newlines into spaces. The heredoc preserves newlines
-      # because expression substitution happens BEFORE shell interpretation,
-      # and 'INPUT_EOF' is quoted so bash doesn't try to expand the contents.
-      - name: "Write inputs to files (preserves newlines)"
+      - name: "Determine source of successful_files"
+        id: source
         run: |
-          # Write successful_files input to file
-          cat > /tmp/successful_raw.txt <<'INPUT_EOF'
-          ${{ github.event.inputs.successful_files }}
-          INPUT_EOF
+          set -euo pipefail
+          MANIFEST_PATH="${{ github.event.inputs.manifest_path }}"
 
-          # Write failed_files input to file (may be empty)
-          cat > /tmp/failed_raw.txt <<'INPUT_EOF'
-          ${{ github.event.inputs.failed_files }}
-          INPUT_EOF
+          if [[ -n "$MANIFEST_PATH" ]]; then
+            echo "✅ Using MANIFEST mode: reading files from $MANIFEST_PATH"
+            echo "SOURCE_MODE=manifest" >> $GITHUB_ENV
+          else
+            echo "ℹ️  Using DIRECT_PASTE mode (manifest_path was empty)"
+            echo "SOURCE_MODE=direct" >> $GITHUB_ENV
+          fi
 
-          echo "─── Raw successful_files input (${WCSUCCESS:-?} lines) ───"
-          cat /tmp/successful_raw.txt
-          echo "─── (end of raw input) ───"
+      # ── MANIFEST MODE: download the manifest from GCS and use manifest.files ──
+      - name: "[MANIFEST MODE] Download and parse manifest"
+        if: env.SOURCE_MODE == 'manifest'
+        run: |
+          set -euo pipefail
+          MANIFEST_PATH="${{ github.event.inputs.manifest_path }}"
+          FULL_URI="gs://${{ env.BUCKET_NAME }}/${MANIFEST_PATH}"
+
+          echo "Downloading: $FULL_URI"
+          gcloud storage cp "$FULL_URI" /tmp/manifest.json \
+            --project="${{ env.PROJECT_ID }}"
+
           echo ""
-          echo "Line count: $(wc -l < /tmp/successful_raw.txt)"
-          echo "Char count: $(wc -c < /tmp/successful_raw.txt)"
+          echo "Manifest contents:"
+          cat /tmp/manifest.json | jq .
 
-      - name: "Build state file from raw inputs"
+          # Extract files into a flat list — one per line — no shell escaping issues
+          jq -r '.files[]' /tmp/manifest.json > /tmp/successful_raw.txt
+          echo "" > /tmp/failed_raw.txt
+
+          echo ""
+          echo "Extracted $(wc -l < /tmp/successful_raw.txt) files from manifest"
+
+      # ── DIRECT MODE: write pasted input to file ──
+      - name: "[DIRECT MODE] Write pasted paths to file"
+        if: env.SOURCE_MODE == 'direct'
+        run: |
+          cat > /tmp/successful_raw.txt <<'INPUT_EOF'
+          ${{ github.event.inputs.direct_paste_files }}
+          INPUT_EOF
+          echo "" > /tmp/failed_raw.txt
+
+          echo "Raw input ($(wc -c < /tmp/successful_raw.txt) chars, $(wc -l < /tmp/successful_raw.txt) lines):"
+          cat /tmp/successful_raw.txt
+
+      - name: "Build state file"
         env:
           RUN_ID: ${{ github.event.inputs.run_id }}
           STAGE: ${{ github.event.inputs.stage }}
@@ -122,8 +152,6 @@ jobs:
           from datetime import datetime, timezone
 
           def parse_file(path):
-              """Read a file and return list of non-empty, stripped lines.
-              Tolerates space-separated input as a fallback if newlines were lost."""
               if not os.path.exists(path):
                   return []
               with open(path) as f:
@@ -134,12 +162,10 @@ jobs:
               # Primary: newline-separated
               lines = [line.strip() for line in raw.splitlines() if line.strip()]
 
-              # Fallback: if we got 1 line but it contains multiple 'gs://' tokens,
-              # the user's newlines were mangled. Split on 'gs://' boundaries.
+              # Fallback: single line with multiple 'gs://' tokens → split on them
               if len(lines) == 1 and lines[0].count('gs://') > 1:
                   text = lines[0]
                   parts = text.split('gs://')
-                  # First element is empty (text starts with 'gs://'), skip it
                   lines = ['gs://' + p.strip() for p in parts if p.strip()]
                   print(f"WARN: newlines were lost; recovered {len(lines)} entries by splitting on 'gs://'",
                         flush=True)
@@ -158,7 +184,6 @@ jobs:
               "created_by": "github-actions-manual-checkpoint",
               "run_id": os.environ["RUN_ID"]
           }
-
           print(json.dumps(state, indent=2))
           PYEOF
 
@@ -187,57 +212,48 @@ jobs:
         run: |
           set -euo pipefail
 
-          # JSON syntax
           jq empty /tmp/state.json
           echo "✅ JSON is valid"
 
-          # Required fields
           STAGE=$(jq -r '.stage' /tmp/state.json)
           BATCH_ID=$(jq -r '.batch_id' /tmp/state.json)
           SUCCESS_COUNT=$(jq '.successful_files | length' /tmp/state.json)
           SUCCESS_TYPE=$(jq -r '.successful_files | type' /tmp/state.json)
 
-          if [[ -z "$STAGE" || "$STAGE" == "null" ]]; then
-            echo "❌ stage is missing or null"
-            exit 1
-          fi
-
-          if [[ -z "$BATCH_ID" || "$BATCH_ID" == "null" ]]; then
-            echo "❌ batch_id is missing"
-            exit 1
-          fi
-
-          # Critical: successful_files must be an array, not a string
           if [[ "$SUCCESS_TYPE" != "array" ]]; then
             echo "❌ successful_files is type '${SUCCESS_TYPE}', expected 'array'"
             exit 1
           fi
           echo "✅ successful_files is array of length ${SUCCESS_COUNT}"
 
-          # Sanity check: each entry should look like a gs:// path
           INVALID=$(jq -r '.successful_files[] | select(startswith("gs://") | not)' /tmp/state.json | head -5)
           if [[ -n "$INVALID" ]]; then
-            echo "⚠️  WARNING: some entries don't start with gs://"
+            echo "❌ Some entries don't start with gs://"
             echo "$INVALID"
+            exit 1
           fi
+          echo "✅ All entries start with gs://"
 
-          # Check no entry is suspiciously long (indicates concatenation bug)
           MAX_LEN=$(jq '[.successful_files[] | length] | max // 0' /tmp/state.json)
           if [[ "$MAX_LEN" -gt 500 ]]; then
-            echo "❌ Suspiciously long entry detected (max length: ${MAX_LEN})"
-            echo "   This usually means newlines were mangled."
+            echo "❌ Suspiciously long entry (max length: ${MAX_LEN}) — newlines likely mangled"
             jq -r '.successful_files[] | select(length > 500)' /tmp/state.json | head -1
             exit 1
           fi
           echo "✅ All entries are reasonable length (max: ${MAX_LEN})"
 
+          # Check for truncated paths (entry not ending in known extension)
+          TRUNCATED=$(jq -r '.successful_files[] | select(test("\\.(csv|CSV|xlsx|XLSX|json|JSON)$") | not)' /tmp/state.json)
+          if [[ -n "$TRUNCATED" ]]; then
+            echo "❌ Some entries appear truncated (don't end in .csv/.xlsx/.json):"
+            echo "$TRUNCATED"
+            exit 1
+          fi
+          echo "✅ All entries end in valid extensions"
+
           echo ""
           echo "Files in successful_files:"
           jq -r '.successful_files[]' /tmp/state.json | nl
-
-          if [[ "$SUCCESS_COUNT" -eq 0 ]] && [[ "$STAGE" != "snow_sync_done" ]]; then
-            echo "⚠️  WARNING: no successful_files but stage is '$STAGE'"
-          fi
 
           echo ""
           echo "✅ State file passes all validation"
@@ -278,8 +294,7 @@ jobs:
         if: github.event.inputs.dry_run == 'true'
         run: |
           echo "⚠️  DRY RUN — state file was NOT uploaded."
-          echo "    Re-run with dry_run=false to upload to:"
-          echo "    gs://${{ env.BUCKET_NAME }}/state/${{ github.event.inputs.run_id }}.json"
+          echo "    Re-run with dry_run=false to upload."
 
       - name: "Summary"
         if: always()
@@ -288,27 +303,20 @@ jobs:
             echo "## Checkpoint State Creation — ${{ github.event.inputs.environment }}"
             echo ""
             echo "- **Environment:**       \`${{ github.event.inputs.environment }}\`"
-            echo "- **Bucket:**            \`${{ env.BUCKET_NAME }}\`"
+            echo "- **Source mode:**       \`${{ env.SOURCE_MODE }}\`"
+            if [ "${{ env.SOURCE_MODE }}" == "manifest" ]; then
+              echo "- **Manifest path:**     \`${{ github.event.inputs.manifest_path }}\`"
+            fi
             echo "- **Run ID:**            \`${{ github.event.inputs.run_id }}\`"
             echo "- **State path:**        \`gs://${{ env.BUCKET_NAME }}/state/${{ github.event.inputs.run_id }}.json\`"
             echo "- **Stage:**             \`${{ github.event.inputs.stage }}\`"
             echo "- **Batch ID:**          \`${{ github.event.inputs.batch_id }}\`"
             echo "- **Successful files:**  ${{ env.SUCCESS_COUNT }}"
             echo "- **Failed files:**      ${{ env.FAILED_COUNT }}"
-            echo "- **Already existed:**   \`${{ env.STATE_EXISTS }}\`"
             echo "- **Dry run:**           \`${{ github.event.inputs.dry_run }}\`"
             echo ""
             echo "### State file content"
             echo '```json'
             cat /tmp/state.json 2>/dev/null || echo "(state file not generated)"
             echo '```'
-            echo ""
-            if [ "${{ github.event.inputs.dry_run }}" == "false" ]; then
-              echo "### Next steps"
-              echo "1. Re-trigger \`pos_dataflow_workflow\` with the manifest \`${{ github.event.inputs.run_id }}\`"
-              echo "2. Workflow reads state and resumes from \`${{ github.event.inputs.stage }}\`"
-            else
-              echo "### ⚠️ Dry run mode"
-              echo "State file was generated but NOT uploaded. Re-run with \`dry_run: false\` to upload."
-            fi
           } >> $GITHUB_STEP_SUMMARY
