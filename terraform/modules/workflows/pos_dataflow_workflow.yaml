@@ -194,7 +194,7 @@ main:
                   switch:
                     - condition: '${final_state == "JOB_STATE_DONE"}'
                       assign:
-                        - successful_files: '${successful_files + [file_path]}'
+                        - successful_files: '${list.concat(successful_files, file_path)}'
                     - condition: true
                       steps:
                         - log_job_failure:
@@ -204,7 +204,7 @@ main:
                               text: '${"[" + environment + "] FAILED: " + file_path + " ended in state " + final_state}'
                         - record_failure:
                             assign:
-                              - failed_files: '${failed_files + [file_path]}'
+                              - failed_files: '${list.concat(failed_files, file_path)}'
 
     - log_all_done:
         call: sys.log
