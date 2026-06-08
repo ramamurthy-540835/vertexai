@@ -142,14 +142,23 @@ def preprocess(df: pd.DataFrame) -> pd.DataFrame:
                 df[col] = pd.NA
                 continue
 
+        # If pandas inferred this column as float during CSV read
+        # (e.g. zip '98272' read as 98272.0), convert via nullable Int64
+        # first so stringification produces '98272' not '98272.0'.
+        if pd.api.types.is_float_dtype(df[col]):
+            df[col] = (
+                pd.to_numeric(df[col], errors="coerce")
+                .astype("Int64")
+                .astype(str)
+            )
+
         df[col] = (
             df[col]
             .astype(str)
             .str.strip()
-            .replace({"nan": pd.NA, "": pd.NA})
+            .replace({"nan": pd.NA, "<NA>": pd.NA, "": pd.NA})
         )
     return df
-
 
 # ==============================================================
 # CLASSIFY MATCHES
