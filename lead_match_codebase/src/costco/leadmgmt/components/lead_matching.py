@@ -265,27 +265,6 @@ def classify_matches(
         .merge(sales_supp, on="pos_id", how="left", suffixes=("_lead", "_sale"))
     )
 
-    # === DIAGNOSTIC: dump the exact zip values Cloud Run is comparing ===
-    diag = candidates_with_data[
-        (candidates_with_data["lead_id"] == "LEAD00562596") &
-        (candidates_with_data["pos_id"] == "GPOS44230392")
-    ]
-    if not diag.empty:
-        row = diag.iloc[0]
-        log.info("=== DIAG LEAD00562596 / GPOS44230392 ===")
-        log.info("zip lead: repr=%r type=%s", row["zip_code_normalized_lead"], type(row["zip_code_normalized_lead"]).__name__)
-        log.info("zip sale: repr=%r type=%s", row["zip_code_normalized_sale"], type(row["zip_code_normalized_sale"]).__name__)
-        log.info("zip equal: %s", row["zip_code_normalized_lead"] == row["zip_code_normalized_sale"])
-        log.info("state lead: repr=%r  state sale: repr=%r  equal: %s",
-                row["state_normalized_lead"], row["state_normalized_sale"],
-                row["state_normalized_lead"] == row["state_normalized_sale"])
-        log.info("city lead: repr=%r  city sale: repr=%r  equal: %s",
-                row["city_normalized_lead"], row["city_normalized_sale"],
-                row["city_normalized_lead"] == row["city_normalized_sale"])
-    else:
-        log.info("=== DIAG: LEAD00562596/GPOS44230392 NOT IN candidates_with_data ===")
-# === END DIAGNOSTIC ===
-
     supp_score_frames = {}  # field -> DataFrame(lead_id, pos_id)
 
     for field, score in SUPPLEMENTARY_FIELDS.items():

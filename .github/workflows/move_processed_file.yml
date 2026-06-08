@@ -1,4 +1,4 @@
-name: move_files_to_incoming
+name: move_files_by_keyword
 
 on:
   workflow_dispatch:
@@ -13,6 +13,11 @@ on:
           - 'qat'
           - 'spt'
           - 'prd'
+      keyword:
+        description: 'Filename keyword to match (e.g. "Whse 1487"). Files containing this string move from processed/ → incoming-files/'
+        required: true
+        default: 'Whse 1487'
+        type: string
       dry_run:
         description: 'Dry run (preview only — no actual move)?'
         required: true
@@ -24,7 +29,7 @@ on:
 
 jobs:
   move:
-    name: "move-processed-to-incoming-${{ github.event.inputs.environment }}"
+    name: "move-matching-files-${{ github.event.inputs.environment }}"
     runs-on:
       - self-hosted
       - us-central1
@@ -55,7 +60,9 @@ jobs:
       - name: Set up gcloud
         uses: google-github-actions/setup-gcloud@v2
 
-      - name: Move files back to incoming, keep CSV and Whse 115 only
+      - name: Move matching files from processed to incoming
+        env:
+          KEYWORD: ${{ github.event.inputs.keyword }}
         run: |
           set -euo pipefail
           unset CLOUDSDK_CORE_PROJECT CLOUDSDK_PROJECT GCLOUD_PROJECT GCP_PROJECT GOOGLE_CLOUD_PROJECT
@@ -70,7 +77,7 @@ jobs:
           echo "Source:       gs://${BUCKET_NAME}/${SOURCE_PREFIX}/"
           echo "Destination:  gs://${BUCKET_NAME}/${DEST_PREFIX}/"
           echo "Dry run:      ${DRY_RUN}"
-          echo "Keep rule:    CSV files OR Whse 115 files"
+          echo "Match rule:   filename contains '${KEYWORD}'"
           echo "============================================================"
 
           echo ""
@@ -84,11 +91,9 @@ jobs:
           fi
 
           MOVED=0
-          KEPT=0
-          MOVED_BACK=0
+          SKIPPED=0
           FAILED=0
-          KEPT_LIST=()
-          MOVED_BACK_LIST=()
+          MOVED_LIST=()
 
           while IFS= read -r FILE_PATH; do
             # Skip empty lines and directory placeholders
@@ -98,55 +103,28 @@ jobs:
 
             FILENAME=$(basename "$FILE_PATH")
             DEST_PATH="gs://${BUCKET_NAME}/${DEST_PREFIX}/${FILENAME}"
-            BACK_PATH="gs://${BUCKET_NAME}/${SOURCE_PREFIX}/${FILENAME}"
 
-            # Keep if: CSV, OR filename contains "Whse 115"
-            SHOULD_KEEP=false
-            if [[ "${FILENAME,,}" == *.csv ]]; then
-              SHOULD_KEEP=true
-              KEEP_REASON="CSV file"
-            elif [[ "$FILENAME" == *"Whse 115"* ]]; then
-              SHOULD_KEEP=true
-              KEEP_REASON="Whse 115"
+            # Match check — does filename contain the keyword?
+            if [[ "$FILENAME" != *"${KEYWORD}"* ]]; then
+              SKIPPED=$((SKIPPED + 1))
+              continue
             fi
 
             if [ "$DRY_RUN" == "true" ]; then
-              if [ "$SHOULD_KEEP" == "true" ]; then
-                echo "📋 [DRY RUN] Would move & KEEP in incoming: $FILENAME ($KEEP_REASON)"
-                KEPT=$((KEPT + 1))
-                KEPT_LIST+=("$FILENAME")
-              else
-                echo "📋 [DRY RUN] Would move to incoming, then move back to processed: $FILENAME"
-                MOVED_BACK=$((MOVED_BACK + 1))
-                MOVED_BACK_LIST+=("$FILENAME")
-              fi
+              echo "📋 [DRY RUN] Would move: $FILENAME"
+              echo "    From: $FILE_PATH"
+              echo "    To:   $DEST_PATH"
               MOVED=$((MOVED + 1))
+              MOVED_LIST+=("$FILENAME")
             else
-              # Step 1: Move everything processed → incoming
-              echo "📦 Moving to incoming: $FILENAME"
+              echo "📦 Moving: $FILENAME"
               if gcloud storage mv "$FILE_PATH" "$DEST_PATH" \
                 --project="${PROJECT_ID}" 2>&1; then
+                echo "   ✅ Moved to: $DEST_PATH"
                 MOVED=$((MOVED + 1))
-
-                if [ "$SHOULD_KEEP" == "true" ]; then
-                  echo "   ✅ Kept in incoming ($KEEP_REASON)"
-                  KEPT=$((KEPT + 1))
-                  KEPT_LIST+=("$FILENAME")
-                else
-                  # Step 2: Move non-keepers back to processed
-                  echo "   🔄  Moving back to processed (not CSV or Whse 115): $FILENAME"
-                  if gcloud storage mv "$DEST_PATH" "$BACK_PATH" \
-                    --project="${PROJECT_ID}" 2>&1; then
-                    echo "   ✅ Moved back to processed"
-                    MOVED_BACK=$((MOVED_BACK + 1))
-                    MOVED_BACK_LIST+=("$FILENAME")
-                  else
-                    echo "   ❌ Failed to move back to processed: $FILENAME"
-                    FAILED=$((FAILED + 1))
-                  fi
-                fi
+                MOVED_LIST+=("$FILENAME")
               else
-                echo "   ❌ Failed to move to incoming: $FILENAME"
+                echo "   ❌ Failed to move: $FILENAME"
                 FAILED=$((FAILED + 1))
               fi
             fi
@@ -158,23 +136,25 @@ jobs:
           echo "============================================================"
           if [ "$DRY_RUN" == "true" ]; then
             echo "Dry run mode — no files were actually moved"
-            echo "Would keep in incoming:        $KEPT file(s) (CSV or Whse 115)"
-            echo "Would move back to processed:  $MOVED_BACK file(s)"
+            echo "Would move:    $MOVED file(s) matching '${KEYWORD}'"
           else
-            echo "Kept in incoming:              $KEPT file(s) (CSV or Whse 115)"
-            echo "Moved back to processed:       $MOVED_BACK file(s)"
-            echo "Failed:                        $FAILED file(s)"
+            echo "Moved:         $MOVED file(s) matching '${KEYWORD}'"
+            echo "Failed:        $FAILED file(s)"
           fi
+          echo "Skipped:       $SKIPPED file(s) (no match)"
           echo "============================================================"
 
+          if [ "$MOVED" -eq 0 ]; then
+            echo "⚠️  WARNING: No files matched the keyword '${KEYWORD}'"
+          fi
+
           {
-            echo "KEPT_COUNT=$KEPT"
-            echo "MOVED_BACK_COUNT=$MOVED_BACK"
+            echo "MOVED_COUNT=$MOVED"
+            echo "SKIPPED_COUNT=$SKIPPED"
             echo "FAILED_COUNT=$FAILED"
           } >> $GITHUB_ENV
 
-          printf '%s\n' "${KEPT_LIST[@]}" > /tmp/kept_files.txt
-          printf '%s\n' "${MOVED_BACK_LIST[@]}" > /tmp/moved_back_files.txt
+          printf '%s\n' "${MOVED_LIST[@]}" > /tmp/moved_files.txt
 
           if [ "$FAILED" -gt 0 ]; then
             exit 1
@@ -184,32 +164,25 @@ jobs:
         if: always()
         run: |
           {
-            echo "## Move Processed → Incoming — ${{ github.event.inputs.environment }}"
+            echo "## Move Files by Keyword — ${{ github.event.inputs.environment }}"
             echo ""
             echo "- **Environment:**  \`${{ github.event.inputs.environment }}\`"
             echo "- **Project:**      \`${{ env.PROJECT_ID }}\`"
             echo "- **Bucket:**       \`${{ env.BUCKET_NAME }}\`"
             echo "- **Source:**       \`gs://${{ env.BUCKET_NAME }}/pos-raw-data/processed/\`"
             echo "- **Destination:**  \`gs://${{ env.BUCKET_NAME }}/pos-raw-data/incoming-files/\`"
+            echo "- **Keyword:**      \`${{ github.event.inputs.keyword }}\`"
             echo "- **Dry Run:**      \`${{ github.event.inputs.dry_run }}\`"
-            echo "- **Keep rule:**    CSV files OR Whse 115 files"
             echo ""
             echo "### Counts"
-            echo "- Kept in incoming:            ${{ env.KEPT_COUNT }} (CSV or Whse 115)"
-            echo "- Moved back to processed:     ${{ env.MOVED_BACK_COUNT }}"
-            echo "- Failed:                      ${{ env.FAILED_COUNT }}"
+            echo "- Moved:    ${{ env.MOVED_COUNT }}"
+            echo "- Skipped:  ${{ env.SKIPPED_COUNT }} (no match)"
+            echo "- Failed:   ${{ env.FAILED_COUNT }}"
             echo ""
-            if [ -f /tmp/kept_files.txt ] && [ "${{ env.KEPT_COUNT }}" -gt 0 ]; then
-              echo "### Kept in Incoming (CSV or Whse 115)"
+            if [ -f /tmp/moved_files.txt ] && [ "${{ env.MOVED_COUNT }}" -gt 0 ]; then
+              echo "### Moved Files"
               echo '```'
-              cat /tmp/kept_files.txt
-              echo '```'
-            fi
-            if [ -f /tmp/moved_back_files.txt ] && [ "${{ env.MOVED_BACK_COUNT }}" -gt 0 ]; then
-              echo ""
-              echo "### Moved Back to Processed (xlsx non-Whse-115)"
-              echo '```'
-              cat /tmp/moved_back_files.txt
+              cat /tmp/moved_files.txt
               echo '```'
             fi
           } >> $GITHUB_STEP_SUMMARY
