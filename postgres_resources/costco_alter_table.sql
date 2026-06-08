@@ -72,8 +72,6 @@ ALTER TABLE "$SCHEMA_NAME".transaction
     ADD COLUMN IF NOT EXISTS oms_zip_3             VARCHAR(20),
     ADD COLUMN IF NOT EXISTS oms_zip_4             VARCHAR(20);
 
-DROP INDEX IF EXISTS "$SCHEMA_NAME".txn_uniq_sales_reference_id_idx;
-
 ALTER TABLE "$SCHEMA_NAME".match_audit DROP COLUMN IF EXISTS no_match_count;
 
 ALTER TABLE "$SCHEMA_NAME".transaction
