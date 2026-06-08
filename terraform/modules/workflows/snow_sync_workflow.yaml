@@ -86,6 +86,8 @@ main:
                 parent: ${"projects/" + project_id + "/locations/" + job_location + "/workflows/lead_match_workflow"}
                 body:
                   argument: ${lead_match_args}
+                connector_params:
+                  skip_polling: true
               result: lead_match_execution
 
     - wait_for_lead_match:

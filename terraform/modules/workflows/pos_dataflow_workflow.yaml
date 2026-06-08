@@ -194,7 +194,7 @@ main:
                   switch:
                     - condition: '${final_state == "JOB_STATE_DONE"}'
                       assign:
-                        - successful_files: '${successful_files + [file_path]}'
+                        - successful_files: '${list.concat(successful_files, file_path)}'
                     - condition: true
                       steps:
                         - log_job_failure:
@@ -204,7 +204,7 @@ main:
                               text: '${"[" + environment + "] FAILED: " + file_path + " ended in state " + final_state}'
                         - record_failure:
                             assign:
-                              - failed_files: '${failed_files + [file_path]}'
+                              - failed_files: '${list.concat(failed_files, file_path)}'
 
     - log_all_done:
         call: sys.log
@@ -342,6 +342,9 @@ main:
                 parent: '${"projects/" + project_id + "/locations/" + next_wf_location + "/workflows/" + next_workflow}'
                 body:
                   argument: '${downstream_args}'
+                connector_params:
+                  timeout: 60           
+                  skip_polling: true
               result: downstream_execution
 
     # ── 11. Wait for downstream to complete ────────────────────────────
