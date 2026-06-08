@@ -633,11 +633,21 @@ def primary_classification(
     engine     = db_config.get_engine()
     metadata   = MetaData()
 
+    STRING_COLS = {
+    "zip_code": str,
+    "zip_code_normalized": str,
+    "phone": str,
+    "phone_normalized": str,
+    "warehouse_number": str,
+    "membership_number": str,
+    "account_number": str,
+}
+
     log.info("Loading leads file: %s", file_a_path)
-    file_a = load_file_from_gcs(file_a_path)
+    file_a = load_file_from_gcs(file_a_path,dtype=STRING_COLS)
 
     log.info("Loading POS file: %s", file_b_path)
-    file_b = load_file_from_gcs(file_b_path)
+    file_b = load_file_from_gcs(file_b_path,dtype=STRING_COLS)
 
     log.info("Lead count: %d | POS count: %d", len(file_a), len(file_b))
 

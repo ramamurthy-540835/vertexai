@@ -62,15 +62,14 @@ def get_costco_fiscal_info(input_date=None):
 
 
 # Load the files from GCS into pandas DataFrames
-def load_file_from_gcs(file_path):
+def load_file_from_gcs(file_path, dtype=None):
     storage_client = storage.Client()
-    # Access the file from GCS using the full path
     bucket_name, file_name = file_path.replace("gs://", "").split("/", 1)
     bucket = storage_client.bucket(bucket_name)
     blob = bucket.blob(file_name)
     file_content = blob.download_as_text()
     csv_data = StringIO(file_content)
-    return pd.read_csv(csv_data)
+    return pd.read_csv(csv_data, dtype=dtype)
 
 
 def process_and_archive_files(source_bucket_name, source_folder, destination_bucket_name, destination_folder, new_file,
