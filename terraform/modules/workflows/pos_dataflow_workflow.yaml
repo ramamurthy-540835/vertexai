@@ -342,6 +342,9 @@ main:
                 parent: '${"projects/" + project_id + "/locations/" + next_wf_location + "/workflows/" + next_workflow}'
                 body:
                   argument: '${downstream_args}'
+                connector_params:
+                  timeout: 60           
+                  skip_polling: true
               result: downstream_execution
 
     # ── 11. Wait for downstream to complete ────────────────────────────
