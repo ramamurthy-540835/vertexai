@@ -6,13 +6,17 @@ Includes:
     generation, per-batch POST request, failures)
   - Failed batches now RAISE at the end of process_batches instead of
     being silently swallowed
+  - OAuth token fetch retries with exponential backoff (handles
+    ServiceNow test instance hibernation / transient timeouts)
 """
 
 import json
+import logging
 import time
 
 import pandas as pd
 import requests
+from requests.exceptions import ConnectTimeout, ConnectionError as ReqConnError
 from google.cloud import storage
 
 from costco.leadmgmt.config.Configuration import JobConfig
@@ -91,33 +95,68 @@ def get_gcs_file_path(uri: str) -> str:
 
 
 # ==============================================================
-# OAUTH TOKEN
+# OAUTH TOKEN (with retry + exponential backoff)
 # ==============================================================
-def get_oauth_token(token_url: str, client_id: str, client_secret: str) -> str:
+def get_oauth_token(
+    token_url: str,
+    client_id: str,
+    client_secret: str,
+    max_retries: int = 3,
+) -> str:
+    """
+    Fetch OAuth token from ServiceNow with retry logic.
 
+    Retries on ConnectTimeout and ConnectionError only — these cover:
+      - ServiceNow test instance hibernation (needs time to wake up)
+      - Transient VPC connector blips
+
+    HTTP errors (4xx/5xx) are NOT retried — they indicate a real
+    configuration problem (wrong credentials, bad URL, etc.).
+
+    Backoff: 2s, 4s, 8s between attempts.
+    Connect timeout raised from 10s → 15s to give hibernating instances
+    more time to respond.
+    """
     payload = {
         "grant_type": "client_credentials",
         "client_id": client_id,
         "client_secret": client_secret,
     }
-
     headers = {"Content-Type": "application/x-www-form-urlencoded"}
 
-    response = requests.post(
-        token_url,
-        data=payload,
-        headers=headers,
-        timeout=(10, 60),
-    )
-    response.raise_for_status()
+    last_exc = None
 
-    token_response = response.json()
-    access_token = token_response.get("access_token")
+    for attempt in range(1, max_retries + 1):
+        try:
+            response = requests.post(
+                token_url,
+                data=payload,
+                headers=headers,
+                timeout=(15, 60),  # connect timeout raised 10s → 15s
+            )
+            response.raise_for_status()
 
-    if not access_token:
-        raise Exception("OAuth token missing in token response")
+            token_response = response.json()
+            access_token = token_response.get("access_token")
 
-    return access_token
+            if not access_token:
+                raise Exception("OAuth token missing in token response")
+
+            return access_token
+
+        except (ConnectTimeout, ReqConnError) as e:
+            last_exc = e
+            wait = 2 ** attempt  # 2s, 4s, 8s
+            logging.warning(
+                "[ServiceNow] OAuth attempt %d/%d failed (%s). Retrying in %ds...",
+                attempt, max_retries, type(e).__name__, wait,
+            )
+            if attempt < max_retries:
+                time.sleep(wait)
+
+    raise ConnectTimeout(
+        f"ServiceNow OAuth token fetch failed after {max_retries} attempts"
+    ) from last_exc
 
 
 # ==============================================================
@@ -155,15 +194,13 @@ def generate_post_json(df):
 
     # ── Build result payload ──
     results = []
-    # Simple lookup dicts defined inline
     match_result_map = {"match": "Complete Match", "potential": "Potential Match"}
 
     for _, row in df.iterrows():
 
-        # Zip code — just convert to int then string to strip the .0
-        # Zip code — pass through as string, handles both 5-digit and ZIP+4 ("98133-5628")
         zip_val = row.get("zip_code", "")
         zip_code = str(zip_val).strip() if zip_val not in ("", None, "nan") else ""
+
         result = {
             # POS information
             "u_gcp_id":            (row.get("pos_id", "")),
@@ -390,15 +427,15 @@ def update_servicenow(config_file_path: str, file_path: str = ""):
         file_path = get_gcs_file_path(standalone_file_path)
 
     # ── ServiceNow config ──
-    BATCH_SIZE   = servicenow_config.insert_batch_size
-    url          = servicenow_config.match_result_update_url
-    MAX_RETRIES  = servicenow_config.max_retries
-    RETRY_DELAY  = servicenow_config.retry_delay
-    token_url    = servicenow_config.token_url
-    client_id    = servicenow_config.snow_client_id
+    BATCH_SIZE    = servicenow_config.insert_batch_size
+    url           = servicenow_config.match_result_update_url
+    MAX_RETRIES   = servicenow_config.max_retries
+    RETRY_DELAY   = servicenow_config.retry_delay
+    token_url     = servicenow_config.token_url
+    client_id     = servicenow_config.snow_client_id
     client_secret = servicenow_config.snow_client_secret
 
-    # ── Get access token ──
+    # ── Get access token (retries internally on transient timeouts) ──
     access_token = get_oauth_token(token_url, client_id, client_secret)
     print("Successfully obtained OAuth token")
 
@@ -414,9 +451,7 @@ def update_servicenow(config_file_path: str, file_path: str = ""):
     if not final_df.empty:
         print(f"Sample row (first, redacted):")
         sample = final_df.iloc[0].to_dict()
-        # Convert all values to strings for clean printing (handles NaN, Timestamps)
         sample = {k: (str(v) if v is not None else None) for k, v in sample.items()}
-        # Light redaction on the few PII-looking columns
         for pii_col in ("email", "phone", "first_name", "last_name",
                         "address_line_one", "address_line_two",
                         "zip_code", "membership_number"):
