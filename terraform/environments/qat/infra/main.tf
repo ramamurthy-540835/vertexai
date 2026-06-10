@@ -247,11 +247,11 @@ module "network_attachement" {
   network_attachment_name = "gcp-nat-np-usc1-601-bcleadsmgmt-servicenow-psc-qat"
 }
 
-resource "google_compute_project_info" "cloud_armor_tier" {
-  project          = var.projectId
+###############################################################################
+# Cloud Armor Enterprise Enrollment
+###############################################################################
+resource "google_project" "cloud_armor_tier" {
+  name             = var.projectId
+  project_id       = var.projectId
   cloud_armor_tier = "CA_ENTERPRISE_ANNUAL"
-
-  lifecycle {
-    prevent_destroy = true
-  }
 }
