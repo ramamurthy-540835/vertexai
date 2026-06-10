@@ -17,8 +17,8 @@ log = logging.getLogger(__name__)
 # SCORING CONSTANTS
 # ==============================================================
 # Matching is done on *_normalized columns (created in preprocess).
-# Originals (e.g. business_name, address_line_one) are preserved in
-# the dataframe and used for the ServiceNow payload.
+# Originals (e.g. business_name, address_line_one) are preserved
+# in the dataframe and used for the ServiceNow payload.
 KEY_FIELDS = {
     "business_name_normalized":    40,
     "address_line_one_normalized": 40,
@@ -46,8 +46,8 @@ ALL_FIELDS = (
 )
 
 
-# Friendly names for matching comments (strip the _normalized suffix)
 def _friendly(field: str) -> str:
+    """Strip the _normalized suffix for human-readable output."""
     return field.replace("_normalized", "")
 
 
@@ -59,14 +59,10 @@ def build_matching_comment(row: pd.Series) -> str:
     Constructs a human-readable comment explaining which fields
     drove the match and what the result classification means.
 
-    Called once per matched (lead_id, pos_id) pair after scores
-    are aggregated.
-
     Architecture note: GCP owns matching logic; ServiceNow receives
     this comment as part of the confirmed match record payload so
     agents can understand why the system matched a lead to a POS
-    transaction without re-running the algorithm. Field names are
-    shown without the _normalized suffix for human readability.
+    transaction without re-running the algorithm.
     """
     score        = row["similarity_score"]
     result       = row["match_result"]
@@ -75,7 +71,6 @@ def build_matching_comment(row: pd.Series) -> str:
 
     parts = []
 
-    # -- Result classification --------------------------------
     if result == "Match":
         parts.append(
             f"Complete match (score {score}/{MAX_POSSIBLE_SCORE}): "
@@ -87,7 +82,6 @@ def build_matching_comment(row: pd.Series) -> str:
             f"partial field alignment; Marketer review recommended."
         )
 
-    # -- Key fields that matched ------------------------------
     if matched_keys:
         friendly_keys = [_friendly(f) for f in matched_keys]
         parts.append(f"Key fields matched: {', '.join(friendly_keys)}.")
@@ -97,12 +91,10 @@ def build_matching_comment(row: pd.Series) -> str:
             "match qualified via supplementary fields only."
         )
 
-    # -- Supplementary fields that matched --------------------
     if matched_supp:
         friendly_supp = [_friendly(f) for f in matched_supp]
         parts.append(f"Supplementary fields matched: {', '.join(friendly_supp)}.")
 
-    # -- Primary transaction note ----------------------------
     if row.get("primary_transaction"):
         parts.append(
             "Designated as primary transaction "
@@ -130,9 +122,6 @@ def preprocess(df: pd.DataFrame) -> pd.DataFrame:
     )
     df = df[df["warehouse_number"] != ""]
 
-    # Only operate on the *_normalized matching columns. If a normalized
-    # column is missing (shouldn't happen given preprocess.py output),
-    # fall back to creating it from the original.
     for col in ALL_FIELDS:
         if col not in df.columns:
             original_col = _friendly(col)
@@ -160,50 +149,41 @@ def preprocess(df: pd.DataFrame) -> pd.DataFrame:
         )
     return df
 
+
 # ==============================================================
-# CLASSIFY MATCHES
+# SCORE ONE GROUP
+# Runs Phase 1 + Phase 2 for a single POS slice against the
+# currently active (unresolved) leads.
 # ==============================================================
-def classify_matches(
-    file_leads: pd.DataFrame,
-    file_sales: pd.DataFrame,
-) -> pd.DataFrame:
+def _score_group(
+    sales_slice: pd.DataFrame,     # POS rows for this fiscal group
+    active_leads: pd.DataFrame,    # leads not yet resolved as CE
+) -> tuple[pd.DataFrame, dict, dict]:
+    """
+    Runs Phase 1 (key field) and Phase 2 (supplementary field)
+    scoring between a single chronological POS group and the
+    currently active leads.
 
-    leads = preprocess(file_leads)
-    sales = preprocess(file_sales)
-    
-    # sales data prefilter
-    lead_warehouses = leads["warehouse_number"].dropna().unique()
-    sales_before = len(sales)
-    sales = sales[sales["warehouse_number"].isin(lead_warehouses)].copy()
-    log.info(
-        "Warehouse pre-filter: %d → %d POS rows (%d dropped)",
-        sales_before, len(sales), sales_before - len(sales),
-    )
-
-    if sales.empty:
-        log.warning("No POS rows share a warehouse with any lead.")
-        return pd.DataFrame(columns=[
-            "lead_id", "pos_id", "match_result",
-            "similarity_score", "matching_comments",
-        ])
-
-    leads_small = leads[
+    Returns:
+        qualified     — DataFrame[lead_id, pos_id, similarity_score]
+                        with score >= MINIMUM_SCORE
+        key_matches   — dict[field -> DataFrame[lead_id, pos_id]]
+                        for matched-field tracking
+        supp_matches  — dict[field -> DataFrame[lead_id, pos_id]]
+    """
+    leads_small = active_leads[
         ["lead_id", "warehouse_number"] + ALL_FIELDS
     ].copy()
 
-    sales_small = sales[
+    sales_small = sales_slice[
         ["pos_id", "warehouse_number"] + ALL_FIELDS
     ].copy()
 
-    # ==========================================================
-    # PHASE 1 — KEY FIELD MATCHING
-    # ==========================================================
     score_frames     = []
-    key_score_frames = {}   # field -> DataFrame(lead_id, pos_id)
+    key_match_frames = {}
 
+    # -- Phase 1: key fields ----------------------------------
     for field, score in KEY_FIELDS.items():
-        log.info("Processing key field: %s", field)
-
         sales_valid = sales_small.dropna(subset=["warehouse_number", field])
         leads_valid = leads_small.dropna(subset=["warehouse_number", field])
 
@@ -222,40 +202,25 @@ def classify_matches(
 
         matched["score"] = score
         score_frames.append(matched)
-        key_score_frames[field] = matched[["lead_id", "pos_id"]].copy()
-
-        log.info("%s: %d matches", field, len(matched))
-
-    # -- Free slim copies early
-    del leads_small, sales_small
-    gc.collect()
+        key_match_frames[field] = matched[["lead_id", "pos_id"]].copy()
 
     if not score_frames:
-        log.warning("No candidate pairs found after Phase 1.")
-        return pd.DataFrame(columns=[
-            "lead_id", "pos_id", "match_result",
-            "similarity_score", "matching_comments",
-        ])
+        empty = pd.DataFrame(columns=["lead_id", "pos_id", "similarity_score"])
+        return empty, {}, {}
 
-    # ==========================================================
-    # CANDIDATE PAIRS
-    # ==========================================================
     candidate_pairs = (
         pd.concat(score_frames, ignore_index=True)
         [["lead_id", "pos_id"]]
         .drop_duplicates()
     )
-    log.info("Total candidate pairs: %d", len(candidate_pairs))
 
-    # ==========================================================
-    # PHASE 2 — SUPPLEMENTARY MATCHING
-    # ==========================================================
+    # -- Phase 2: supplementary fields ------------------------
     leads_supp = (
-        leads[["lead_id"] + list(SUPPLEMENTARY_FIELDS.keys())]
+        active_leads[["lead_id"] + list(SUPPLEMENTARY_FIELDS.keys())]
         .drop_duplicates(subset=["lead_id"])
     )
     sales_supp = (
-        sales[["pos_id"] + list(SUPPLEMENTARY_FIELDS.keys())]
+        sales_slice[["pos_id"] + list(SUPPLEMENTARY_FIELDS.keys())]
         .drop_duplicates(subset=["pos_id"])
     )
 
@@ -265,7 +230,7 @@ def classify_matches(
         .merge(sales_supp, on="pos_id", how="left", suffixes=("_lead", "_sale"))
     )
 
-    supp_score_frames = {}  # field -> DataFrame(lead_id, pos_id)
+    supp_match_frames = {}
 
     for field, score in SUPPLEMENTARY_FIELDS.items():
         lead_col = f"{field}_lead"
@@ -276,20 +241,16 @@ def classify_matches(
             & candidates_with_data[sale_col].notna()
             & (candidates_with_data[lead_col] == candidates_with_data[sale_col])
         )
-        supp_matches = candidates_with_data.loc[mask, ["lead_id", "pos_id"]].copy()
+        supp = candidates_with_data.loc[mask, ["lead_id", "pos_id"]].copy()
 
-        if supp_matches.empty:
+        if supp.empty:
             continue
 
-        supp_matches["score"] = score
-        score_frames.append(supp_matches)
-        supp_score_frames[field] = supp_matches[["lead_id", "pos_id"]].copy()
+        supp["score"] = score
+        score_frames.append(supp)
+        supp_match_frames[field] = supp[["lead_id", "pos_id"]].copy()
 
-        log.info("%s: %d supplementary matches", field, len(supp_matches))
-
-    # ==========================================================
-    # AGGREGATE SCORES
-    # ==========================================================
+    # -- Aggregate & threshold --------------------------------
     pair_scores = (
         pd.concat(score_frames, ignore_index=True)
         .groupby(["lead_id", "pos_id"], as_index=False)["score"]
@@ -297,197 +258,21 @@ def classify_matches(
         .rename(columns={"score": "similarity_score"})
     )
 
-    # ==========================================================
-    # FILTER QUALIFIED MATCHES
-    # ==========================================================
     qualified = (
         pair_scores[pair_scores["similarity_score"] >= MINIMUM_SCORE]
         .drop_duplicates(subset=["lead_id", "pos_id"])
         .copy()
     )
 
-    if qualified.empty:
-        log.warning("No pairs met MINIMUM_SCORE=%d.", MINIMUM_SCORE)
-        return pd.DataFrame(columns=[
-            "lead_id", "pos_id", "match_result",
-            "similarity_score", "matching_comments",
-        ])
+    return qualified, key_match_frames, supp_match_frames
 
-    # ==========================================================
-    # VECTORIZED MATCHED FIELD TRACKING
-    # Build one tall DataFrame per field group, then groupby to
-    # get a list of matched fields per (lead_id, pos_id) pair.
-    # ==========================================================
 
-    # Key fields
-    if key_score_frames:
-        key_field_df = pd.concat(
-            [
-                frame.assign(field=field_name)
-                for field_name, frame in key_score_frames.items()
-            ],
-            ignore_index=True,
-        )
-        key_field_map = (
-            key_field_df
-            .groupby(["lead_id", "pos_id"])["field"]
-            .apply(list)
-            .rename("matched_key_fields")
-        )
-        qualified = qualified.merge(
-            key_field_map, on=["lead_id", "pos_id"], how="left"
-        )
-        qualified["matched_key_fields"] = qualified["matched_key_fields"].apply(
-            lambda x: x if isinstance(x, list) else []
-        )
-    else:
-        qualified["matched_key_fields"] = [[]] * len(qualified)
-
-    # Supplementary fields
-    if supp_score_frames:
-        supp_field_df = pd.concat(
-            [
-                frame.assign(field=field_name)
-                for field_name, frame in supp_score_frames.items()
-            ],
-            ignore_index=True,
-        )
-        supp_field_map = (
-            supp_field_df
-            .groupby(["lead_id", "pos_id"])["field"]
-            .apply(list)
-            .rename("matched_supp_fields")
-        )
-        qualified = qualified.merge(
-            supp_field_map, on=["lead_id", "pos_id"], how="left"
-        )
-        qualified["matched_supp_fields"] = qualified["matched_supp_fields"].apply(
-            lambda x: x if isinstance(x, list) else []
-        )
-    else:
-        qualified["matched_supp_fields"] = [[]] * len(qualified)
-
-    # ==========================================================
-    # BUILD SUBSETS FOR FINAL MERGE
-    # Pull ORIGINAL columns (not normalized) so the ServiceNow
-    # payload carries original casing and special characters.
-    # Rename only inside subset — original sales df untouched.
-    # ==========================================================
-    lead_subset = leads[[
-        "lead_id",
-        "updated_date",
-        "fiscal_year_lead",
-        "fiscal_period_lead",
-    ]]
-
-    sales_subset = (
-        sales
-        .rename(columns={"business_name": "business_name_transaction"})
-        [[
-            "pos_id",
-            "account_number",
-            "business_name_transaction",   # original (renamed)
-            "membership_number",
-            "warehouse_number",
-            "fiscal_year_transaction",
-            "fiscal_period_transaction",
-            "week",
-            "shop_type",                   # passthrough
-            "sales_reference_id",          # passthrough
-            "order_amount",
-            "bd_industry",                 # passthrough
-            "first_name",                  # original
-            "last_name",                   # original
-            "address_line_one",            # original
-            "address_line_two",            # original
-            "city",                        # original
-            "state",                       # original
-            "zip_code",                    # original
-            "email",                       # original
-            "phone",                       # original
-            "industry_description"         # passthrough
-        ]]
-    )
-
-    # ==========================================================
-    # BUILD MATCHED DATAFRAME
-    # ==========================================================
-    matched_df = (
-        qualified
-        .merge(lead_subset, on="lead_id", how="inner")
-        .merge(sales_subset, on="pos_id", how="inner")
-    )
-
-    # ==========================================================
-    # FISCAL FILTER
-    # ==========================================================
-    later_year = (
-        matched_df["fiscal_year_lead"] < matched_df["fiscal_year_transaction"]
-    )
-    same_year_later_period = (
-        (matched_df["fiscal_year_lead"] == matched_df["fiscal_year_transaction"])
-        & (matched_df["fiscal_period_lead"] <= matched_df["fiscal_period_transaction"])
-    )
-    matched_df = matched_df[later_year | same_year_later_period].copy()
-
-    if matched_df.empty:
-        log.warning("No matches survived the fiscal filter.")
-        return pd.DataFrame(columns=[
-            "lead_id", "pos_id", "match_result",
-            "similarity_score", "matching_comments",
-        ])
-
-    # ==========================================================
-    # ASSIGN MATCH RESULT
-    # ==========================================================
-    matched_df["match_result"] = matched_df["similarity_score"].apply(
-        lambda x: "Match" if x >= COMPLETE_SCORE else "Potential"
-    )
-    matched_df["match_type"] = "Exact"
-    matched_df["matched_by"] = "System"
-
-    # ==========================================================
-    # PRIMARY TRANSACTION LOGIC
-    # ==========================================================
-    # Default everyone to False
-    matched_df["primary_transaction"] = False
-
-    # Only rank Match rows
-    match_only = matched_df[matched_df["match_result"] == "Match"].copy()
-    match_only = match_only.sort_values(
-        by=["lead_id", "fiscal_year_transaction", "fiscal_period_transaction", "week"],
-        ascending=True,
-    )
-    match_only["rank"] = match_only.groupby("lead_id").cumcount() + 1
-
-    # Mark primary on the earliest Match row, using its index
-    primary_idx = match_only[match_only["rank"] == 1].index
-    matched_df.loc[primary_idx, "primary_transaction"] = True
-
-    # ==========================================================
-    # MATCHING COMMENTS
-    # Built after primary_transaction is assigned so the comment
-    # can reference it.
-    # ==========================================================
-    matched_df["matching_comments"] = matched_df.apply(
-        build_matching_comment, axis=1
-    )
-
-    # ==========================================================
-    # SERVICENOW MAPPINGS
-    # ==========================================================
-    matched_df["u_matched_lead_number"] = matched_df["lead_id"]
-    matched_df["u_order_amount"]        = matched_df["order_amount"]
-    matched_df["u_order_amount_rounded"] = (
-        pd.to_numeric(matched_df["order_amount"], errors="coerce").round(2)
-    )
-    matched_df["updated_date"] = pd.to_datetime(datetime.now())
-
-    # ==========================================================
-    # FINAL OUTPUT
-    # ==========================================================
-    final_df = matched_df[[
-        # Matching
+# ==============================================================
+# OUTPUT COLUMNS
+# ==============================================================
+def _output_columns() -> list[str]:
+    return [
+        # Matching / classification
         "lead_id",
         "pos_id",
         "match_result",
@@ -496,6 +281,7 @@ def classify_matches(
         "primary_transaction",
         "matched_by",
         "matching_comments",
+        "closed_existing_flag",
 
         # POS dominant
         "account_number",
@@ -527,17 +313,387 @@ def classify_matches(
         "u_order_amount",
         "u_order_amount_rounded",
         "updated_date",
-    ]].copy()
+    ]
 
-    final_df = (
-    final_df
-    .sort_values(
-        by=["similarity_score", "primary_transaction", "match_result"],
-        ascending=[False, False, True],   # score↓, primary↓, "Match" < "Potential" alphabetically
+
+# ==============================================================
+# CLASSIFY MATCHES
+# ==============================================================
+def classify_matches(
+    file_leads: pd.DataFrame,
+    file_sales: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    Chronological matching with Closed-Existing detection.
+
+    For each (fiscal_year, fiscal_period, week) POS group in
+    chronological order:
+      1. Run Phase 1 + Phase 2 scoring against currently active
+         (unresolved) leads.
+      2. For each qualified pair, check if the transaction is
+         strictly before the lead's fiscal year/period.
+      3. If yes → mark the lead Closed-Existing, remove it from
+         the active set, generate a stub row (lead_id +
+         closed_existing_flag only), and skip it forever.
+      4. Otherwise, the pair survives to the normal Match /
+         Potential path.
+
+    Because CE detection happens chronologically inside the loop,
+    no separate fiscal filter is needed downstream — any
+    prior-period match would have triggered CE before reaching
+    the normal path.
+    """
+    leads = preprocess(file_leads)
+    sales = preprocess(file_sales)
+
+    # Warehouse pre-filter
+    lead_warehouses = leads["warehouse_number"].dropna().unique()
+    sales_before = len(sales)
+    sales = sales[sales["warehouse_number"].isin(lead_warehouses)].copy()
+    log.info(
+        "Warehouse pre-filter: %d → %d POS rows (%d dropped)",
+        sales_before, len(sales), sales_before - len(sales),
     )
-    .drop_duplicates(subset=["lead_id", "pos_id"], keep="first")
-)
-    log.info("Final matched records: %d", len(final_df))
+
+    if sales.empty:
+        log.warning("No POS rows share a warehouse with any lead.")
+        return pd.DataFrame(columns=_output_columns())
+
+    # Lead fiscal lookup — used for CE check
+    lead_fiscal = (
+        leads[["lead_id", "fiscal_year_lead", "fiscal_period_lead"]]
+        .drop_duplicates(subset=["lead_id"])
+        .set_index("lead_id")
+    )
+
+    # Sort POS into chronological groups
+    sales_sorted = sales.sort_values(
+        by=["fiscal_year_transaction", "fiscal_period_transaction", "week"],
+        ascending=True,
+    )
+    groups = sales_sorted.groupby(
+        ["fiscal_year_transaction", "fiscal_period_transaction", "week"],
+        sort=False,   # already sorted above
+    )
+
+    group_keys = list(groups.groups.keys())
+    log.info("Processing %d chronological POS groups", len(group_keys))
+
+    # State tracking across groups
+    ce_lead_ids        = set()   # resolved as Closed-Existing
+    normal_pair_frames = []      # qualified pairs surviving for Match/Potential
+    key_frames_all     = {}      # field -> list of DataFrames (normal path only)
+    supp_frames_all    = {}      # field -> list of DataFrames (normal path only)
+
+    # Active leads shrinks as leads get resolved
+    active_lead_ids = set(leads["lead_id"].unique())
+
+    for gkey in group_keys:
+        fy, fp, wk = gkey
+
+        if not active_lead_ids:
+            log.info(
+                "All leads resolved — stopping early at group %s/%s/wk%s",
+                fy, fp, wk,
+            )
+            break
+
+        sales_slice  = groups.get_group(gkey)
+        active_leads = leads[leads["lead_id"].isin(active_lead_ids)].copy()
+
+        qualified, key_matches, supp_matches = _score_group(
+            sales_slice, active_leads
+        )
+
+        if qualified.empty:
+            log.debug(
+                "Group %s/%s/wk%s — no qualified pairs", fy, fp, wk
+            )
+            continue
+
+        # Attach transaction fiscal columns for CE check
+        qualified["fiscal_year_transaction"]   = fy
+        qualified["fiscal_period_transaction"] = fp
+        qualified["week"]                      = wk
+
+        # CE check: is this transaction prior to the lead?
+        qualified = qualified.join(lead_fiscal, on="lead_id", how="left")
+
+        prior_mask = (
+            (qualified["fiscal_year_transaction"] < qualified["fiscal_year_lead"])
+            | (
+                (qualified["fiscal_year_transaction"] == qualified["fiscal_year_lead"])
+                & (qualified["fiscal_period_transaction"] < qualified["fiscal_period_lead"])
+            )
+        )
+
+        # Leads matched to a prior-period transaction in this group
+        new_ce = set(qualified.loc[prior_mask, "lead_id"].unique())
+
+        if new_ce:
+            ce_lead_ids.update(new_ce)
+            active_lead_ids -= new_ce
+            log.info(
+                "Group %s/%s/wk%s — %d new CE lead(s): %s",
+                fy, fp, wk, len(new_ce),
+                list(new_ce)[:10],   # cap log length
+            )
+
+        # Keep only pairs where the lead is NOT CE
+        # (a group can have both CE and non-CE pairs simultaneously)
+        surviving = qualified[~qualified["lead_id"].isin(new_ce)].copy()
+
+        if surviving.empty:
+            continue
+
+        normal_pair_frames.append(
+            surviving[[
+                "lead_id", "pos_id", "similarity_score",
+                "fiscal_year_transaction", "fiscal_period_transaction", "week",
+            ]].copy()
+        )
+
+        # Accumulate matched-field frames, restricted to surviving leads
+        surviving_ids = set(surviving["lead_id"].unique())
+
+        for field, frame in key_matches.items():
+            kept = frame[frame["lead_id"].isin(surviving_ids)]
+            if not kept.empty:
+                key_frames_all.setdefault(field, []).append(kept)
+
+        for field, frame in supp_matches.items():
+            kept = frame[frame["lead_id"].isin(surviving_ids)]
+            if not kept.empty:
+                supp_frames_all.setdefault(field, []).append(kept)
+
+    log.info(
+        "Chronological pass complete — CE leads: %d | normal pair batches: %d",
+        len(ce_lead_ids), len(normal_pair_frames),
+    )
+
+    # ==========================================================
+    # BUILD CE STUB ROWS
+    # One row per CE lead — lead_id + flag only, everything else null.
+    # ==========================================================
+    ce_stubs = (
+        pd.DataFrame({"lead_id": list(ce_lead_ids), "closed_existing_flag": True})
+        if ce_lead_ids
+        else pd.DataFrame(columns=["lead_id", "closed_existing_flag"])
+    )
+
+    # ==========================================================
+    # NORMAL PATH
+    # ==========================================================
+    out_cols = _output_columns()
+
+    if not normal_pair_frames:
+        log.warning("No normal pairs to process.")
+        final_df = ce_stubs.reindex(columns=out_cols)
+        log.info("Final output — CE stubs only: %d", len(final_df))
+        return final_df
+
+    normal_qualified = (
+        pd.concat(normal_pair_frames, ignore_index=True)
+        .drop_duplicates(subset=["lead_id", "pos_id"])
+    )
+
+    # Re-attach lead fiscal columns needed downstream (matching comments,
+    # primary transaction sort). No fiscal filter applied here — the
+    # chronological group loop already guaranteed that any lead whose
+    # first matched transaction was prior-period was resolved as CE and
+    # removed from active_lead_ids before reaching this path.
+    normal_qualified = normal_qualified.join(lead_fiscal, on="lead_id", how="inner")
+
+    log.info("Normal pairs carried forward: %d", len(normal_qualified))
+
+    # ==========================================================
+    # MATCHED FIELD TRACKING
+    # ==========================================================
+    def _consolidate_field_frames(frames_dict):
+        result = {}
+        for field, frame_list in frames_dict.items():
+            combined = (
+                pd.concat(frame_list, ignore_index=True)
+                .drop_duplicates(subset=["lead_id", "pos_id"])
+            )
+            # Restrict to pairs that survived
+            combined = combined.merge(
+                normal_qualified[["lead_id", "pos_id"]],
+                on=["lead_id", "pos_id"],
+                how="inner",
+            )
+            if not combined.empty:
+                result[field] = combined
+        return result
+
+    key_frames_final  = _consolidate_field_frames(key_frames_all)
+    supp_frames_final = _consolidate_field_frames(supp_frames_all)
+
+    if key_frames_final:
+        key_field_map = (
+            pd.concat(
+                [f.assign(field=fn) for fn, f in key_frames_final.items()],
+                ignore_index=True,
+            )
+            .groupby(["lead_id", "pos_id"])["field"]
+            .apply(list)
+            .rename("matched_key_fields")
+        )
+        normal_qualified = normal_qualified.merge(
+            key_field_map, on=["lead_id", "pos_id"], how="left"
+        )
+    else:
+        normal_qualified["matched_key_fields"] = [[]] * len(normal_qualified)
+
+    normal_qualified["matched_key_fields"] = normal_qualified[
+        "matched_key_fields"
+    ].apply(lambda x: x if isinstance(x, list) else [])
+
+    if supp_frames_final:
+        supp_field_map = (
+            pd.concat(
+                [f.assign(field=fn) for fn, f in supp_frames_final.items()],
+                ignore_index=True,
+            )
+            .groupby(["lead_id", "pos_id"])["field"]
+            .apply(list)
+            .rename("matched_supp_fields")
+        )
+        normal_qualified = normal_qualified.merge(
+            supp_field_map, on=["lead_id", "pos_id"], how="left"
+        )
+    else:
+        normal_qualified["matched_supp_fields"] = [[]] * len(normal_qualified)
+
+    normal_qualified["matched_supp_fields"] = normal_qualified[
+        "matched_supp_fields"
+    ].apply(lambda x: x if isinstance(x, list) else [])
+
+    # ==========================================================
+    # BUILD SUBSETS FOR FINAL MERGE
+    # Pull ORIGINAL columns (not normalized) so the ServiceNow
+    # payload carries original casing and special characters.
+    # ==========================================================
+    lead_subset = leads[[
+        "lead_id",
+        "updated_date",
+        "fiscal_year_lead",
+        "fiscal_period_lead",
+    ]]
+
+    sales_subset = (
+        sales
+        .rename(columns={"business_name": "business_name_transaction"})
+        [[
+            "pos_id",
+            "account_number",
+            "business_name_transaction",
+            "membership_number",
+            "warehouse_number",
+            "fiscal_year_transaction",
+            "fiscal_period_transaction",
+            "week",
+            "shop_type",
+            "sales_reference_id",
+            "order_amount",
+            "bd_industry",
+            "first_name",
+            "last_name",
+            "address_line_one",
+            "address_line_two",
+            "city",
+            "state",
+            "zip_code",
+            "email",
+            "phone",
+            "industry_description",
+        ]]
+    )
+
+    matched_df = (
+        normal_qualified
+        .merge(lead_subset,  on="lead_id", how="inner")
+        .merge(sales_subset, on="pos_id",  how="inner")
+    )
+
+    # ==========================================================
+    # ASSIGN MATCH RESULT
+    # ==========================================================
+    matched_df["match_result"] = matched_df["similarity_score"].apply(
+        lambda x: "Match" if x >= COMPLETE_SCORE else "Potential"
+    )
+    matched_df["match_type"]           = "Exact"
+    matched_df["matched_by"]           = "System"
+    matched_df["primary_transaction"]  = False
+    matched_df["closed_existing_flag"] = False
+
+    # ==========================================================
+    # PRIMARY TRANSACTION LOGIC
+    # ==========================================================
+    match_only = matched_df[matched_df["match_result"] == "Match"].copy()
+    match_only = match_only.sort_values(
+        by=["lead_id", "fiscal_year_transaction",
+            "fiscal_period_transaction", "week"],
+        ascending=True,
+    )
+    match_only["rank"] = match_only.groupby("lead_id").cumcount() + 1
+    primary_idx = match_only[match_only["rank"] == 1].index
+    matched_df.loc[primary_idx, "primary_transaction"] = True
+
+    # ==========================================================
+    # MATCHING COMMENTS
+    # ==========================================================
+    matched_df["matching_comments"] = matched_df.apply(
+        build_matching_comment, axis=1
+    )
+
+    # ==========================================================
+    # SERVICENOW MAPPINGS
+    # ==========================================================
+    matched_df["u_matched_lead_number"]  = matched_df["lead_id"]
+    matched_df["u_order_amount"]         = matched_df["order_amount"]
+    matched_df["u_order_amount_rounded"] = (
+        pd.to_numeric(matched_df["order_amount"], errors="coerce").round(2)
+    )
+    matched_df["updated_date"] = pd.to_datetime(datetime.now())
+
+    # ==========================================================
+    # ASSEMBLE FINAL OUTPUT
+    # Normal matched rows + CE stub rows (with all POS/SN cols null)
+    # ==========================================================
+    for col in out_cols:
+        if col not in matched_df.columns:
+            matched_df[col] = None
+    matched_df = matched_df[out_cols].copy()
+
+    ce_stubs = ce_stubs.reindex(columns=out_cols)
+
+    final_df = pd.concat(
+        [f for f in [matched_df, ce_stubs] if not f.empty],
+        ignore_index=True,
+    )
+
+    # Sort: CE stubs (NaN score) sink to the bottom via na_position
+    final_df = (
+        final_df
+        .sort_values(
+            by=["similarity_score", "primary_transaction", "match_result"],
+            ascending=[False, False, True],
+            na_position="last",
+        )
+        .drop_duplicates(subset=["lead_id", "pos_id"], keep="first")
+    )
+
+    log.info(
+        "Final output — normal rows: %d | CE stubs: %d | total: %d",
+        (~final_df["closed_existing_flag"].fillna(False)).sum(),
+        final_df["closed_existing_flag"].fillna(False).sum(),
+        len(final_df),
+    )
+
+    del matched_df, ce_stubs
+    gc.collect()
+
     return final_df
 
 
@@ -561,9 +717,10 @@ def primary_classification(
            to paths defined in config if not explicitly provided).
         3. Inserts an audit record into the DB with status "InProgress"
            before classification begins.
-        4. Delegates matching to ``classify_matches()``, which runs
-           Phase 1 (key field scoring), Phase 2 (supplementary scoring),
-           fiscal filtering, and primary transaction assignment.
+        4. Delegates matching to ``classify_matches()``, which runs the
+           chronological group-by-group scoring pass with Closed-Existing
+           detection, followed by Match/Potential classification and
+           primary transaction assignment.
         5. Writes the final matched DataFrame to GCS via
            ``process_and_archive_files()`` and returns the output URI.
 
@@ -592,7 +749,6 @@ def primary_classification(
         will bubble up uncaught — the caller (Cloud Workflows / Cloud
         Run Job) is expected to handle retries and dead-letter routing.
     """
-
     job_config     = JobConfig(config_file_path)
     storage_config = job_config.storage_config
     db_config      = job_config.db_config
@@ -613,20 +769,20 @@ def primary_classification(
     metadata   = MetaData()
 
     STRING_COLS = {
-    "zip_code": str,
-    "zip_code_normalized": str,
-    "phone": str,
-    "phone_normalized": str,
-    "warehouse_number": str,
-    "membership_number": str,
-    "account_number": str,
-}
+        "zip_code":            str,
+        "zip_code_normalized": str,
+        "phone":               str,
+        "phone_normalized":    str,
+        "warehouse_number":    str,
+        "membership_number":   str,
+        "account_number":      str,
+    }
 
     log.info("Loading leads file: %s", file_a_path)
-    file_a = load_file_from_gcs(file_a_path,dtype=STRING_COLS)
+    file_a = load_file_from_gcs(file_a_path, dtype=STRING_COLS)
 
     log.info("Loading POS file: %s", file_b_path)
-    file_b = load_file_from_gcs(file_b_path,dtype=STRING_COLS)
+    file_b = load_file_from_gcs(file_b_path, dtype=STRING_COLS)
 
     log.info("Lead count: %d | POS count: %d", len(file_a), len(file_b))
 
