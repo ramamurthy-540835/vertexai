@@ -140,7 +140,7 @@ jobs:
           flags: |
             --service-account=${{ env.SERVICE_ACCOUNT }}
             --vpc-egress=all-traffic
-            --ingress=internal
+            --ingress=internal-and-cloud-load-balancing
             --network=${{ env.NETWORK }}
             --subnet=${{ env.SUBNET }}
             --set-env-vars=${{ steps.env.outputs.env_vars }}
