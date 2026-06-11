@@ -148,15 +148,15 @@ def get_oauth_token(
             last_exc = e
             wait = 2 ** attempt  # 2s, 4s, 8s
             logging.warning(
-                "[ServiceNow] OAuth attempt %d/%d failed (%s). Retrying in %ds...",
-                attempt, max_retries, type(e).__name__, wait,
-            )
+            "[ServiceNow] OAuth attempt %d/%d failed (%s: %s). Retrying in %ds...",
+            attempt, max_retries, type(e).__name__, str(e)[:200], wait,
+        )
             if attempt < max_retries:
                 time.sleep(wait)
 
-    raise ConnectTimeout(
-        f"ServiceNow OAuth token fetch failed after {max_retries} attempts"
-    ) from last_exc
+    raise type(last_exc)(
+    f"ServiceNow OAuth token fetch failed after {max_retries} attempts"
+) from last_exc
 
 
 # ==============================================================
