@@ -153,10 +153,23 @@ jobs:
       - name: Set revision history limit
         if: env.DEPLOY == 'true'
         run: |
-          gcloud run services update lead-mgmt-service \
+          gcloud run services describe lead-mgmt-service \
             --region us-central1 \
             --project "$PROJECT_ID" \
-            --revision-history-limit 3
+            --format export > service.yaml
+          
+          python3 -c "
+          import yaml
+          with open('service.yaml') as f:
+              svc = yaml.safe_load(f)
+          svc['spec']['revisionHistoryLimit'] = 3
+          with open('service.yaml', 'w') as f:
+              yaml.dump(svc, f)
+          "
+          
+          gcloud run services replace service.yaml \
+            --region us-central1 \
+            --project "$PROJECT_ID"
 
       - name: Get Service URL
         if: env.DEPLOY == 'true'
