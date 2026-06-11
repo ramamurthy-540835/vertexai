@@ -149,7 +149,14 @@ jobs:
             --min-instances=0
             --max-instances=2
             --timeout=60
-            --max-revisions=3
+      
+      - name: Set revision history limit
+        if: env.DEPLOY == 'true'
+        run: |
+          gcloud run services update lead-mgmt-service \
+            --region us-central1 \
+            --project "$PROJECT_ID" \
+            --revision-history-limit 3
 
       - name: Get Service URL
         if: env.DEPLOY == 'true'
