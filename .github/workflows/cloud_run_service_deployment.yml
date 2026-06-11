@@ -149,7 +149,28 @@ jobs:
             --min-instances=0
             --max-instances=2
             --timeout=60
+      
+      - name: Clean up old revisions
+        if: env.DEPLOY == 'true'
+        run: |
+          LATEST=$(gcloud run services describe lead-mgmt-service \
+            --region us-central1 \
+            --project "$PROJECT_ID" \
+            --format="value(status.latestReadyRevisionName)")
 
+          # Get all revisions except the latest, sorted oldest first, skip last 2
+          gcloud run revisions list \
+            --service lead-mgmt-service \
+            --region us-central1 \
+            --project "$PROJECT_ID" \
+            --sort-by="~metadata.creationTimestamp" \
+            --format="value(metadata.name)" \
+            | grep -v "$LATEST" \
+            | tail -n +3 \
+            | xargs -I {} gcloud run revisions delete {} \
+                --region us-central1 \
+                --project "$PROJECT_ID" \
+                --quiet || true
       - name: Get Service URL
         if: env.DEPLOY == 'true'
         id: get-service-url

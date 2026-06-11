@@ -447,10 +447,7 @@ def classify_matches(
             continue
 
         normal_pair_frames.append(
-            surviving[[
-                "lead_id", "pos_id", "similarity_score",
-                "fiscal_year_transaction", "fiscal_period_transaction", "week",
-            ]].copy()
+            surviving[["lead_id", "pos_id", "similarity_score"]].copy()
         )
 
         # Accumulate matched-field frames, restricted to surviving leads
@@ -502,7 +499,6 @@ def classify_matches(
     # chronological group loop already guaranteed that any lead whose
     # first matched transaction was prior-period was resolved as CE and
     # removed from active_lead_ids before reaching this path.
-    normal_qualified = normal_qualified.join(lead_fiscal, on="lead_id", how="inner")
 
     log.info("Normal pairs carried forward: %d", len(normal_qualified))
 
