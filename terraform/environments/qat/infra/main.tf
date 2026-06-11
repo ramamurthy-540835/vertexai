@@ -248,7 +248,7 @@ module "network_attachement" {
 }
 
 ###############################################################################
-# Cloud Armor Enterprise Enrollment 
+# Cloud Armor Enterprise Enrollment
 ###############################################################################
 resource "google_compute_project_cloud_armor_tier" "cloud_armor_tier" {
   project          = var.projectId
