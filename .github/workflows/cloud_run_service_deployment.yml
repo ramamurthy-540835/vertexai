@@ -113,7 +113,7 @@ jobs:
             echo "ENVIRONMENT_VARIABLES_PATH=./cloud_run_service/service_spt.properties" >> $GITHUB_ENV 
 
             echo "NETWORK=projects/gcp-prj-transit-hub/global/networks/gcp-vpc-np-host" >> $GITHUB_ENV
-            echo "SUBNET=projects/gcp-prj-transit-hub/regions/us-central1/subnetworks/gcp-snt-np-usc1-601-bcleadsmgmt-servicenow-psc-spt" >> $GITHUB_ENV
+            echo "SUBNET=projects/gcp-prj-transit-hub/regions/us-central1/subnetworks/gcp-snt-np-usc1-601-cloudrunjobs-np2" >> $GITHUB_ENV
 
           else
             echo "DEPLOY=false" >> $GITHUB_ENV
@@ -140,7 +140,7 @@ jobs:
           flags: |
             --service-account=${{ env.SERVICE_ACCOUNT }}
             --vpc-egress=all-traffic
-            --ingress=internal
+            --ingress=internal-and-cloud-load-balancing
             --network=${{ env.NETWORK }}
             --subnet=${{ env.SUBNET }}
             --set-env-vars=${{ steps.env.outputs.env_vars }}

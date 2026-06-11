@@ -259,3 +259,11 @@ module "network_attachement" {
   subnet_name           = "gcp-snt-np-usc1-601-bcleadsmgmt-servicenow-psc-adt"
   network_attachment_name = "gcp-nat-np-usc1-601-bcleadsmgmt-servicenow-psc-adt"
 }
+
+###############################################################################
+# Cloud Armor Enterprise Enrollment 
+###############################################################################
+resource "google_compute_project_cloud_armor_tier" "cloud_armor_tier" {
+  project          = var.projectId
+  cloud_armor_tier = "CA_ENTERPRISE_ANNUAL"
+}
