@@ -19,6 +19,7 @@ gets the same original + normalized treatment as its primary cousin.
 import pandas as pd
 from google.cloud import storage
 from unidecode import unidecode
+import gc
 
 from costco.leadmgmt.config.Configuration import JobConfig
 from costco.leadmgmt.util.apputil import process_and_archive_files
@@ -26,7 +27,7 @@ from costco.leadmgmt.util.fiscal_year import get_costco_fiscal_info
 
 
 # Rows pulled from Cloud SQL per fetch. Bigger = faster but more memory.
-CHUNK_SIZE = 20_000
+CHUNK_SIZE = 5_000
 
 
 # Fields that need normalization (lowercase + unidecode + strip non-alphanumeric).
@@ -440,6 +441,8 @@ def load_and_preprocess_data_cloud_sql(base_name: str, config_file_path: str) ->
 
             total_rows += chunk_rows
             print(f"  Chunk {chunk_count}: {chunk_rows:,} rows (running total: {total_rows:,})")
+            del chunk_df
+            gc.collect()
 
     output_uri = f"gs://{bucket.name}/{output_file}"
     print(f"✅ Wrote {total_rows:,} rows to {output_uri} in {chunk_count} chunks")
