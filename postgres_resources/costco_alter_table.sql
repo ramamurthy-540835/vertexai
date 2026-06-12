@@ -169,3 +169,6 @@ ALTER TABLE "$SCHEMA_NAME".transaction
 -- oms_zip_4: VARCHAR(20) → VARCHAR(100)
 ALTER TABLE "$SCHEMA_NAME".transaction
     ALTER COLUMN oms_zip_4 TYPE VARCHAR(100);
+
+ALTER TABLE "$SCHEMA_NAME".lead
+    Add COLUMN week INT;
