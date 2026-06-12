@@ -18,7 +18,7 @@ gets the same original + normalized treatment as its primary cousin.
 
 import pandas as pd
 from google.cloud import storage
-from unidecode import unidecode_expect_ascii
+from unidecode import unidecode
 
 from costco.leadmgmt.config.Configuration import JobConfig
 from costco.leadmgmt.util.apputil import process_and_archive_files
@@ -26,7 +26,7 @@ from costco.leadmgmt.util.fiscal_year import get_costco_fiscal_info
 
 
 # Rows pulled from Cloud SQL per fetch. Bigger = faster but more memory.
-CHUNK_SIZE = 50_000
+CHUNK_SIZE = 20_000
 
 
 # Fields that need normalization (lowercase + unidecode + strip non-alphanumeric).
@@ -103,14 +103,13 @@ def normalize_series(s: pd.Series) -> pd.Series:
       7. Lowercase
     Special characters (&, @, ., -, ', etc.) are REMOVED.
     """
+    decoded = [unidecode(str(x)) if x else '' for x in s.fillna('')]
     return (
-        s.fillna('')
-         .astype(str)
-         .apply(unidecode_expect_ascii)
-         .str.replace(r'[^a-zA-Z0-9\s]', '', regex=True)
-         .str.replace(r'\s+', ' ', regex=True)
-         .str.strip()
-         .str.lower()
+        pd.Series(decoded, index=s.index)
+          .str.replace(r'[^a-zA-Z0-9\s]', '', regex=True)
+          .str.replace(r'\s+', ' ', regex=True)
+          .str.strip()
+          .str.lower()
     )
 
 
