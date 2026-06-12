@@ -205,6 +205,7 @@ class SnowConfig:
     api_urls: dict
     default_start_date: str
     match_result_update_url: str
+    update_closed_existing_url:str
     batch_size: int
     insert_batch_size:int
     max_retries: int
@@ -281,6 +282,7 @@ class SnowConfig:
         match_url = cls.get_config("SERVICENOW", "match_url", config, None)
         pos_url = cls.get_config("SERVICENOW", "pos_url", config, None)
         match_result_update_url =cls.get_config("SERVICENOW", "match_result_update_url", config, None)
+        update_closed_existing_url=cls.get_config("SERVICENOW", "update_closed_existing_url", config, None)
         batch_size = cls.get_config("SERVICENOW", "batch_size", config, None)
         insert_batch_size = cls.get_config("SERVICENOW", "insert_batch_size", config, None)
         max_retries = cls.get_config("SERVICENOW", "max_retries", config, None)
@@ -302,6 +304,7 @@ class SnowConfig:
             api_urls=urls,
             default_start_date=cls.get_config("SERVICENOW", "default_start_date", config, "2025-05-07 00:00:00"),
             match_result_update_url=match_result_update_url,
+            update_closed_existing_url=update_closed_existing_url,
             batch_size=batch_size,
             insert_batch_size=insert_batch_size,
             max_retries=max_retries,
