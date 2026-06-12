@@ -579,12 +579,31 @@ def classify_matches(
         log.warning("No POS rows share a warehouse with any lead.")
         return pd.DataFrame(columns=_output_columns())
 
-    # Lead fiscal lookup — used for CE check
-    lead_fiscal = (
-        leads[["lead_id", "fiscal_year_lead", "fiscal_period_lead"]]
-        .drop_duplicates(subset=["lead_id"])
-        .set_index("lead_id")
-    )
+    # Lead fiscal lookup — used for CE check (year, period, AND week).
+    # Lead's `week` is renamed to `week_lead` so it never collides with
+    # the POS transaction `week` when the two are merged below.
+    # If the leads file predates the week column, synthesize an all-NA
+    # week_lead so the week branch of the CE check is simply inert
+    # (NA comparisons resolve to False) rather than crashing.
+    _lead_fiscal_cols = ["lead_id", "fiscal_year_lead", "fiscal_period_lead"]
+    if "week" in leads.columns:
+        lead_fiscal = (
+            leads[_lead_fiscal_cols + ["week"]]
+            .rename(columns={"week": "week_lead"})
+            .drop_duplicates(subset=["lead_id"])
+            .set_index("lead_id")
+        )
+    else:
+        log.warning(
+            "Leads file has no 'week' column — week-level CE check disabled "
+            "(falling back to year/period only)."
+        )
+        lead_fiscal = (
+            leads[_lead_fiscal_cols]
+            .drop_duplicates(subset=["lead_id"])
+            .set_index("lead_id")
+        )
+        lead_fiscal["week_lead"] = pd.NA
 
     # Sort POS into chronological groups
     sales_sorted = sales.sort_values(
@@ -625,13 +644,40 @@ def classify_matches(
         qualified["week"]                      = wk
         qualified = qualified.join(lead_fiscal, on="lead_id", how="left")
 
+        # Coerce all six comparison columns to a nullable integer dtype
+        # so the < / == comparisons are numeric, never lexicographic.
+        # (e.g. as strings "10" < "9" is True, which would be wrong.)
+        # week_lead may be NaN if a lead somehow lacks a week — those
+        # rows simply won't satisfy the week branch of the mask.
+        for _col in (
+            "fiscal_year_transaction", "fiscal_period_transaction", "week",
+            "fiscal_year_lead", "fiscal_period_lead", "week_lead",
+        ):
+            qualified[_col] = pd.to_numeric(
+                qualified[_col], errors="coerce"
+            ).astype("Int64")
+
+        # CE "prior" check — now three levels deep: year, then period,
+        # then week. A transaction is prior (→ Closed-Existing) when:
+        #   txn_year  < lead_year                                   OR
+        #   same year, txn_period  < lead_period                    OR
+        #   same year, same period, txn_week < lead_week
+        # All three equal → NOT prior → lead stays for normal matching.
         prior_mask = (
             (qualified["fiscal_year_transaction"] < qualified["fiscal_year_lead"])
             | (
                 (qualified["fiscal_year_transaction"] == qualified["fiscal_year_lead"])
                 & (qualified["fiscal_period_transaction"] < qualified["fiscal_period_lead"])
             )
+            | (
+                (qualified["fiscal_year_transaction"] == qualified["fiscal_year_lead"])
+                & (qualified["fiscal_period_transaction"] == qualified["fiscal_period_lead"])
+                & (qualified["week"] < qualified["week_lead"])
+            )
         )
+        # Int64 comparisons yield pd.NA where either side is NA; treat
+        # NA as "not prior" so a missing week never forces CE.
+        prior_mask = prior_mask.fillna(False).astype(bool)
 
         new_ce = set(qualified.loc[prior_mask, "lead_id"].unique())
         if new_ce:
