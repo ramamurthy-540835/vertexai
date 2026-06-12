@@ -26,7 +26,7 @@ from costco.leadmgmt.util.fiscal_year import get_costco_fiscal_info
 
 
 # Rows pulled from Cloud SQL per fetch. Bigger = faster but more memory.
-CHUNK_SIZE = 200_000
+CHUNK_SIZE = 50_000
 
 
 # Fields that need normalization (lowercase + unidecode + strip non-alphanumeric).
