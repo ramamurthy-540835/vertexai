@@ -23,9 +23,6 @@ log = logging.getLogger(__name__)
 # the variant that hit first (or in the case of address bundles,
 # the highest-scoring one) is recorded in matched_key_fields for
 # the matching_comments output.
-#
-# All column names below are the *_normalized variants; the
-# preprocess step creates any missing ones.
 
 KEY_FAMILIES = {
     "business_name": (
@@ -61,10 +58,6 @@ KEY_FAMILIES = {
     ),
 }
 
-# Address bundles: each bundle binds ONE address_line_1 variant
-# with its OWN zip/city/state. When an address line matches, only
-# THAT bundle's geo fields are consulted for supplementary scoring
-# (zip 10, city 5, state 5). The highest-scoring bundle wins.
 ADDRESS_BUNDLES = [
     {
         "name":  "primary",
@@ -94,8 +87,6 @@ ADDRESS_ZIP_SCORE   = 10
 ADDRESS_CITY_SCORE  = 5
 ADDRESS_STATE_SCORE = 5
 
-# Supplementary fallback — used ONLY when no address bundle scores.
-# Each family is the same OR-of-variants pattern as KEY_FAMILIES.
 SUPP_FALLBACK_FAMILIES = {
     "zip_code": (
         "zip_code_normalized",
@@ -126,8 +117,6 @@ SUPP_FALLBACK_FAMILIES = {
     ),
 }
 
-# Columns to normalize: lead side has only the 7 primary cols,
-# POS side has primary + every OMS variant referenced above.
 LEAD_NORMALIZE_COLS = [
     "business_name_normalized",
     "email_normalized",
@@ -144,6 +133,23 @@ POS_NORMALIZE_COLS = list(
     | {b["zip"]   for b in ADDRESS_BUNDLES}
     | {b["city"]  for b in ADDRESS_BUNDLES}
     | {b["state"] for b in ADDRESS_BUNDLES}
+)
+
+# Blocking keys for candidate generation. Each entry pairs ONE lead
+# column with the list of POS variant columns it can match against.
+# A (lead, POS) pair becomes a candidate when they share a warehouse
+# AND agree on the value of any blocking key/variant. Only fields that
+# can score points ON THEIR OWN are blocking keys: the three key
+# families (business_name / email / phone) and the address-line
+# variants. zip/city/state are NOT blocking keys — they only score as
+# supplementary AFTER a key/address hit, so a pair agreeing solely on
+# zip was never a candidate under the original logic either.
+BLOCKING_KEYS = [
+    (lead_col, pos_variants)
+    for _fam, (lead_col, pos_variants, _score) in KEY_FAMILIES.items()
+]
+BLOCKING_KEYS.append(
+    ("address_line_one_normalized", [b["line"] for b in ADDRESS_BUNDLES])
 )
 
 MINIMUM_SCORE  = 80
@@ -166,14 +172,9 @@ def _friendly(field: str) -> str:
 # ==============================================================
 def build_matching_comment(row: pd.Series) -> str:
     """
-    Constructs a human-readable comment explaining which fields
-    drove the match. matched_key_fields and matched_supp_fields
-    are lists of "family (winning_variant)" strings produced by
-    the scoring pipeline, e.g. "business_name (oms_company)".
-
-    ServiceNow displays this comment to marketers so they can
-    understand why the system matched a lead to a POS transaction
-    without re-running the algorithm.
+    Constructs a human-readable comment explaining which fields drove
+    the match. matched_key_fields / matched_supp_fields are lists of
+    "family (winning_variant)" strings, e.g. "business_name (oms_company)".
     """
     score        = row["similarity_score"]
     result       = row["match_result"]
@@ -271,47 +272,30 @@ def preprocess_sales(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # ==============================================================
-# SCORE ONE GROUP — family/bundle-based per-pair scoring
+# SCORE A PAIR TABLE — pure per-pair family/bundle math
 # ==============================================================
-def _score_group(
-    sales_slice: pd.DataFrame,
-    active_leads: pd.DataFrame,
+def _score_pairs(
+    pairs: pd.DataFrame,
+    pos_primary_overlap: set,
 ) -> pd.DataFrame:
     """
-    Score every (lead, POS) candidate pair from this chronological
-    POS group against the currently active leads.
+    Score an already-built candidate-pair table.
 
-    Returns:
-        DataFrame with columns
-            lead_id, pos_id, similarity_score,
-            matched_key_fields (list[str]),
-            matched_supp_fields (list[str])
-        filtered to similarity_score >= MINIMUM_SCORE.
+    `pairs` must contain lead_id, pos_id, the lead columns suffixed
+    __l, and the POS columns (overlapping primaries suffixed __p, OMS
+    columns unsuffixed). Returns a per-pair score frame (NOT yet
+    thresholded) with:
+        lead_id, pos_id, similarity_score,
+        matched_key_fields (list[str]), matched_supp_fields (list[str]).
+
+    This is the inner kernel called once per warehouse by
+    `_score_group`. Keeping it warehouse-scoped bounds the size of the
+    Python lists below (matched_key / matched_supp) to a single
+    warehouse's pair count rather than the whole group's cartesian
+    product, which is what previously caused OOM at PRD scale.
     """
-    if active_leads.empty or sales_slice.empty:
-        return pd.DataFrame(columns=[
-            "lead_id", "pos_id", "similarity_score",
-            "matched_key_fields", "matched_supp_fields",
-        ])
-
-    # -- Build candidate-pair table -----------------------------
-    # Suffix lead and overlapping POS columns so they don't collide
-    # when the two sides share a name (e.g. business_name_normalized).
-    pos_primary_overlap = set(LEAD_NORMALIZE_COLS) & set(POS_NORMALIZE_COLS)
-    lead_rename = {c: f"{c}__l" for c in LEAD_NORMALIZE_COLS}
-    pos_rename  = {c: f"{c}__p" for c in pos_primary_overlap}
-
-    leads_small = (
-        active_leads[["lead_id", "warehouse_number"] + LEAD_NORMALIZE_COLS]
-        .rename(columns=lead_rename)
-    )
-    sales_small = (
-        sales_slice[["pos_id", "warehouse_number"] + POS_NORMALIZE_COLS]
-        .rename(columns=pos_rename)
-    )
-
-    pairs = leads_small.merge(sales_small, on="warehouse_number", how="inner")
-    if pairs.empty:
+    n = len(pairs)
+    if n == 0:
         return pd.DataFrame(columns=[
             "lead_id", "pos_id", "similarity_score",
             "matched_key_fields", "matched_supp_fields",
@@ -321,7 +305,6 @@ def _score_group(
         """Resolve a normalized-column name to its post-rename form."""
         return f"{name}__p" if name in pos_primary_overlap else name
 
-    n = len(pairs)
     total_score  = np.zeros(n, dtype=np.int64)
     matched_key  = [[] for _ in range(n)]
     matched_supp = [[] for _ in range(n)]
@@ -356,9 +339,6 @@ def _score_group(
                 )
 
     # -- Phase 1: ADDRESS BUNDLES -------------------------------
-    # For each pair, compute every bundle's score (line+zip+city+state).
-    # Keep ONLY the highest-scoring bundle. The chosen bundle's geo
-    # contributes to supplementary scoring; no fallback runs.
     lead_addr  = pairs["address_line_one_normalized__l"]
     lead_zip   = pairs["zip_code_normalized__l"]
     lead_city  = pairs["city_normalized__l"]
@@ -405,7 +385,6 @@ def _score_group(
             + state_hit.astype(np.int64) * ADDRESS_STATE_SCORE
         )
 
-        # If this bundle beats the current best for any pair, replace.
         better = bundle_total.values > best_score
         if better.any():
             idxs = np.where(better)[0]
@@ -431,14 +410,9 @@ def _score_group(
             matched_supp[idx].append(f"state ({_friendly(best_state_col[idx])})")
 
     # -- Phase 2: SUPPLEMENTARY FALLBACK ------------------------
-    # Mirrors the original code's gating: supplementary scoring runs
-    # ONLY for pairs that already scored on at least one key family
-    # (business_name / email / phone / address bundle). A pair with
-    # zero key-field hits is not a candidate and never sees supp
-    # scoring — preserving the original Phase 1 → Phase 2 semantics.
-    #
-    # Within candidates, fallback supp runs only when no address
-    # bundle won (otherwise the bundle's own geo already scored).
+    # Gated: supplementary scoring runs ONLY for pairs that already
+    # scored on at least one key family. Within those, fallback supp
+    # runs only when no address bundle won.
     is_key_candidate = total_score > 0
     no_address       = ~address_hit
     eligible         = no_address & is_key_candidate
@@ -472,20 +446,158 @@ def _score_group(
                         f"{family_name} ({_friendly(winning_variant[idx])})"
                     )
 
-    # -- Assemble & threshold -----------------------------------
-    out = pd.DataFrame({
+    return pd.DataFrame({
         "lead_id":             pairs["lead_id"].values,
         "pos_id":              pairs["pos_id"].values,
         "similarity_score":    total_score,
         "matched_key_fields":  matched_key,
         "matched_supp_fields": matched_supp,
     })
-    qualified = (
-        out[out["similarity_score"] >= MINIMUM_SCORE]
+
+
+# ==============================================================
+# CANDIDATE GENERATION — blocking via equi-joins
+# ==============================================================
+def _generate_candidates(
+    leads_small: pd.DataFrame,
+    sales_small: pd.DataFrame,
+    pos_primary_overlap: set,
+) -> pd.DataFrame:
+    """
+    Build the deduplicated candidate (lead_id, pos_id) set by
+    equi-joining on (warehouse_number, value) for every blocking
+    key/variant.
+
+    A pair is emitted only when the lead and POS row share a warehouse
+    AND agree on the value of some blocking field — so this never
+    materialises a cartesian product. Column names are already suffixed
+    (__l on leads, __p on overlapping POS primaries; OMS cols
+    unsuffixed).
+
+    Returns DataFrame[lead_id, pos_id].
+    """
+    def _pos_col(name):
+        return f"{name}__p" if name in pos_primary_overlap else name
+
+    candidate_frames = []
+    for lead_col, pos_variants in BLOCKING_KEYS:
+        lcol = f"{lead_col}__l"
+        if lcol not in leads_small.columns:
+            continue
+
+        # Lead side: only rows where the blocking value is present.
+        lblock = (
+            leads_small[["lead_id", "warehouse_number", lcol]]
+            .dropna(subset=[lcol])
+            .rename(columns={lcol: "_blockval"})
+        )
+        if lblock.empty:
+            continue
+
+        for variant in pos_variants:
+            pcol = _pos_col(variant)
+            if pcol not in sales_small.columns:
+                continue
+
+            pblock = (
+                sales_small[["pos_id", "warehouse_number", pcol]]
+                .dropna(subset=[pcol])
+                .rename(columns={pcol: "_blockval"})
+            )
+            if pblock.empty:
+                continue
+
+            # Equi-join on warehouse + shared blocking value.
+            merged = lblock.merge(
+                pblock, on=["warehouse_number", "_blockval"], how="inner"
+            )[["lead_id", "pos_id"]]
+
+            if not merged.empty:
+                candidate_frames.append(merged)
+
+            del pblock, merged
+
+    if not candidate_frames:
+        return pd.DataFrame(columns=["lead_id", "pos_id"])
+
+    return (
+        pd.concat(candidate_frames, ignore_index=True)
         .drop_duplicates(subset=["lead_id", "pos_id"])
-        .copy()
     )
-    return qualified
+
+
+# ==============================================================
+# SCORE ONE GROUP — blocking candidate generation + scoring
+# ==============================================================
+def _score_group(
+    sales_slice: pd.DataFrame,
+    active_leads: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    Score every qualifying (lead, POS) pair from this chronological POS
+    group against the currently active leads.
+
+    Strategy — blocking, not cartesian:
+      1. Generate candidate pairs by equi-joining on (warehouse, value)
+         for each blocking key/variant (key families + address lines).
+         Only pairs that actually agree on some scoring field survive,
+         which is dramatically fewer rows than a per-warehouse cartesian
+         product (typically 40–50× fewer at PRD scale).
+      2. Hydrate those candidate pairs with the columns needed for
+         scoring.
+      3. Run the identical _score_pairs kernel (key families, address
+         bundles with best-bundle selection, supplementary fallback
+         gating) and threshold at MINIMUM_SCORE.
+
+    Returns:
+        DataFrame[lead_id, pos_id, similarity_score,
+                  matched_key_fields, matched_supp_fields]
+        filtered to similarity_score >= MINIMUM_SCORE.
+    """
+    empty = pd.DataFrame(columns=[
+        "lead_id", "pos_id", "similarity_score",
+        "matched_key_fields", "matched_supp_fields",
+    ])
+    if active_leads.empty or sales_slice.empty:
+        return empty
+
+    # Suffix lead and overlapping POS columns so they don't collide
+    # when the two sides share a name (e.g. business_name_normalized).
+    pos_primary_overlap = set(LEAD_NORMALIZE_COLS) & set(POS_NORMALIZE_COLS)
+    lead_rename = {c: f"{c}__l" for c in LEAD_NORMALIZE_COLS}
+    pos_rename  = {c: f"{c}__p" for c in pos_primary_overlap}
+
+    leads_small = (
+        active_leads[["lead_id", "warehouse_number"] + LEAD_NORMALIZE_COLS]
+        .rename(columns=lead_rename)
+    )
+    sales_small = (
+        sales_slice[["pos_id", "warehouse_number"] + POS_NORMALIZE_COLS]
+        .rename(columns=pos_rename)
+    )
+
+    # 1) Candidate pairs via blocking equi-joins.
+    candidates = _generate_candidates(leads_small, sales_small, pos_primary_overlap)
+    if candidates.empty:
+        return empty
+
+    # 2) Hydrate candidate pairs with the columns needed for scoring.
+    #    Drop warehouse_number from both sides before the join — it has
+    #    served its purpose as a blocking key and would otherwise need
+    #    suffix handling.
+    pairs = (
+        candidates
+        .merge(leads_small.drop(columns=["warehouse_number"]), on="lead_id", how="left")
+        .merge(sales_small.drop(columns=["warehouse_number"]), on="pos_id", how="left")
+    )
+    del candidates
+
+    # 3) Identical scoring kernel + threshold.
+    scored = _score_pairs(pairs, pos_primary_overlap)
+    del pairs
+
+    scored = scored[scored["similarity_score"] >= MINIMUM_SCORE]
+    return scored.drop_duplicates(subset=["lead_id", "pos_id"]).copy()
 
 
 # ==============================================================
@@ -550,13 +662,11 @@ def classify_matches(
 
     For each (fiscal_year, fiscal_period, week) POS group in
     chronological order:
-      1. Run family-based scoring (Phase 1 key families, address
-         bundles, Phase 2 supplementary fallback) against currently
-         active leads.
-      2. For each qualified pair, check if the transaction is
-         strictly before the lead's fiscal year/period.
-      3. If yes → mark the lead Closed-Existing, remove it from
-         the active set, emit a stub row, and skip forever.
+      1. Run warehouse-batched family scoring against active leads.
+      2. For each qualified pair, check if the transaction is prior
+         to the lead's fiscal year / period / week.
+      3. If yes → mark the lead Closed-Existing, remove it from the
+         active set, emit a stub row, and skip forever.
       4. Otherwise the pair survives to the normal Match/Potential
          path.
 
@@ -581,10 +691,9 @@ def classify_matches(
 
     # Lead fiscal lookup — used for CE check (year, period, AND week).
     # Lead's `week` is renamed to `week_lead` so it never collides with
-    # the POS transaction `week` when the two are merged below.
-    # If the leads file predates the week column, synthesize an all-NA
-    # week_lead so the week branch of the CE check is simply inert
-    # (NA comparisons resolve to False) rather than crashing.
+    # the POS transaction `week` when the two are merged below. If the
+    # leads file predates the week column, synthesize an all-NA
+    # week_lead so the week branch of the CE check is simply inert.
     _lead_fiscal_cols = ["lead_id", "fiscal_year_lead", "fiscal_period_lead"]
     if "week" in leads.columns:
         lead_fiscal = (
@@ -636,6 +745,7 @@ def classify_matches(
 
         qualified = _score_group(sales_slice, active_leads)
         if qualified.empty:
+            del active_leads, sales_slice
             continue
 
         # Attach fiscal columns for CE check
@@ -644,11 +754,8 @@ def classify_matches(
         qualified["week"]                      = wk
         qualified = qualified.join(lead_fiscal, on="lead_id", how="left")
 
-        # Coerce all six comparison columns to a nullable integer dtype
-        # so the < / == comparisons are numeric, never lexicographic.
-        # (e.g. as strings "10" < "9" is True, which would be wrong.)
-        # week_lead may be NaN if a lead somehow lacks a week — those
-        # rows simply won't satisfy the week branch of the mask.
+        # Coerce all six comparison columns to nullable Int so the
+        # < / == comparisons are numeric, never lexicographic.
         for _col in (
             "fiscal_year_transaction", "fiscal_period_transaction", "week",
             "fiscal_year_lead", "fiscal_period_lead", "week_lead",
@@ -657,12 +764,7 @@ def classify_matches(
                 qualified[_col], errors="coerce"
             ).astype("Int64")
 
-        # CE "prior" check — now three levels deep: year, then period,
-        # then week. A transaction is prior (→ Closed-Existing) when:
-        #   txn_year  < lead_year                                   OR
-        #   same year, txn_period  < lead_period                    OR
-        #   same year, same period, txn_week < lead_week
-        # All three equal → NOT prior → lead stays for normal matching.
+        # CE "prior" check — year, then period, then week.
         prior_mask = (
             (qualified["fiscal_year_transaction"] < qualified["fiscal_year_lead"])
             | (
@@ -675,8 +777,6 @@ def classify_matches(
                 & (qualified["week"] < qualified["week_lead"])
             )
         )
-        # Int64 comparisons yield pd.NA where either side is NA; treat
-        # NA as "not prior" so a missing week never forces CE.
         prior_mask = prior_mask.fillna(False).astype(bool)
 
         new_ce = set(qualified.loc[prior_mask, "lead_id"].unique())
@@ -688,19 +788,17 @@ def classify_matches(
                 fy, fp, wk, len(new_ce), list(new_ce)[:10],
             )
 
-        # Surviving pairs: only carry the columns needed downstream.
-        # Fiscal/POS data comes back via sales_subset merge later,
-        # avoiding column-name collisions.
         surviving = qualified[~qualified["lead_id"].isin(new_ce)].copy()
-        if surviving.empty:
-            continue
+        if not surviving.empty:
+            normal_pair_frames.append(
+                surviving[[
+                    "lead_id", "pos_id", "similarity_score",
+                    "matched_key_fields", "matched_supp_fields",
+                ]].copy()
+            )
 
-        normal_pair_frames.append(
-            surviving[[
-                "lead_id", "pos_id", "similarity_score",
-                "matched_key_fields", "matched_supp_fields",
-            ]].copy()
-        )
+        del qualified, surviving, active_leads, sales_slice
+        gc.collect()
 
     log.info(
         "Chronological pass complete — CE leads: %d | normal pair batches: %d",
@@ -731,8 +829,8 @@ def classify_matches(
     log.info("Normal pairs carried forward: %d", len(normal_qualified))
 
     # ==========================================================
-    # FINAL MERGE — bring original (non-normalized) POS columns
-    # in for the ServiceNow payload, and lead fiscal/updated_date.
+    # FINAL MERGE — original (non-normalized) POS columns for the
+    # ServiceNow payload, plus lead fiscal/updated_date.
     # ==========================================================
     lead_subset = leads[[
         "lead_id",
@@ -865,34 +963,8 @@ def primary_classification(
 ) -> str:
     """
     Orchestrates the end-to-end leads-to-POS matching pipeline for a
-    single match run.
-
-    Workflow:
-        1. Loads job configuration (storage + DB) from the provided
-           config file path.
-        2. Reads the leads and POS Parquet files from GCS (falls back
-           to paths defined in config if not explicitly provided).
-        3. Inserts an audit record into the DB with status "InProgress"
-           before classification begins.
-        4. Delegates matching to ``classify_matches()``, which runs the
-           chronological group-by-group family-based scoring pass with
-           Closed-Existing detection, followed by Match/Potential
-           classification and primary transaction assignment.
-        5. Writes the final matched DataFrame to GCS via
-           ``process_and_archive_files()`` and returns the output URI.
-
-    Args:
-        match_id (str): Unique identifier for this match run.
-        config_file_path (str): GCS/local path to the YAML/JSON job
-            configuration file. Must contain valid storage_config and
-            db_config sections.
-        file_a_path (str, optional): GCS path to the leads Parquet
-            file. Defaults to storage_config.temp_leads_path.
-        file_b_path (str, optional): GCS path to the POS Parquet
-            file. Defaults to storage_config.temp_pos_path.
-
-    Returns:
-        str: GCS URI of the written output file.
+    single match run. Loads config + files, writes an InProgress audit
+    row, runs classify_matches, and archives the output to GCS.
     """
     job_config     = JobConfig(config_file_path)
     storage_config = job_config.storage_config
