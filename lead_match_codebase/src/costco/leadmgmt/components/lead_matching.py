@@ -14,6 +14,12 @@ from costco.leadmgmt.util.apputil import (
 
 log = logging.getLogger(__name__)
 
+
+def _friendly(field: str) -> str:
+    """Strip the _normalized suffix to recover the original column name."""
+    return field.replace("_normalized", "")
+
+
 # ==============================================================
 # FAMILY CONFIGURATION
 # ==============================================================
@@ -152,6 +158,42 @@ BLOCKING_KEYS.append(
     ("address_line_one_normalized", [b["line"] for b in ADDRESS_BUNDLES])
 )
 
+# ==============================================================
+# OUTPUT SUBSTITUTION CONFIG
+# ==============================================================
+# When a match is won via an OMS variant, the final ServiceNow payload
+# must carry that variant's ORIGINAL (non-normalized) value — not the
+# primary column, which is often empty on OMS-only rows. These lists
+# map each substitutable family to its original variant columns, in the
+# same priority order as the normalized variants in KEY_FAMILIES.
+#
+# _friendly() turns a *_normalized column into its original column name
+# (e.g. "oms_company_normalized" -> "oms_company"), so these derive
+# directly from the family config and stay in sync.
+BUSINESS_ORIGINAL_COLS = [_friendly(c) for c in KEY_FAMILIES["business_name"][1]]
+EMAIL_ORIGINAL_COLS    = [_friendly(c) for c in KEY_FAMILIES["email"][1]]
+PHONE_ORIGINAL_COLS    = [_friendly(c) for c in KEY_FAMILIES["phone"][1]]
+
+# Address bundle name -> the original output columns that bundle feeds.
+# If the "oms" bundle wins, address_line_one/zip_code/city/state in the
+# output all come from oms_address_line_1/oms_zip/oms_city/oms_state.
+ADDRESS_BUNDLE_ORIGINALS = {
+    b["name"]: {
+        "address_line_one": _friendly(b["line"]),
+        "zip_code":         _friendly(b["zip"]),
+        "city":             _friendly(b["city"]),
+        "state":            _friendly(b["state"]),
+    }
+    for b in ADDRESS_BUNDLES
+}
+
+# Every original variant column we must pull into the final merge so
+# substitution can read from it. Deduplicated, used to build sales_subset.
+ALL_VARIANT_ORIGINAL_COLS = list(dict.fromkeys(
+    BUSINESS_ORIGINAL_COLS + EMAIL_ORIGINAL_COLS + PHONE_ORIGINAL_COLS
+    + [col for bundle in ADDRESS_BUNDLE_ORIGINALS.values() for col in bundle.values()]
+))
+
 MINIMUM_SCORE  = 80
 COMPLETE_SCORE = 100
 
@@ -160,11 +202,6 @@ MAX_POSSIBLE_SCORE = (
     + ADDRESS_LINE_SCORE + ADDRESS_ZIP_SCORE
     + ADDRESS_CITY_SCORE + ADDRESS_STATE_SCORE
 )
-
-
-def _friendly(field: str) -> str:
-    """Strip the _normalized suffix for human-readable output."""
-    return field.replace("_normalized", "")
 
 
 # ==============================================================
@@ -309,6 +346,20 @@ def _score_pairs(
     matched_key  = [[] for _ in range(n)]
     matched_supp = [[] for _ in range(n)]
 
+    # Winning ORIGINAL column per substitutable family, for output
+    # substitution. Default to the primary original column; overwrite
+    # with the winning variant's original column on a family hit. This
+    # way a no-hit field keeps the primary value (possibly empty), and
+    # a hit field carries whatever variant actually matched.
+    win_business = np.array(["business_name"] * n, dtype=object)
+    win_email    = np.array(["email"] * n, dtype=object)
+    win_phone    = np.array(["phone"] * n, dtype=object)
+    _win_by_family = {
+        "business_name": win_business,
+        "email":         win_email,
+        "phone":         win_phone,
+    }
+
     # -- Phase 1: KEY FAMILIES (business_name, email, phone) ----
     for family_name, (lead_col, pos_variants, score) in KEY_FAMILIES.items():
         lead_vals = pairs[f"{lead_col}__l"]
@@ -333,10 +384,13 @@ def _score_pairs(
 
         if family_hit.any():
             total_score += family_hit.astype(np.int64) * score
+            win_arr = _win_by_family[family_name]
             for idx in np.where(family_hit)[0]:
                 matched_key[idx].append(
                     f"{family_name} ({_friendly(winning_variant[idx])})"
                 )
+                # Record the ORIGINAL column name of the winning variant.
+                win_arr[idx] = _friendly(winning_variant[idx])
 
     # -- Phase 1: ADDRESS BUNDLES -------------------------------
     lead_addr  = pairs["address_line_one_normalized__l"]
@@ -353,6 +407,9 @@ def _score_pairs(
     best_zip_col   = [None] * n
     best_city_col  = [None] * n
     best_state_col = [None] * n
+    # Winning bundle NAME per pair ("primary"/"oms"/"oms_v2"), defaulting
+    # to "primary" so non-address-matched rows keep primary address geo.
+    best_bundle_name = np.array(["primary"] * n, dtype=object)
 
     for bundle in ADDRESS_BUNDLES:
         line_col  = _pos_col(bundle["line"])
@@ -397,6 +454,7 @@ def _score_pairs(
                 best_zip_col[idx]   = bundle["zip"]
                 best_city_col[idx]  = bundle["city"]
                 best_state_col[idx] = bundle["state"]
+                best_bundle_name[idx] = bundle["name"]
 
     address_hit = best_score > 0
     total_score += best_score
@@ -452,6 +510,11 @@ def _score_pairs(
         "similarity_score":    total_score,
         "matched_key_fields":  matched_key,
         "matched_supp_fields": matched_supp,
+        # Winning ORIGINAL columns / bundle for output substitution.
+        "win_business":        win_business,
+        "win_email":           win_email,
+        "win_phone":           win_phone,
+        "win_addr_bundle":     best_bundle_name,
     })
 
 
@@ -794,6 +857,7 @@ def classify_matches(
                 surviving[[
                     "lead_id", "pos_id", "similarity_score",
                     "matched_key_fields", "matched_supp_fields",
+                    "win_business", "win_email", "win_phone", "win_addr_bundle",
                 ]].copy()
             )
 
@@ -839,40 +903,98 @@ def classify_matches(
         "fiscal_period_lead",
     ]]
 
-    sales_subset = (
-        sales
-        .rename(columns={"business_name": "business_name_transaction"})
-        [[
-            "pos_id",
-            "account_number",
-            "business_name_transaction",
-            "membership_number",
-            "warehouse_number",
-            "fiscal_year_transaction",
-            "fiscal_period_transaction",
-            "week",
-            "shop_type",
-            "sales_reference_id",
-            "order_amount",
-            "bd_industry",
-            "first_name",
-            "last_name",
-            "address_line_one",
-            "address_line_two",
-            "city",
-            "state",
-            "zip_code",
-            "email",
-            "phone",
-            "industry_description",
-        ]]
-    )
+    # Base (non-substitutable) POS columns always carried to output.
+    _sales_base_cols = [
+        "pos_id",
+        "account_number",
+        "membership_number",
+        "warehouse_number",
+        "fiscal_year_transaction",
+        "fiscal_period_transaction",
+        "week",
+        "shop_type",
+        "sales_reference_id",
+        "order_amount",
+        "bd_industry",
+        "first_name",
+        "last_name",
+        "address_line_two",
+        "industry_description",
+    ]
+
+    # All original variant columns needed so substitution can read the
+    # winning variant's value. Includes the primary originals
+    # (business_name, email, phone, address_line_one, zip_code, city,
+    # state) plus every OMS original.
+    _sales_variant_cols = list(dict.fromkeys(
+        ALL_VARIANT_ORIGINAL_COLS  # business/email/phone + all bundle geo
+    ))
+
+    # Guard: ensure every column we intend to select actually exists on
+    # `sales`. Any missing original (e.g. an OMS column absent on this
+    # run) is created as NA so the select + substitution never KeyErrors.
+    _needed = _sales_base_cols + _sales_variant_cols
+    for _c in _needed:
+        if _c not in sales.columns:
+            sales[_c] = pd.NA
+
+    sales_subset = sales[_needed].copy()
 
     matched_df = (
         normal_qualified
         .merge(lead_subset,  on="lead_id", how="inner")
         .merge(sales_subset, on="pos_id",  how="inner")
     )
+
+    # ==========================================================
+    # OUTPUT SUBSTITUTION — winning variant's ORIGINAL value
+    # ==========================================================
+    # For each matched pair, pull the output value from whichever variant
+    # actually won the match (recorded in win_business/win_email/
+    # win_phone/win_addr_bundle). On OMS-only rows the primary column is
+    # empty, so without this the ServiceNow payload would carry a blank
+    # business name / email / phone / address. _gather_by_name reads the
+    # value from the column named per-row; it reads into a fresh Series
+    # BEFORE we overwrite the same-named source columns, so overwriting
+    # email/phone (which are both source and dest) is safe.
+    def _gather_by_name(df, name_series, candidate_cols):
+        result = pd.Series(pd.NA, index=df.index, dtype=object)
+        names = name_series.to_numpy()
+        for col in candidate_cols:
+            if col not in df.columns:
+                continue
+            mask = (names == col)
+            if mask.any():
+                result.loc[mask] = df[col].to_numpy()[mask]
+        return result
+
+    # business_name_transaction comes from the winning business variant.
+    matched_df["business_name_transaction"] = _gather_by_name(
+        matched_df, matched_df["win_business"], BUSINESS_ORIGINAL_COLS
+    )
+
+    # email / phone overwritten in place from their winning variant.
+    _new_email = _gather_by_name(matched_df, matched_df["win_email"], EMAIL_ORIGINAL_COLS)
+    _new_phone = _gather_by_name(matched_df, matched_df["win_phone"], PHONE_ORIGINAL_COLS)
+    matched_df["email"] = _new_email
+    matched_df["phone"] = _new_phone
+
+    # Address bundle: all four geo fields come from the winning bundle.
+    # Build each output column by selecting, per row, the bundle's
+    # original source column for that field.
+    for _out_field in ("address_line_one", "zip_code", "city", "state"):
+        # Map each row's winning bundle -> that bundle's source column
+        # for this output field, then gather.
+        _src_per_row = matched_df["win_addr_bundle"].map(
+            lambda b, f=_out_field: ADDRESS_BUNDLE_ORIGINALS.get(b, {}).get(f, f)
+        )
+        matched_df[_out_field] = _gather_by_name(
+            matched_df, _src_per_row,
+            # candidate columns = every bundle's source col for this field
+            list(dict.fromkeys(
+                bundle[_out_field] for bundle in ADDRESS_BUNDLE_ORIGINALS.values()
+            )),
+        )
 
     # ==========================================================
     # ASSIGN MATCH RESULT
