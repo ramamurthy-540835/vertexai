@@ -197,6 +197,47 @@ ALL_VARIANT_ORIGINAL_COLS = list(dict.fromkeys(
 MINIMUM_SCORE  = 80
 COMPLETE_SCORE = 100
 
+# Minimum length (on BOTH sides) for a business-name CONTAINS match to
+# count. Exact matches still count at any length; this guard only
+# applies to the substring path, so generic tokens like "inc"/"llc"
+# can't drag in unrelated businesses.
+MIN_CONTAINS_LEN = 5
+
+# Business family columns used by the contains candidate path.
+_BUSINESS_LEAD_COL     = KEY_FAMILIES["business_name"][0]      # business_name_normalized
+_BUSINESS_POS_VARIANTS = KEY_FAMILIES["business_name"][1]      # [business_name_normalized, oms_company_*]
+
+
+def _business_match_mask(lead_vals: pd.Series, pos_vals: pd.Series) -> np.ndarray:
+    """
+    Boolean mask for a business-name match between two aligned Series.
+
+    A pair matches when:
+      • the normalized values are exactly equal (any length), OR
+      • both values are >= MIN_CONTAINS_LEN chars AND one is a substring
+        of the other (bidirectional contains).
+
+    Returns a numpy bool array aligned to the input order.
+    """
+    # Exact equality (NA-safe → False).
+    exact = (lead_vals == pos_vals).fillna(False).to_numpy()
+
+    la = lead_vals.to_numpy()
+    pa = pos_vals.to_numpy()
+    contains = np.zeros(len(la), dtype=bool)
+
+    # Only the non-exact rows can newly qualify via substring. Looping
+    # just those keeps this cheap (candidate pairs are already blocked).
+    for i in np.where(~exact)[0]:
+        a = la[i]
+        b = pa[i]
+        if isinstance(a, str) and isinstance(b, str):
+            if len(a) >= MIN_CONTAINS_LEN and len(b) >= MIN_CONTAINS_LEN:
+                if a in b or b in a:
+                    contains[i] = True
+
+    return exact | contains
+
 MAX_POSSIBLE_SCORE = (
     sum(score for _, _, score in KEY_FAMILIES.values())
     + ADDRESS_LINE_SCORE + ADDRESS_ZIP_SCORE
@@ -373,10 +414,22 @@ def _score_pairs(
             if col not in pairs.columns:
                 continue
             pos_vals = pairs[col]
-            hit = (
-                lead_present & pos_vals.notna()
-                & (lead_vals == pos_vals) & ~family_hit
-            )
+            if family_name == "business_name":
+                # Business uses exact-OR-contains (bidirectional, len-guarded).
+                match_mask = _business_match_mask(lead_vals, pos_vals)
+                hit = pd.Series(
+                    lead_present.to_numpy()
+                    & pos_vals.notna().to_numpy()
+                    & match_mask
+                    & ~family_hit,
+                    index=pairs.index,
+                )
+            else:
+                # All other families: exact equality only.
+                hit = (
+                    lead_present & pos_vals.notna()
+                    & (lead_vals == pos_vals) & ~family_hit
+                )
             if hit.any():
                 family_hit |= hit.values
                 for idx in np.where(hit.values)[0]:
@@ -590,6 +643,100 @@ def _generate_candidates(
 
 
 # ==============================================================
+# CONTAINS CANDIDATES — business-name substring pairs
+# ==============================================================
+def _generate_business_contains_candidates(
+    leads_small: pd.DataFrame,
+    sales_small: pd.DataFrame,
+    pos_primary_overlap: set,
+) -> pd.DataFrame:
+    """
+    Candidate (lead_id, pos_id) pairs where the lead business name and a
+    POS business variant are a bidirectional substring match (and both
+    >= MIN_CONTAINS_LEN). Exact equality is already covered by the main
+    equi-join blocking; this adds the substring-only pairs that hash
+    joins can't find (e.g. "abc corp" vs "abc corp inc").
+
+    Bounded for memory/CPU: works per warehouse on the UNIQUE business
+    values only, so the substring comparison is over distinct values
+    rather than every row pair. The len>=5 filter further prunes.
+
+    Returns DataFrame[lead_id, pos_id].
+    """
+    lcol = f"{_BUSINESS_LEAD_COL}__l"
+    if lcol not in leads_small.columns:
+        return pd.DataFrame(columns=["lead_id", "pos_id"])
+
+    lhas = leads_small[["lead_id", "warehouse_number", lcol]].dropna(subset=[lcol])
+    if lhas.empty:
+        return pd.DataFrame(columns=["lead_id", "pos_id"])
+    lhas = lhas[lhas[lcol].str.len() >= MIN_CONTAINS_LEN]
+    if lhas.empty:
+        return pd.DataFrame(columns=["lead_id", "pos_id"])
+
+    out_frames = []
+
+    for variant in _BUSINESS_POS_VARIANTS:
+        pcol = f"{variant}__p" if variant in pos_primary_overlap else variant
+        if pcol not in sales_small.columns:
+            continue
+
+        phas = sales_small[["pos_id", "warehouse_number", pcol]].dropna(subset=[pcol])
+        if phas.empty:
+            continue
+        phas = phas[phas[pcol].str.len() >= MIN_CONTAINS_LEN]
+        if phas.empty:
+            continue
+
+        # Group both sides by warehouse so comparisons stay within a
+        # warehouse and peak memory is one warehouse's value grid.
+        l_by_wh = dict(tuple(lhas.groupby("warehouse_number", sort=False)))
+        p_by_wh = dict(tuple(phas.groupby("warehouse_number", sort=False)))
+
+        for wh, lg in l_by_wh.items():
+            pg = p_by_wh.get(wh)
+            if pg is None:
+                continue
+
+            lvals = lg[lcol].unique()
+            pvals = pg[pcol].unique()
+
+            # Find unique value pairs where one contains the other
+            # (skip exact equality — the equi-join path already has it).
+            matched_l, matched_p = [], []
+            for lv in lvals:
+                for pv in pvals:
+                    if lv == pv:
+                        continue
+                    if lv in pv or pv in lv:
+                        matched_l.append(lv)
+                        matched_p.append(pv)
+
+            if not matched_l:
+                continue
+
+            value_pairs = pd.DataFrame({lcol: matched_l, pcol: matched_p})
+
+            # Map matched value-pairs back to row ids within this warehouse.
+            res = (
+                lg[["lead_id", lcol]]
+                .merge(value_pairs, on=lcol)
+                .merge(pg[["pos_id", pcol]], on=pcol)
+                [["lead_id", "pos_id"]]
+            )
+            if not res.empty:
+                out_frames.append(res)
+
+    if not out_frames:
+        return pd.DataFrame(columns=["lead_id", "pos_id"])
+
+    return (
+        pd.concat(out_frames, ignore_index=True)
+        .drop_duplicates(subset=["lead_id", "pos_id"])
+    )
+
+
+# ==============================================================
 # SCORE ONE GROUP — blocking candidate generation + scoring
 # ==============================================================
 def _score_group(
@@ -639,8 +786,21 @@ def _score_group(
         .rename(columns=pos_rename)
     )
 
-    # 1) Candidate pairs via blocking equi-joins.
+    # 1) Candidate pairs via blocking equi-joins (exact agreement).
     candidates = _generate_candidates(leads_small, sales_small, pos_primary_overlap)
+
+    # 1b) Add business-name substring candidates (e.g. "abc corp" vs
+    #     "abc corp inc") that exact equi-joins can't find.
+    contains_candidates = _generate_business_contains_candidates(
+        leads_small, sales_small, pos_primary_overlap
+    )
+    if not contains_candidates.empty:
+        candidates = (
+            pd.concat([candidates, contains_candidates], ignore_index=True)
+            .drop_duplicates(subset=["lead_id", "pos_id"])
+        )
+        del contains_candidates
+
     if candidates.empty:
         return empty
 
