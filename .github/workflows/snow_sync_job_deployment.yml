@@ -150,7 +150,6 @@ jobs:
             --args="main.py,snow_to_db"
             --task-timeout=40h
             --set-env-vars=${{ steps.env.outputs.env_vars }}
-            --set-secrets=/etc/ssl/costco/costco-tlsi.crt=costco_tlsi_cert:latest
             --max-retries=0
             --memory=8Gi
             --cpu=2
