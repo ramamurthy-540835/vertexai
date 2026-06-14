@@ -145,11 +145,11 @@ module "monitoring_alert" {
   source = "../../../modules/monitoring_alert"
 
   display_name                 = "Lead_mgmt - Email Alert"
-  email_address                = "membership_mit_team@costco.com"
+  email_address                = "c_upandey@costco.com"
   policy_display_name          = "Cloud Run Job Failure Alert"
   first_condition_display_name = "Match Job Failure Condition"
   second_condition_display_name = "SNOW Sync Job Failure Condition"
-  force_recreate                = "2"
+  force_recreate                = "3SS"
 }
 
 module "iam_management" {
