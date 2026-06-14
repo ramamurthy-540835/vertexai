@@ -33,8 +33,3 @@ variable "second_condition_display_name" {
   type        = string
   default     = "SNOW Sync Job Failure Condition"
 }
-
-variable "force_recreate" {
-  description = "Change this value to force recreate the notification channel"
-  default     = "1"
-}

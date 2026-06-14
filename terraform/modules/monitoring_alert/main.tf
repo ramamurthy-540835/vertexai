@@ -1,17 +1,9 @@
-resource "terraform_data" "replacement" {
-  input = var.force_recreate
-}
-
 resource "google_monitoring_notification_channel" "lead_mgmt_email" {
   display_name = var.display_name
   type         = var.type
 
   labels = {
     email_address = var.email_address
-  }
-
-   lifecycle {
-    replace_triggered_by = [terraform_data.replacement]
   }
 }
 

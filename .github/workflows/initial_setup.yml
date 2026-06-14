@@ -91,20 +91,3 @@ jobs:
         run: |
           echo "DRY RUN — command not executed."
           echo "Would have run: gcloud ${{ inputs.gcloud_command }} --project=${{ env.PROJECT_ID }}"
-          
-      # ⚠️ ONE-TIME STEP — Remove after verification email is clicked
-      - name: "Send Notification Channel Verification Email"
-        run: |
-          TOKEN=$(gcloud auth print-access-token)
-          RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
-            "https://monitoring.googleapis.com/v3/projects/p-601-np-bcleadsmgmt-adt/notificationChannels/13865619225938118016:sendVerificationCode" \
-            -H "Authorization: Bearer $TOKEN" \
-            -H "Content-Type: application/json" \
-            -d '{}')
-          echo "Response code: $RESPONSE"
-          if [ "$RESPONSE" == "200" ]; then
-            echo "✅ Verification email sent to membership_mit_team@costco.com"
-          else
-            echo "❌ Failed to send verification email. HTTP status: $RESPONSE"
-            exit 1
-          fi
