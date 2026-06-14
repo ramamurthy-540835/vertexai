@@ -93,6 +93,7 @@ class WriteToPostgresIAM(beam.DoFn):
         db_table: str,
         field_map: dict,
         batch_size: int = 2000,
+        batch_id: str = None,
     ):
         self.instance_connection_name = instance_connection_name
         self.db_name = db_name
@@ -101,6 +102,7 @@ class WriteToPostgresIAM(beam.DoFn):
         self.db_user = db_user
         self.field_map = field_map
         self.batch_size = batch_size
+        self.batch_id = batch_id
 
     def setup(self):
         self._connector = Connector()
@@ -125,6 +127,8 @@ class WriteToPostgresIAM(beam.DoFn):
             mapped = apply_field_map(raw_row, self.field_map)
             if mapped is None:
                 continue
+            if self.batch_id:                        
+                mapped["batch_id"] = self.batch_id
             self._buffer.append(mapped)
             if len(self._buffer) >= self.batch_size:
                 written = self._flush()
@@ -348,6 +352,7 @@ def run():
                     db_user=known_args.db_user,
                     field_map=field_map,
                     batch_size=known_args.batch_size,
+                    batch_id=known_args.batch_id,
                 )
             )
         )

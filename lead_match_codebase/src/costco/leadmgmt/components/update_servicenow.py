@@ -70,7 +70,15 @@ def _redact_for_logging(record: dict) -> dict:
             redacted[key] = value
     return redacted
 
-
+def _safe_columns(val):
+    """Strip float suffix from phone numbers read as float64 by pandas."""
+    if val in ("", None, "nan", float("nan")):
+        return ""
+    try:
+        return str(int(float(val)))
+    except (ValueError, TypeError):
+        return str(val).strip()
+    
 # ==============================================================
 # GCS FILE PATH RESOLUTION
 # ==============================================================
@@ -222,16 +230,16 @@ def generate_post_json(df):
             "u_state_pos":         str(row.get("state", "")),
             "u_zip_code":          zip_code,
             "u_email":             str(row.get("email", "")),
-            "u_phone_number":      str(row.get("phone", "")),
+            "u_phone_number": _safe_columns(row.get("phone", "")),
 
             # Transaction details
             "u_fiscal_year":       str(int(row.get("fiscal_year_transaction", 0))),
             "u_period_1":          str(int(row.get("fiscal_period_transaction", 0))),
             "u_week":              str(int(row.get("week", 0))),
             "u_sales_reference_id": str(row.get("sales_reference_id", "")),
-            "u_account_number":    str(row.get("account_number", "")),
+            "u_account_number":    _safe_columns(row.get("account_number", "")),
             "u_warehouse_number":  str(int(row.get("warehouse_number", 0))),
-            "u_membership_number": str(row.get("membership_number", "")),
+            "u_membership_number": _safe_columns(row.get("membership_number", "")),
             "u_industry_description": str(row.get("industry_description", "")),
             "u_bd_industry_pos":   str(row.get("bd_industry", "")),
             "u_order_amount_rounded": str(round(float(row.get("order_amount", 0)), 2)),
