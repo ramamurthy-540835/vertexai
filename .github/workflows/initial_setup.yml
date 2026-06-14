@@ -1,51 +1,93 @@
-name: "initial_setup"
+name: gcloud-adhoc-runner
 
 on:
-  workflow_dispatch:  # Trigger manually
-
-env:
-  PROJECT_ID: 'p-601-np-bcleadsmgmt-adt' # TODO: update to your Google Cloud project ID
-  REGION: 'us-central1' # TODO: update to your region
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment"
+        required: true
+        type: choice
+        options:
+          - adt
+          - qat
+          - spt
+          - prd
+      gcloud_command:
+        description: "gcloud command to run (without 'gcloud' prefix)"
+        required: true
+        type: string
+        default: "run jobs list --region us-central1"
+      dry_run:
+        description: "Dry run — print command without executing"
+        required: false
+        type: boolean
+        default: false
 
 jobs:
-  run:
-    name: "auth"
-    runs-on: "ubuntu-latest"
-    environment: ${{ github.event.pull_request.head.ref }}
-    strategy:
-      matrix:
-        env: ['adt'] #,['adt', 'qat', 'spt'] # Exclude prd from auto-plan
-    
+  run-gcloud-command:
+    runs-on:
+      - self-hosted
+      - us-central1
     permissions:
       id-token: write
       contents: read
 
     steps:
-      - name: "Checkout code"
-        uses: actions/checkout@v4
+      - name: Resolve environment config
+        id: config
+        run: |
+          case "${{ inputs.environment }}" in
+            adt)
+              echo "PROJECT_ID=p-601-np-bcleadsmgmt-adt" >> $GITHUB_ENV
+              echo "SA_EMAIL=gco-iam-svc-lead-mgmt-bc-adt@p-601-np-bcleadsmgmt-adt.iam.gserviceaccount.com" >> $GITHUB_ENV
+              echo "USE_PRD_SA=false" >> $GITHUB_ENV
+              ;;
+            qat)
+              echo "PROJECT_ID=p-601-np-bcleadsmgmt-qat" >> $GITHUB_ENV
+              echo "SA_EMAIL=gco-iam-svc-lead-mgmt-bc-qat@p-601-np-bcleadsmgmt-qat.iam.gserviceaccount.com" >> $GITHUB_ENV
+              echo "USE_PRD_SA=false" >> $GITHUB_ENV
+              ;;
+            spt)
+              echo "PROJECT_ID=p-601-np-bcleadsmgmt-spt" >> $GITHUB_ENV
+              echo "SA_EMAIL=gco-iam-svc-lead-mgmt-bc-spt@p-601-np-bcleadsmgmt-spt.iam.gserviceaccount.com" >> $GITHUB_ENV
+              echo "USE_PRD_SA=false" >> $GITHUB_ENV
+              ;;
+            prd)
+              echo "PROJECT_ID=p-601-pd-bcleadsmgmt-prd" >> $GITHUB_ENV
+              echo "SA_EMAIL=gco-iam-svc-lead-mgmt-bc-prd@p-601-pd-bcleadsmgmt-prd.iam.gserviceaccount.com" >> $GITHUB_ENV
+              echo "USE_PRD_SA=true" >> $GITHUB_ENV
+              ;;
+          esac
 
-      - name: "Auth in GCP"
-        id: "auth"
-        uses: "google-github-actions/auth@v2"
+      - name: Auth to GCP
+        id: auth
+        uses: google-github-actions/auth@v2
         with:
-          create_credentials_file: true
+          token_format: access_token
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
-          service_account: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
+          service_account: ${{ env.USE_PRD_SA == 'true' && secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL_PRD || secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
 
-      - name: "Enable Service Usage API for ADT"
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+
+      - name: Print command info
         run: |
-          unset CLOUDSDK_CORE_PROJECT
-          gcloud config set project p-601-np-bcleadsmgmt-adt
-          gcloud services enable serviceusage.googleapis.com 
- 
-      - name: "Enable Service Usage API for SPT"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  Environment : ${{ inputs.environment }}"
+          echo "  Project     : ${{ env.PROJECT_ID }}"
+          echo "  Command     : gcloud ${{ inputs.gcloud_command }} --project=${{ env.PROJECT_ID }}"
+          echo "  Dry Run     : ${{ inputs.dry_run }}"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+      - name: Run gcloud command
+        if: ${{ inputs.dry_run == false }}
         run: |
-          unset CLOUDSDK_CORE_PROJECT
-          gcloud config set project p-601-np-bcleadsmgmt-spt
-          gcloud services enable serviceusage.googleapis.com
-          
-      - name: "Enable Service Usage API for QAT"
+          gcloud ${{ inputs.gcloud_command }} --project=${{ env.PROJECT_ID }}
+
+      - name: Dry run — skipped execution
+        if: ${{ inputs.dry_run == true }}
         run: |
-          unset CLOUDSDK_CORE_PROJECT
-          gcloud config set project p-601-np-bcleadsmgmt-qat
-          gcloud services enable serviceusage.googleapis.com
+          echo "DRY RUN — command not executed."
+          echo "Would have run: gcloud ${{ inputs.gcloud_command }} --project=${{ env.PROJECT_ID }}"
