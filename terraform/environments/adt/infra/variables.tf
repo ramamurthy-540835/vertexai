@@ -88,3 +88,9 @@ variable "sql_scripts" {
   default = {}
 }
 
+
+variable "costco_tlsi_cert" {
+  description = "Costco TLSi CA certificate chain (base64 encoded) for GCP egress TLS inspection"
+  type        = string
+  sensitive   = true
+}
