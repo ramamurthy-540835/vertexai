@@ -172,3 +172,12 @@ ALTER TABLE "$SCHEMA_NAME".transaction
 
 ALTER TABLE "$SCHEMA_NAME".lead
     Add COLUMN week INT;
+
+
+ALTER TABLE "$SCHEMA_NAME".transaction
+    ADD COLUMN IF NOT EXISTS is_processed     boolean NOT NULL DEFAULT false,
+    ADD COLUMN IF NOT EXISTS process_datetime timestamp without time zone;
+
+CREATE INDEX IF NOT EXISTS idx_transaction_unprocessed
+    ON "$SCHEMA_NAME".transaction (is_processed)
+    WHERE is_processed = false;

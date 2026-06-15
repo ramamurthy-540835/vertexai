@@ -4,6 +4,7 @@ from datetime import datetime
 
 import numpy as np
 import pandas as pd
+from google.cloud import storage
 from sqlalchemy import MetaData, Table, insert
 
 from costco.leadmgmt.config.Configuration import JobConfig
@@ -873,6 +874,130 @@ def _output_columns() -> list:
 
 
 # ==============================================================
+# WAREHOUSE BATCHING (memory bounding for the match run)
+# ==============================================================
+# Sales are processed in batches of WHOLE warehouses, accumulated up to
+# a row budget. A warehouse is never split across batches: a lead lives
+# in exactly one warehouse, and CE / primary-transaction logic needs all
+# of a warehouse's transactions together and in order. If a single
+# warehouse alone exceeds the budget it becomes its own (oversized)
+# batch — still whole. Blocking keeps even large single-warehouse
+# batches memory-safe, so not splitting costs nothing.
+WAREHOUSE_BATCH_ROW_BUDGET = 150_000
+
+
+def _norm_wh_series(s: pd.Series) -> pd.Series:
+    """Normalize warehouse the same way preprocess_* does, for batching."""
+    return pd.to_numeric(s, errors="coerce").astype("Int64").astype("string")
+
+
+def _plan_warehouse_batches(wh_row_counts: dict, budget: int) -> list:
+    """
+    Group whole warehouses into batches whose summed sales-row count stays
+    under `budget`. A warehouse exceeding the budget alone is its own
+    batch (never split). Returns list[list[warehouse]].
+    """
+    batches = []
+    cur, cur_rows = [], 0
+    for wh, cnt in sorted(wh_row_counts.items(), key=lambda x: -x[1]):
+        if cnt >= budget:
+            batches.append([wh])
+            continue
+        if cur and cur_rows + cnt > budget:
+            batches.append(cur)
+            cur, cur_rows = [], 0
+        cur.append(wh)
+        cur_rows += cnt
+    if cur:
+        batches.append(cur)
+    return batches
+
+
+def run_batched_classification(
+    file_leads: pd.DataFrame,
+    file_sales: pd.DataFrame,
+    budget: int = WAREHOUSE_BATCH_ROW_BUDGET,
+):
+    """
+    Run classify_matches over whole-warehouse batches to bound memory.
+
+    Returns (final_df, processed_pos_ids):
+      • final_df: concatenation of each batch's classify_matches output.
+        Identical to a single-shot classify_matches because no lead's
+        rows are ever split across batches (a lead → one warehouse → one
+        batch).
+      • processed_pos_ids: every POS id SCANNED this run — i.e. every
+        transaction whose warehouse had >=1 lead (so it was compared
+        against all leads in that warehouse), match or not. Transactions
+        in no-lead warehouses are NOT scanned and NOT returned, so they
+        stay eligible for a future cycle when a lead may appear.
+    """
+    fa = file_leads.copy()
+    fb = file_sales.copy()
+    fa["_wh"] = _norm_wh_series(fa["warehouse_number"])
+    fb["_wh"] = _norm_wh_series(fb["warehouse_number"])
+
+    lead_whs = {w for w in fa["_wh"].dropna().unique() if w not in (None, "<NA>")}
+
+    scanned = fb[fb["_wh"].isin(lead_whs)]
+    processed_pos_ids = scanned["pos_id"].astype(str).tolist()
+
+    wh_counts = scanned["_wh"].value_counts().to_dict()
+    batches = _plan_warehouse_batches(wh_counts, budget)
+    log.info(
+        "Warehouse batching: %d scanned warehouse(s), %d transaction(s) → %d batch(es)",
+        len(wh_counts), len(processed_pos_ids), len(batches),
+    )
+
+    out_cols = _output_columns()
+    results = []
+    for bi, batch_whs in enumerate(batches, start=1):
+        bw = set(batch_whs)
+        la = fa[fa["_wh"].isin(bw)].drop(columns=["_wh"])
+        sa = fb[fb["_wh"].isin(bw)].drop(columns=["_wh"])
+        if la.empty or sa.empty:
+            continue
+        log.info("Batch %d/%d — %d warehouse(s), %d POS, %d leads",
+                 bi, len(batches), len(bw), len(sa), len(la))
+        res = classify_matches(la, sa)
+        if not res.empty:
+            results.append(res)
+        del la, sa, res
+        gc.collect()
+
+    final_df = (
+        pd.concat(results, ignore_index=True) if results
+        else pd.DataFrame(columns=out_cols)
+    )
+    return final_df, processed_pos_ids
+
+
+def _write_processed_manifest(storage_config, processed_pos_ids: list) -> str:
+    """
+    Write the scanned-this-run POS ids to a manifest CSV in
+    temporary_folder. The update_cloud_sql job reads this and flips
+    is_processed=true in the transaction table (after the match write
+    commits), so these transactions are excluded from future cycles.
+    """
+    bucket_name = storage_config.output_bucket_name
+    folder      = storage_config.temporary_folder
+    object_path = f"{folder}/processed_pos_ids.csv"
+
+    client = storage.Client()
+    bucket = client.get_bucket(bucket_name)
+    blob   = bucket.blob(object_path)
+
+    # Single-column CSV; deduped, str-typed.
+    ids = pd.Series(pd.unique(pd.Series(processed_pos_ids, dtype="object")))
+    csv_text = "pos_id\n" + "\n".join(ids.astype(str).tolist()) + "\n"
+    blob.upload_from_string(csv_text, content_type="text/csv")
+
+    uri = f"gs://{bucket_name}/{object_path}"
+    log.info("Wrote processed-pos manifest: %s (%d ids)", uri, len(ids))
+    return uri
+
+
+# ==============================================================
 # CLASSIFY MATCHES
 # ==============================================================
 def classify_matches(
@@ -1309,7 +1434,10 @@ def primary_classification(
         conn.execute(stmt)
         conn.commit()
 
-    final_df = classify_matches(file_a, file_b)
+    # Run matching in whole-warehouse batches (bounds memory; output is
+    # identical to a single-shot run). processed_pos_ids = every txn
+    # scanned this run (warehouse had >=1 lead), match or not.
+    final_df, processed_pos_ids = run_batched_classification(file_a, file_b)
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     base_name = f"primary_match_output_{match_id}_{timestamp}"
@@ -1324,6 +1452,11 @@ def primary_classification(
     )
 
     log.info("Final output written to: %s", uri)
+
+    # Manifest of scanned transactions — update_cloud_sql marks these
+    # is_processed=true (after the match write commits) so they're
+    # excluded from future cycles.
+    _write_processed_manifest(storage_config, processed_pos_ids)
 
     del file_a, file_b, final_df
     gc.collect()

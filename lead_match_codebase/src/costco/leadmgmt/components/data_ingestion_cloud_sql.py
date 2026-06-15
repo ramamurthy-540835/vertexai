@@ -35,6 +35,7 @@ import logging
 
 import pandas as pd
 from google.cloud import storage
+from sqlalchemy import text as sql_text
 from unidecode import unidecode
 
 from costco.leadmgmt.config.Configuration import JobConfig
@@ -357,7 +358,7 @@ def _get_required_columns(base_name: str, stage: str):
                 'first_name', 'last_name', 'address_line_one', 'address_line_two',
                 'city', 'state', 'zip_code', 'phone', 'email',
                 'lead_id', 'updated_date',
-                'fiscal_year_lead', 'fiscal_period_lead','week'
+                'fiscal_year_lead', 'fiscal_period_lead',
             ]
         else:  # clean
             return [
@@ -379,7 +380,7 @@ def _get_required_columns(base_name: str, stage: str):
                 'COMBINED_FIELD', 'FULL_ADDRESS', 'CUSTOMER_NAME',
 
                 # Lead metadata
-                'updated_date', 'fiscal_year_lead', 'fiscal_period_lead','week'
+                'updated_date', 'fiscal_year_lead', 'fiscal_period_lead',
             ]
 
 
@@ -468,43 +469,67 @@ def load_and_preprocess_data_cloud_sql(base_name: str, config_file_path: str) ->
     total_rows  = 0
     chunk_count = 0
 
-    with output_blob.open("w") as gcs_writer:
+    # Use a SERVER-SIDE (streaming) cursor. Without stream_results=True,
+    # pg8000 buffers the ENTIRE result set before pandas sees row one —
+    # at 25M rows that is a hard OOM before the first chunk is processed.
+    #
+    # stream_results=True makes Postgres hand rows over incrementally so
+    # the first chunk materializes almost immediately. yield_per caps how
+    # many raw rows the driver holds in its own buffer at once (belt-and-
+    # suspenders with chunksize, important at 25M-row scale). A per-
+    # statement timeout guards against a genuinely runaway query rather
+    # than hanging forever.
+    streaming_conn = engine.connect().execution_options(
+        stream_results=True,
+        yield_per=CHUNK_SIZE,
+    )
+    try:
+        # Set a statement timeout at the session level (milliseconds).
+        # If the query can't even start returning rows within this window,
+        # fail loudly instead of hanging the Cloud Run job indefinitely.
+        streaming_conn.execute(sql_text("SET statement_timeout = '3600000'"))  # 60 min
 
-        for chunk_df in pd.read_sql(query_input, engine, chunksize=CHUNK_SIZE):
-            chunk_count += 1
-            chunk_rows   = len(chunk_df)
+        with output_blob.open("w") as gcs_writer:
 
-            # ── Null safety first ──
-            chunk_df = chunk_df.fillna("")
+            for chunk_df in pd.read_sql(
+                query_input, streaming_conn, chunksize=CHUNK_SIZE
+            ):
+                chunk_count += 1
+                chunk_rows   = len(chunk_df)
 
-            # ── Ensure all expected columns exist ──
-            chunk_df = enforce_required_columns(chunk_df, enforce_cols)
+                # ── Null safety first ──
+                chunk_df = chunk_df.fillna("")
 
-            # ── Add *_normalized columns (in-place on chunk_df) ──
-            chunk_df = clean_required_columns(chunk_df, base_name)
+                # ── Ensure all expected columns exist ──
+                chunk_df = enforce_required_columns(chunk_df, enforce_cols)
 
-            # ── Add derived composite columns ──
-            chunk_df = validate_combined_field(chunk_df)
+                # ── Add *_normalized columns (in-place on chunk_df) ──
+                chunk_df = clean_required_columns(chunk_df, base_name)
 
-            # ── Trim to output schema and write ──
-            cols_to_write = [c for c in output_cols if c in chunk_df.columns]
-            chunk_df      = chunk_df[cols_to_write]
+                # ── Add derived composite columns ──
+                chunk_df = validate_combined_field(chunk_df)
 
-            chunk_df.to_csv(
-                gcs_writer,
-                index=False,
-                header=(chunk_count == 1),
-            )
+                # ── Trim to output schema and write ──
+                cols_to_write = [c for c in output_cols if c in chunk_df.columns]
+                chunk_df      = chunk_df[cols_to_write]
 
-            total_rows += chunk_rows
-            log.info(
-                "Chunk %d: %d rows (running total: %d)",
-                chunk_count, chunk_rows, total_rows,
-            )
+                chunk_df.to_csv(
+                    gcs_writer,
+                    index=False,
+                    header=(chunk_count == 1),
+                )
 
-            # ── Explicitly free chunk memory before fetching the next ──
-            del chunk_df
-            gc.collect()
+                total_rows += chunk_rows
+                log.info(
+                    "Chunk %d: %d rows (running total: %d)",
+                    chunk_count, chunk_rows, total_rows,
+                )
+
+                # ── Explicitly free chunk memory before fetching the next ──
+                del chunk_df
+                gc.collect()
+    finally:
+        streaming_conn.close()
 
     output_uri = f"gs://{bucket.name}/{output_file}"
     log.info("Wrote %d rows to %s in %d chunks", total_rows, output_uri, chunk_count)
