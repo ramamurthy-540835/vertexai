@@ -1,4 +1,4 @@
-from google.cloud import aiplatform
+from google.cloud import aiplatform,aiplatform_v1
 from costco.leadmgmt.pipeline_manager.compile_pipeline import compile_and_upload_pipeline
 from costco.leadmgmt.util.match_id_creation import match_id_creation
 from costco.leadmgmt.components.update_source_data import update_cloud_sql
@@ -23,24 +23,54 @@ def run_pipeline(config_file_path,match_id):
     registry_url = os.environ.get("ARTIFACT_REGISTRY_URL")
     bucket = os.environ.get("GCS_BUCKET")
     max_workers = os.environ.get('MAX_WORKERS')
+    network_attachment = os.environ.get("NETWORK_ATTACHMENT")
 
     aiplatform.init(project=project_id, location=region)
     template_path = f"{registry_url}/{pipeline_name}/latest"
 
-    job = aiplatform.PipelineJob(
-        display_name=f"{pipeline_name}-latest",
-        template_path=template_path,
-        pipeline_root=f"gs://{bucket}/pipelines",
-        parameter_values={
-            'match_id': match_id,
-            'config_file_path': config_file_path,
-            'project_id' : project_id,
-            'max_workers': max_workers
-        }
+    # job = aiplatform.PipelineJob(
+    #     display_name=f"{pipeline_name}-latest",
+    #     template_path=template_path,
+    #     pipeline_root=f"gs://{bucket}/pipelines",
+    #     parameter_values={
+    #         'match_id': match_id,
+    #         'config_file_path': config_file_path,
+    #         'project_id' : project_id,
+    #         'max_workers': max_workers
+    #     }
+    # )
+
+    # job.run(network=vertex_ai_network, service_account=service_account, sync=True)
+    # print("Pipeline executed successfully.")
+
+    client = aiplatform_v1.PipelineServiceClient(
+        client_options={"api_endpoint": f"{region}-aiplatform.googleapis.com"}
     )
 
-    job.run(network=vertex_ai_network, service_account=service_account, sync=True)
-    print("Pipeline executed successfully.")
+    request = aiplatform_v1.CreatePipelineJobRequest(
+        parent=f"projects/{project_id}/locations/{region}",
+        pipeline_job=aiplatform_v1.PipelineJob(
+            display_name=f"{pipeline_name}-latest",
+            template_uri=template_path,
+            runtime_config=aiplatform_v1.PipelineJob.RuntimeConfig(
+                gcs_output_directory=f"gs://{bucket}/pipelines",
+                parameter_values={
+                    'match_id': match_id,
+                    'config_file_path': config_file_path,
+                    'project_id': project_id,
+                    'max_workers': max_workers
+                }
+            ),
+            service_account=service_account,
+            psc_interface_config=aiplatform_v1.PscInterfaceConfig(
+                network_attachment=f"projects/{project_id}/regions/{region}/networkAttachments/{network_attachment}"
+            ),
+        )
+    )
+
+    response = client.create_pipeline_job(request=request)
+    print(f"Pipeline job created: {response.name}")
+    print("Pipeline executed successfully with network attachement")
 
 if __name__ == "__main__":
     stage = sys.argv[1]
