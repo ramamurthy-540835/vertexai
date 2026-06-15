@@ -476,18 +476,12 @@ def load_and_preprocess_data_cloud_sql(base_name: str, config_file_path: str) ->
     # stream_results=True makes Postgres hand rows over incrementally so
     # the first chunk materializes almost immediately. yield_per caps how
     # many raw rows the driver holds in its own buffer at once (belt-and-
-    # suspenders with chunksize, important at 25M-row scale). A per-
-    # statement timeout guards against a genuinely runaway query rather
-    # than hanging forever.
+    # suspenders with chunksize, important at 25M-row scale).
     streaming_conn = engine.connect().execution_options(
         stream_results=True,
         yield_per=CHUNK_SIZE,
     )
     try:
-        # Set a statement timeout at the session level (milliseconds).
-        # If the query can't even start returning rows within this window,
-        # fail loudly instead of hanging the Cloud Run job indefinitely.
-        streaming_conn.execute(sql_text("SET statement_timeout = '3600000'"))  # 60 min
 
         with output_blob.open("w") as gcs_writer:
 
