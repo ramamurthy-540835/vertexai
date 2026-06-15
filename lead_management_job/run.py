@@ -70,7 +70,7 @@ def run_pipeline(config_file_path,match_id):
 
     response = client.create_pipeline_job(request=request)
     print(f"Pipeline job created: {response.name}")
-    print("Pipeline executed successfully.")
+    print("Pipeline executed successfully with network attachement")
 
 if __name__ == "__main__":
     stage = sys.argv[1]
