@@ -68,19 +68,17 @@ jobs:
 
       - name: "Download and setup Cloud SQL Proxy"
         run: |
-          # Always download — binary is not cached between runs
           wget -q https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/v2.8.0/cloud-sql-proxy.linux.amd64 \
-            -O /usr/local/bin/cloud-sql-proxy
-          chmod +x /usr/local/bin/cloud-sql-proxy
+            -O "$HOME/cloud-sql-proxy"
+          chmod +x "$HOME/cloud-sql-proxy"
 
-          cloud-sql-proxy p-601-np-bcleadsmgmt-adt:us-central1:lead-mgmt-adt \
+          "$HOME/cloud-sql-proxy" p-601-np-bcleadsmgmt-adt:us-central1:lead-mgmt-adt \
             --port 5432 \
             --private-ip \
             --auto-iam-authn &
 
           sleep 10
 
-          # ⚠️ Connection string must be on ONE line — line continuations break psql parsing
           PGPASSWORD="$(gcloud auth print-access-token)" psql "hostaddr=127.0.0.1 port=5432 dbname=lead-mgmt-db user=gco-iam-svc-cicd-mbr-bc-np@gcp-prj-cicd-core.iam sslmode=disable" --no-password -c '\conninfo'
 
           echo "Cloud SQL Proxy started successfully"
