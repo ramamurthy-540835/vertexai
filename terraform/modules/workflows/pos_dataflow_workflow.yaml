@@ -59,6 +59,7 @@ main:
           - failed_files: []
           - downstream_execution: null
           - checkpoint_stage: "none"   # tracks where to resume from
+          - batch_id: '${uuid.generate()}'
 
     # ── 3. Defensive: ignore non-manifest uploads ──────────────────────
     - validate_manifest_path:
@@ -98,7 +99,6 @@ main:
             - no_state_yet:
                 assign:
                   - state: null
-                  - batch_id: '${uuid.generate()}'
 
     - apply_checkpoint:
         switch:
@@ -110,7 +110,7 @@ main:
                     - checkpoint_stage: '${state.stage}'
                     - successful_files: '${default(map.get(state, "successful_files"), [])}'
                     - failed_files: '${default(map.get(state, "failed_files"), [])}'
-                    - batch_id: '${default(map.get(state, "batch_id"), uuid.generate())}'
+                    - batch_id: '${default(map.get(state, "batch_id"), batch_id)}'
               - log_resume:
                   call: sys.log
                   args:
