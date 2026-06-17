@@ -9,7 +9,7 @@ on:
 jobs:
   run:
     name: "Provision infra"
-    runs-on: "ubuntu-latest"
+    runs-on: cw-gcp-us-west1-pd
     environment: ${{ github.event.pull_request.head.ref }}
     strategy:
       matrix:
