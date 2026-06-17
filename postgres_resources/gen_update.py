@@ -24,7 +24,7 @@ with open(out_path, "w") as sql:
     for i, batch in enumerate(batches, 1):
         sql.write("-- Batch {}/{} ({} rows)\n".format(i, len(batches), len(batch)))
         sql.write("UPDATE {}.lead AS t\n   SET week = v.week\n  FROM (\n    VALUES\n".format(schema))
-        values = ["      ({}::text, {!r})".format(lead_id, week) for lead_id, week in batch]
+        values = [ "      ('{}', '{}')".format(lead_id.replace("'", "''"), week.replace("'", "''")) for lead_id, week in batch]
         sql.write(",\n".join(values))
         sql.write("\n  ) AS v(lead_id, week)\n WHERE t.lead_id = v.lead_id;\n\n")
 
