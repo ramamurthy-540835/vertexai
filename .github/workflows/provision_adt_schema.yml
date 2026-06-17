@@ -73,7 +73,7 @@ jobs:
           else
             echo "Node.js is already installed"
           fi
-     - name: "Download and setup Cloud SQL Proxy"
+      - name: "Download and setup Cloud SQL Proxy"
         run: |
           if ! command -v psql >/dev/null 2>&1; then
             echo "Installing PostgreSQL client..."
