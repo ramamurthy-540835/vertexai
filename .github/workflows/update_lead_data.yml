@@ -69,25 +69,30 @@ jobs:
           service_account: ${{ github.event.inputs.environment == 'prd' && secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL_PRD || secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
           project_id: ${{ env.PROJECT_ID }}
 
-      - name: "Download psql and Cloud SQL Proxy"
+      - name: "Install additional utilities"
         run: |
-          gcloud storage cp gs://p-601-np-bcleadsmgmt-adt-cicd-tools/psql "$HOME/psql"
-          chmod +x "$HOME/psql"
-          echo "$HOME" >> "$GITHUB_PATH"
+          PKGS=()
+          command -v unzip >/dev/null 2>&1 || PKGS+=(unzip)
+          command -v psql  >/dev/null 2>&1 || PKGS+=(postgresql-client)
+          if [[ ${#PKGS[@]} -gt 0 ]]; then
+            echo "Installing: ${PKGS[*]}"
+            sudo apt-get update -qq && sudo apt-get install -y "${PKGS[@]}"
+          else
+            echo "psql already present"
+          fi
 
-          wget -q https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/v2.8.0/cloud-sql-proxy.linux.amd64 -O "$HOME/cloud-sql-proxy"
-          chmod +x "$HOME/cloud-sql-proxy"
-
-      - name: "Start Cloud SQL Proxy"
+      - name: "Download and setup Cloud SQL Proxy"
         run: |
-          "$HOME/cloud-sql-proxy" "${{ env.PROJECT_ID }}:us-central1:${{ env.INSTANCE_NAME }}" --port 5432 --private-ip --auto-iam-authn &
+          wget https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/v2.8.0/cloud-sql-proxy.linux.amd64 -O cloud-sql-proxy
+          chmod +x cloud-sql-proxy
 
-          for i in $(seq 1 15); do
-            bash -c "echo > /dev/tcp/127.0.0.1/5432" 2>/dev/null && echo "Proxy ready after ${i}s" && break
-            sleep 1
-          done
+          ./cloud-sql-proxy "${{ env.PROJECT_ID }}:us-central1:${{ env.INSTANCE_NAME }}" --port 5432 --private-ip --auto-iam-authn &
 
-          PGPASSWORD="$(gcloud auth print-access-token)" "$HOME/psql" "hostaddr=127.0.0.1 port=5432 dbname=lead-mgmt-db user=gco-iam-svc-cicd-mbr-bc-np@gcp-prj-cicd-core.iam sslmode=disable" --no-password -c '\conninfo'
+          sleep 10
+
+          PGPASSWORD="$(gcloud auth print-access-token)" psql "hostaddr=127.0.0.1 port=5432 dbname=lead-mgmt-db user=gco-iam-svc-cicd-mbr-bc-np@gcp-prj-cicd-core.iam sslmode=disable" --no-password -c '\conninfo'
+
+          echo "Cloud SQL Proxy started successfully"
 
       - name: "Validate CSV"
         run: |
@@ -126,13 +131,13 @@ jobs:
       - name: "Execute batched UPDATE"
         if: github.event.inputs.dry_run == 'false'
         run: |
-          PGPASSWORD="$(gcloud auth print-access-token)" "$HOME/psql" "hostaddr=127.0.0.1 port=5432 dbname=lead-mgmt-db user=gco-iam-svc-cicd-mbr-bc-np@gcp-prj-cicd-core.iam sslmode=disable" --no-password --echo-errors -v ON_ERROR_STOP=1 -f "/tmp/lead_week_update.sql"
+          PGPASSWORD="$(gcloud auth print-access-token)" psql "hostaddr=127.0.0.1 port=5432 dbname=lead-mgmt-db user=gco-iam-svc-cicd-mbr-bc-np@gcp-prj-cicd-core.iam sslmode=disable" --no-password --echo-errors -v ON_ERROR_STOP=1 -f "/tmp/lead_week_update.sql"
           echo "UPDATE complete"
 
       - name: "Verify spot-check"
         if: github.event.inputs.dry_run == 'false'
         run: |
-          PGPASSWORD="$(gcloud auth print-access-token)" "$HOME/psql" "hostaddr=127.0.0.1 port=5432 dbname=lead-mgmt-db user=gco-iam-svc-cicd-mbr-bc-np@gcp-prj-cicd-core.iam sslmode=disable" --no-password -c "SELECT lead_id, week FROM ${{ env.SCHEMA_NAME }}.lead ORDER BY updated_at DESC LIMIT 10;"
+          PGPASSWORD="$(gcloud auth print-access-token)" psql "hostaddr=127.0.0.1 port=5432 dbname=lead-mgmt-db user=gco-iam-svc-cicd-mbr-bc-np@gcp-prj-cicd-core.iam sslmode=disable" --no-password -c "SELECT lead_id, week FROM ${{ env.SCHEMA_NAME }}.lead ORDER BY updated_at DESC LIMIT 10;"
 
       - name: "Summary"
         if: always()
