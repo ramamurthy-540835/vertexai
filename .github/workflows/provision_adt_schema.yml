@@ -47,20 +47,43 @@ jobs:
           service_account: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
           project_id: 'p-601-np-bcleadsmgmt-adt'
 
-      - name: "Install additional utilities"
+      - name: "Install psql (no root)"
         run: |
-          sudo apt-get update
-          sudo apt-get install -y unzip postgresql-client
+          # Check if psql is already available
+          if command -v psql >/dev/null 2>&1; then
+            echo "psql already installed: $(psql --version)"
+            exit 0
+          fi
 
-          # Confirm psql is now available before moving on
-          echo "psql version: $(psql --version)"
+          echo "psql not found — installing via apt without sudo..."
 
-          if ! command -v node >/dev/null 2>&1; then
-            echo "Installing Node.js..."
-            curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-            sudo apt-get install -y nodejs
+          # Extract postgresql-client directly from the .deb into $HOME without root
+          mkdir -p "$HOME/pg_client"
+
+          # Download the .deb package directly
+          apt-get download postgresql-client-common postgresql-client 2>/dev/null || true
+
+          # Try extracting whatever .deb files were downloaded
+          for deb in postgresql*.deb; do
+            [ -f "$deb" ] && dpkg-deb -x "$deb" "$HOME/pg_client/" && echo "Extracted $deb"
+          done
+
+          # Find where psql landed and add it to PATH
+          PSQL_BIN=$(find "$HOME/pg_client" -name "psql" -type f 2>/dev/null | head -1)
+
+          if [ -n "$PSQL_BIN" ]; then
+            chmod +x "$PSQL_BIN"
+            PSQL_DIR=$(dirname "$PSQL_BIN")
+            echo "$PSQL_DIR" >> "$GITHUB_PATH"
+            export PATH="$PSQL_DIR:$PATH"
+            echo "psql installed at $PSQL_BIN"
+            psql --version
           else
-            echo "Node.js already installed: $(node --version)"
+            echo "❌ Could not extract psql binary. Checking what's available on this runner..."
+            which psql || true
+            find /usr -name "psql" 2>/dev/null || true
+            find /opt -name "psql" 2>/dev/null || true
+            exit 1
           fi
 
       - name: "Download and setup Cloud SQL Proxy"
