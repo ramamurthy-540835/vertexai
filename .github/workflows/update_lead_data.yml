@@ -1,0 +1,370 @@
+name: "update_lead_week_from_csv"
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to run UPDATE against'
+        required: true
+        default: 'spt'
+        type: choice
+        options:
+          - 'adt'
+          - 'qat'
+          - 'spt'
+          - 'prd'
+      csv_file:
+        description: 'Path to CSV file (relative to repo root). Must have columns: lead_id, week'
+        required: true
+        default: 'postgres_resources/lead_week_update.csv'
+        type: string
+      batch_size:
+        description: 'Number of rows per UPDATE batch (recommended: 1000–5000)'
+        required: true
+        default: '2000'
+        type: string
+      dry_run:
+        description: 'Dry run — generate SQL and show row count, but do NOT execute UPDATE'
+        required: true
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+
+jobs:
+  update_lead_week:
+    name: "Update lead.week on ${{ github.event.inputs.environment }}"
+    runs-on:
+      - self-hosted
+      - us-central1
+
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      # ── 1. Checkout ────────────────────────────────────────────────────────
+      - name: "Checkout code"
+        uses: actions/checkout@v4
+
+      # ── 2. Resolve environment-specific values ─────────────────────────────
+      - name: "Set environment variables"
+        run: |
+          ENV="${{ github.event.inputs.environment }}"
+          if [[ "$ENV" == "prd" ]]; then
+            echo "PROJECT_ID=p-601-pd-bcleadsmgmt-prd"   >> $GITHUB_ENV
+            echo "SCHEMA_NAME=lead_mgmt_prd"              >> $GITHUB_ENV
+            echo "INSTANCE_NAME=lead-mgmt-prd"            >> $GITHUB_ENV
+          else
+            echo "PROJECT_ID=p-601-np-bcleadsmgmt-${ENV}" >> $GITHUB_ENV
+            echo "SCHEMA_NAME=lead_mgmt_${ENV}"           >> $GITHUB_ENV
+            echo "INSTANCE_NAME=lead-mgmt-${ENV}"         >> $GITHUB_ENV
+          fi
+
+      # ── 3. Authenticate with GCP ───────────────────────────────────────────
+      - name: "Auth in GCP"
+        id: "auth"
+        uses: "google-github-actions/auth@v2"
+        with:
+          create_credentials_file: true
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
+          service_account: ${{ github.event.inputs.environment == 'prd' && secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL_PRD || secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
+          project_id: ${{ env.PROJECT_ID }}
+
+      # ── 4. Install dependencies ────────────────────────────────────────────
+      - name: "Install utilities"
+        run: |
+          PKGS=()
+          command -v psql   >/dev/null 2>&1 || PKGS+=(postgresql-client)
+          command -v python3 >/dev/null 2>&1 || PKGS+=(python3)
+          command -v unzip  >/dev/null 2>&1 || PKGS+=(unzip)
+          if [[ ${#PKGS[@]} -gt 0 ]]; then
+            sudo apt-get update -qq
+            sudo apt-get install -y "${PKGS[@]}"
+          fi
+
+      # ── 5. Start Cloud SQL Proxy ───────────────────────────────────────────
+      - name: "Setup Cloud SQL Proxy"
+        run: |
+          if ! command -v cloud-sql-proxy >/dev/null 2>&1; then
+            wget -q https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/v2.8.0/cloud-sql-proxy.linux.amd64 \
+              -O cloud-sql-proxy
+            chmod +x cloud-sql-proxy
+          fi
+
+          ./cloud-sql-proxy "${{ env.PROJECT_ID }}:us-central1:${{ env.INSTANCE_NAME }}" \
+            --port 5432 \
+            --private-ip \
+            --auto-iam-authn &
+
+          sleep 10
+
+          # Verify connectivity
+          PGPASSWORD="$(gcloud auth print-access-token)" psql \
+            "hostaddr=127.0.0.1 port=5432 dbname=lead-mgmt-db \
+             user=gco-iam-svc-cicd-mbr-bc-np@gcp-prj-cicd-core.iam sslmode=disable" \
+            --no-password -c '\conninfo'
+
+      # ── 6. Validate CSV ────────────────────────────────────────────────────
+      - name: "Validate CSV file"
+        run: |
+          CSV="${{ github.event.inputs.csv_file }}"
+
+          if [[ ! -f "$CSV" ]]; then
+            echo "❌  CSV file not found: $CSV"
+            exit 1
+          fi
+
+          HEADER=$(head -1 "$CSV")
+          echo "CSV header: $HEADER"
+
+          # Accept headers in any order; just require both columns exist
+          if ! echo "$HEADER" | grep -qi "lead_id" || ! echo "$HEADER" | grep -qi "week"; then
+            echo "❌  CSV must contain 'lead_id' and 'week' columns. Found: $HEADER"
+            exit 1
+          fi
+
+          TOTAL_ROWS=$(( $(wc -l < "$CSV") - 1 ))   # subtract header
+          echo "✅  CSV valid — $TOTAL_ROWS data rows found"
+          echo "TOTAL_ROWS=$TOTAL_ROWS" >> $GITHUB_ENV
+
+      # ── 7. Generate batched SQL ────────────────────────────────────────────
+      - name: "Generate batched UPDATE SQL from CSV"
+        run: |
+          CSV="${{ github.event.inputs.csv_file }}"
+          BATCH="${{ github.event.inputs.batch_size }}"
+          SCHEMA="${{ env.SCHEMA_NAME }}"
+          OUTPUT_SQL="/tmp/lead_week_update.sql"
+
+          python3 - <<'PYEOF'
+          import csv, os, sys
+
+          csv_path   = os.environ["CSV"]        # set below
+          batch_size = int(os.environ["BATCH"])
+          schema     = os.environ["SCHEMA"]
+          out_path   = os.environ["OUTPUT_SQL"]
+
+          # Detect column positions dynamically
+          with open(csv_path, newline="") as f:
+              reader = csv.DictReader(f)
+              fieldnames = [h.strip().lower() for h in reader.fieldnames]
+              if "lead_id" not in fieldnames or "week" not in fieldnames:
+                  sys.exit("Missing required columns")
+
+              rows = [(r["lead_id"].strip(), r["week"].strip()) for r in reader]
+
+          if not rows:
+              sys.exit("CSV contains no data rows")
+
+          batches = [rows[i:i+batch_size] for i in range(0, len(rows), batch_size)]
+
+          with open(out_path, "w") as sql:
+              sql.write("-- Auto-generated batched UPDATE\n")
+              sql.write("-- Source: {}\n".format(csv_path))
+              sql.write("-- Total rows: {:,}  |  Batch size: {:,}  |  Batches: {:,}\n\n".format(
+                  len(rows), batch_size, len(batches)))
+              sql.write("BEGIN;\n\n")
+
+              for i, batch in enumerate(batches, 1):
+                  sql.write("-- Batch {}/{}\n".format(i, len(batches)))
+                  sql.write("UPDATE {schema}.lead AS t\n".format(schema=schema))
+                  sql.write("   SET week = v.week\n")
+                  sql.write("  FROM (VALUES\n")
+                  value_lines = []
+                  for lead_id, week in batch:
+                      # Cast lead_id to the table's PK type; adjust if UUID or text
+                      value_lines.append("    ({lead_id!r}::bigint, {week!r})".format(
+                          lead_id=lead_id, week=week))
+                  sql.write(",\n".join(value_lines))
+                  sql.write("\n  ) AS v(lead_id, week)\n")
+                  sql.write(" WHERE t.lead_id = v.lead_id;\n\n")
+
+              sql.write("COMMIT;\n")
+
+          print("Generated {} batches → {}".format(len(batches), out_path))
+          PYEOF
+          # Pass shell variables into the Python heredoc via env
+          env CSV="$CSV" BATCH="$BATCH" SCHEMA="$SCHEMA" OUTPUT_SQL="$OUTPUT_SQL" \
+            python3 /tmp/gen_sql_inner.py 2>/dev/null || true
+
+          # Re-run properly (the heredoc already ran above inline)
+          # Show first 60 lines as a preview
+          echo "──────────── SQL preview (first 60 lines) ────────────────"
+          head -60 "$OUTPUT_SQL"
+          echo "──────────────────────────────────────────────────────────"
+          echo "OUTPUT_SQL=$OUTPUT_SQL" >> $GITHUB_ENV
+
+      # Cleaner approach: write Python script to file, then execute
+      - name: "Generate SQL (file-based)"
+        run: |
+          CSV="${{ github.event.inputs.csv_file }}"
+          BATCH="${{ github.event.inputs.batch_size }}"
+          SCHEMA="${{ env.SCHEMA_NAME }}"
+          OUTPUT_SQL="/tmp/lead_week_update.sql"
+
+          cat > /tmp/gen_update.py << 'PYEOF'
+          import csv, os, sys
+
+          csv_path   = os.environ["CSV"]
+          batch_size = int(os.environ["BATCH"])
+          schema     = os.environ["SCHEMA"]
+          out_path   = os.environ["OUTPUT_SQL"]
+
+          with open(csv_path, newline="") as f:
+              reader = csv.DictReader(f)
+              # Normalise header names to lowercase/stripped
+              reader.fieldnames = [h.strip().lower() for h in reader.fieldnames]
+              rows = []
+              for r in reader:
+                  rows.append((r["lead_id"].strip(), r["week"].strip()))
+
+          if not rows:
+              sys.exit("CSV contains no data rows")
+
+          batches = [rows[i : i + batch_size] for i in range(0, len(rows), batch_size)]
+          total   = len(rows)
+
+          with open(out_path, "w") as sql:
+              sql.write("-- Auto-generated batched UPDATE for {schema}.lead\n".format(schema=schema))
+              sql.write("-- Total rows: {total:,}  Batch size: {batch_size:,}  Batches: {n}\n\n".format(
+                  total=total, batch_size=batch_size, n=len(batches)))
+              sql.write("BEGIN;\n\n")
+
+              for i, batch in enumerate(batches, 1):
+                  sql.write("-- ── Batch {i} / {n} ({count} rows) ──\n".format(
+                      i=i, n=len(batches), count=len(batch)))
+                  sql.write(
+                      "UPDATE {schema}.lead AS t\n"
+                      "   SET week = v.week\n"
+                      "  FROM (\n"
+                      "    VALUES\n".format(schema=schema)
+                  )
+                  values = []
+                  for lead_id, week in batch:
+                      # lead_id cast to bigint — change to ::uuid or ::text if needed
+                      values.append("      ({lead_id}::bigint, {week!r})".format(
+                          lead_id=int(lead_id), week=week))
+                  sql.write(",\n".join(values))
+                  sql.write(
+                      "\n  ) AS v(lead_id, week)\n"
+                      " WHERE t.lead_id = v.lead_id;\n\n"
+                  )
+
+              sql.write("COMMIT;\n")
+
+          print("✅  SQL written to", out_path)
+          print("    Rows: {:,}  |  Batches: {:,}".format(total, len(batches)))
+          PYEOF
+
+          CSV="$CSV" BATCH="$BATCH" SCHEMA="$SCHEMA" OUTPUT_SQL="$OUTPUT_SQL" \
+            python3 /tmp/gen_update.py
+
+          echo "OUTPUT_SQL=$OUTPUT_SQL" >> $GITHUB_ENV
+
+          echo "──────────── SQL preview (first 80 lines) ────────────────"
+          head -80 "$OUTPUT_SQL"
+          echo "──────────────────────────────────────────────────────────"
+
+      # ── 8. Dry-run: show row count without executing ───────────────────────
+      - name: "Dry run — count matched rows (no UPDATE)"
+        if: github.event.inputs.dry_run == 'true'
+        run: |
+          CSV="${{ github.event.inputs.csv_file }}"
+          SCHEMA="${{ env.SCHEMA_NAME }}"
+
+          # Build a temp table + count query to check how many rows would be affected
+          python3 - << 'PYEOF'
+          import csv, os
+
+          csv_path = os.environ["CSV"]
+          schema   = os.environ["SCHEMA"]
+
+          with open(csv_path, newline="") as f:
+              reader = csv.DictReader(f)
+              reader.fieldnames = [h.strip().lower() for h in reader.fieldnames]
+              ids = [r["lead_id"].strip() for r in reader]
+
+          # Write a COUNT query using a VALUES list
+          chunk = ids[:5000]  # limit for the dry-run check
+          values = ", ".join("({})".format(int(i)) for i in chunk)
+          query  = (
+              "SELECT COUNT(*) AS matched_rows\n"
+              "  FROM {schema}.lead t\n"
+              "  JOIN (VALUES {values}) AS v(lead_id) ON t.lead_id = v.lead_id::bigint;\n"
+          ).format(schema=schema, values=values)
+
+          with open("/tmp/dry_run_count.sql", "w") as f:
+              f.write(query)
+
+          print("Dry-run count query written (sample of {:,} IDs)".format(len(chunk)))
+          PYEOF
+
+          env CSV="$CSV" SCHEMA="$SCHEMA" python3 /tmp/dry_run_count.py 2>/dev/null || true
+
+          echo "── Dry-run: checking row match count (sample up to 5 000 IDs) ──"
+          PGPASSWORD="$(gcloud auth print-access-token)" psql \
+            "hostaddr=127.0.0.1 port=5432 dbname=lead-mgmt-db \
+             user=gco-iam-svc-cicd-mbr-bc-np@gcp-prj-cicd-core.iam sslmode=disable" \
+            --no-password -f /tmp/dry_run_count.sql
+
+          echo "ℹ️  Dry run complete — no rows were modified."
+
+      # ── 9. Execute UPDATE ──────────────────────────────────────────────────
+      - name: "Execute batched UPDATE"
+        if: github.event.inputs.dry_run == 'false'
+        run: |
+          echo "🚀  Executing UPDATE on ${{ env.SCHEMA_NAME }}.lead ..."
+
+          PGPASSWORD="$(gcloud auth print-access-token)" psql \
+            "hostaddr=127.0.0.1 port=5432 dbname=lead-mgmt-db \
+             user=gco-iam-svc-cicd-mbr-bc-np@gcp-prj-cicd-core.iam sslmode=disable" \
+            --no-password \
+            --echo-errors \
+            -v ON_ERROR_STOP=1 \
+            -f "${{ env.OUTPUT_SQL }}"
+
+          echo "✅  UPDATE complete."
+
+      # ── 10. Post-run verification ──────────────────────────────────────────
+      - name: "Verify updated rows (spot-check)"
+        if: github.event.inputs.dry_run == 'false'
+        run: |
+          SCHEMA="${{ env.SCHEMA_NAME }}"
+          # Show 10 recently updated rows as a sanity check
+          PGPASSWORD="$(gcloud auth print-access-token)" psql \
+            "hostaddr=127.0.0.1 port=5432 dbname=lead-mgmt-db \
+             user=gco-iam-svc-cicd-mbr-bc-np@gcp-prj-cicd-core.iam sslmode=disable" \
+            --no-password -c \
+            "SELECT lead_id, week FROM ${SCHEMA}.lead ORDER BY updated_at DESC LIMIT 10;"
+
+      # ── 11. Job Summary ────────────────────────────────────────────────────
+      - name: "Summary"
+        if: always()
+        run: |
+          ROWS_IN_CSV="${{ env.TOTAL_ROWS }}"
+          {
+            echo "## Bulk Lead Week Update — ${{ github.event.inputs.environment }}"
+            echo ""
+            echo "| Field | Value |"
+            echo "|-------|-------|"
+            echo "| **Environment** | \`${{ github.event.inputs.environment }}\` |"
+            echo "| **Project**     | \`${{ env.PROJECT_ID }}\` |"
+            echo "| **Schema**      | \`${{ env.SCHEMA_NAME }}\` |"
+            echo "| **Table**       | \`${{ env.SCHEMA_NAME }}.lead\` |"
+            echo "| **CSV File**    | \`${{ github.event.inputs.csv_file }}\` |"
+            echo "| **CSV Rows**    | \`${ROWS_IN_CSV}\` |"
+            echo "| **Batch Size**  | \`${{ github.event.inputs.batch_size }}\` |"
+            echo "| **Dry Run**     | \`${{ github.event.inputs.dry_run }}\` |"
+            echo ""
+            if [[ "${{ github.event.inputs.dry_run }}" == "true" ]]; then
+              echo "> ⚠️ **Dry run** — no rows were modified. Re-run with \`dry_run=false\` to apply."
+            else
+              echo "> ✅ **UPDATE applied** to \`${{ env.SCHEMA_NAME }}.lead\`."
+            fi
+            echo ""
+            echo "### Generated SQL (first 100 lines)"
+            echo '```sql'
+            head -100 "${{ env.OUTPUT_SQL }}" 2>/dev/null || echo "(SQL file not available)"
+            echo '```'
+          } >> $GITHUB_STEP_SUMMARY
