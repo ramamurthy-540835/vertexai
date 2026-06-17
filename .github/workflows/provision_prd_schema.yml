@@ -1,28 +1,41 @@
-name: "provision_prd_schema"
+name: "provision_adt_schema"
 
 on:
+  # Triggers the workflow on push or pull request events but only for the "feature" branch
   push:
-    tags:
-      - release-prd*
+    branches:
+      - "feature**"
+    paths:
+      - 'terraform/environments/adt/schema/**.tf'
+      - 'postgres_resources/**.sql'
+      - '.github/workflows/provision_adt_schema.yml'
+
+  pull_request:
+    branches:
+      - "feature*"
+    paths:
+     - 'terraform/environments/adt/schema/**.tf'
+     - 'postgres_resources/**.sql'
+     - '.github/workflows/provision_adt_schema.yml'
 
 
 jobs:
   run:
     name: "Provision schema"
-    runs-on: cw-gcp-us-west1-pd
+    runs-on: cw-gcp-us-west1-np
     environment: ${{ github.event.pull_request.head.ref }}
     strategy:
       matrix:
-        env: ['prd']
-
+        env: ['adt'] #,['adt', 'qat', 'spt'] # Exclude prd from auto-plan
+    
     permissions:
       id-token: write
       contents: read
       packages: write
 
     env: 
-      TF_VAR_gcp_workload_identity_sa_email: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL_PRD }}
-      TF_VAR_db_password: ${{secrets.CLOUD_SQL_PRD_PASSWORD}}
+      TF_VAR_gcp_workload_identity_sa_email: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
+      TF_VAR_db_password: ${{secrets.CLOUD_SQL_ADT_PASSWORD}}
 
     steps:
       - name: "Checkout code"
@@ -35,7 +48,7 @@ jobs:
           create_credentials_file: true
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
           service_account: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
-          project_id: 'p-601-pd-bcleadsmgmt-prd'
+          project_id: 'p-601-np-bcleadsmgmt-adt'
 
       - name: "Install additional utilities"
         run: |
@@ -63,6 +76,13 @@ jobs:
 
       - name: "Download and setup Cloud SQL Proxy"
         run: |
+          if ! command -v psql >/dev/null 2>&1; then
+            echo "Installing PostgreSQL client..."
+            sudo apt-get update && sudo apt-get install -y postgresql-client
+          else
+            echo "psql is already installed"
+          fi
+
           if ! command -v cloud-sql-proxy >/dev/null 2>&1; then
             echo "Installing Cloud SQL Auth Proxy..."
             wget https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/v2.8.0/cloud-sql-proxy.linux.amd64 -O cloud-sql-proxy
@@ -70,25 +90,23 @@ jobs:
           else
             echo "Cloud SQL Proxy is already installed"
           fi
+
           # Start Cloud SQL Proxy in background
-          ./cloud-sql-proxy p-601-pd-bcleadsmgmt-prd:us-central1:lead-mgmt-prd \
+          ./cloud-sql-proxy p-601-np-bcleadsmgmt-adt:us-central1:lead-mgmt-adt \
             --port 5432 \
             --private-ip \
             --auto-iam-authn &
-          
+
           # Wait for proxy to be ready
           sleep 10
 
-          # Set access token for IAM DB auth
-          export PGPASSWORD=$(gcloud auth print-access-token)
-
           # Verify connection to database with psql (check connection only, no queries)
           PGPASSWORD="$(gcloud auth print-access-token)" psql \
-            "hostaddr=127.0.0.1 port=5432 dbname=lead-mgmt-db user=gco-iam-svc-cicd-mbr-bc-pd@gcp-prj-cicd-core.iam sslmode=disable" --no-password -c '\conninfo'
+            "hostaddr=127.0.0.1 port=5432 dbname=lead-mgmt-db user=gco-iam-svc-cicd-mbr-bc-np@gcp-prj-cicd-core.iam sslmode=disable" --no-password -c '\conninfo'
 
           echo "Cloud SQL Proxy started successfully"
 
-      - name: "Setup Terraform"
+      - name: "Setup Terraform" 
         uses: hashicorp/setup-terraform@v3
 
       - name: "Terraform Init"
@@ -98,8 +116,7 @@ jobs:
       - name: "Terraform Plan"
         working-directory: ./terraform/environments/${{ matrix.env }}/schema
         run: terraform plan -out=plan.tfplan -input=false -lock-timeout=10m
-
+      
       - name: "Terraform Apply"
-        if: startsWith(github.ref, 'refs/tags/release-prd')
         working-directory: ./terraform/environments/${{ matrix.env }}/schema
         run: terraform apply -input=false -lock-timeout=10m plan.tfplan
