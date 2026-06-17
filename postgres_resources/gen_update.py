@@ -31,4 +31,4 @@ with open(out_path, "w") as sql:
     sql.write("COMMIT;\n")
 
 print("SQL written to", out_path)
-print("Rows: {:,}  |  Batches: {:,}".format(len(rows), len(batches)))
+print("Rows: {:,}  |  Batches: {:,}".format(len(rows), len(batches))) 
