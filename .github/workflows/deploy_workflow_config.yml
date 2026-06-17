@@ -114,9 +114,7 @@ jobs:
     needs: [determine-target, detect-changes]
     # Skip the job entirely if nothing relevant changed
     if: needs.detect-changes.outputs.config_changed == 'true' || needs.detect-changes.outputs.field_map_changed == 'true'
-    runs-on:
-      - self-hosted
-      - us-central1
+    runs-on: ${{ needs.determine-target.outputs.target_env == 'prd' && 'cw-gcp-us-west1-pd' || 'cw-gcp-us-west1-np' }}
     permissions:
       id-token: write
       contents: read

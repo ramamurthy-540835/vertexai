@@ -36,9 +36,7 @@ on:
 jobs:
   cancel:
     name: "cancel-${{ github.event.inputs.execution_type }}-${{ github.event.inputs.execution_id }}"
-    runs-on:
-      - self-hosted
-      - us-central1
+    runs-on: cw-gcp-us-west1-${{ inputs.environment == 'prd' && 'pd' || 'np' }}
 
     permissions:
       id-token: write

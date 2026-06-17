@@ -63,9 +63,7 @@ on:
 jobs:
   test_endpoint:
     name: "Test endpoint in ${{ github.event.inputs.environment }}"
-    runs-on:
-      - self-hosted
-      - us-central1
+    runs-on: cw-gcp-us-west1-np
 
     permissions:
       id-token: write

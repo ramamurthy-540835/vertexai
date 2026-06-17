@@ -49,7 +49,7 @@ env:
 
 jobs:
   create_manifest:
-    runs-on: ubuntu-latest
+    runs-on: cw-gcp-us-west1-np
     environment: ${{ inputs.environment }}
 
     permissions:

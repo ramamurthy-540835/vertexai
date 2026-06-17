@@ -77,9 +77,7 @@ jobs:
     name: Build and push Dataflow image
     needs: determine-target
     if: needs.determine-target.outputs.should_build == 'true'
-    runs-on:
-      - self-hosted
-      - us-central1
+    runs-on: cw-gcp-us-west1-np
     permissions:
       id-token: write
       contents: read

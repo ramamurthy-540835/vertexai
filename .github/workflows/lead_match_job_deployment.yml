@@ -27,9 +27,7 @@ on:
 
 jobs:
   build-and-deploy:
-    runs-on:
-      - self-hosted
-      - us-central1
+    runs-on: ${{ startsWith(github.ref, 'refs/tags/release-prd') && 'cw-gcp-us-west1-pd' || 'cw-gcp-us-west1-np' }}
     permissions:
       id-token: write
       contents: read

@@ -25,7 +25,7 @@ on:
 jobs:
   run:
     name: "execute-${{ github.event.inputs.job_name }}-${{ github.event.inputs.environment }}"
-    runs-on: ubuntu-latest
+    runs-on: cw-gcp-us-west1-${{ inputs.environment == 'prd' && 'pd' || 'np' }}
     environment: ${{ github.event.inputs.environment }}
 
     permissions:
