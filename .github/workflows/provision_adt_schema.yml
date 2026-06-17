@@ -73,7 +73,8 @@ jobs:
           else
             echo "Node.js is already installed"
           fi
-     - name: "Download and setup Cloud SQL Proxy"
+
+      - name: "Download and setup Cloud SQL Proxy"
         run: |
           if ! command -v psql >/dev/null 2>&1; then
             echo "Installing PostgreSQL client..."
@@ -91,7 +92,7 @@ jobs:
           fi
 
           # Start Cloud SQL Proxy in background
-          ./cloud-sql-proxy p-601-np-bcleadsmgmt-qat:us-central1:lead-mgmt-qat \
+          ./cloud-sql-proxy p-601-np-bcleadsmgmt-adt:us-central1:lead-mgmt-adt \
             --port 5432 \
             --private-ip \
             --auto-iam-authn &
@@ -119,4 +120,3 @@ jobs:
       - name: "Terraform Apply"
         working-directory: ./terraform/environments/${{ matrix.env }}/schema
         run: terraform apply -input=false -lock-timeout=10m plan.tfplan
-        
