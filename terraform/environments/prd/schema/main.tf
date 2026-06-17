@@ -38,7 +38,7 @@ resource "null_resource" "initial_database_setup" {
      export SCHEMA_NAME=${var.schema_name}
      export DATABASE_NAME=${var.database_name}
      export IAM_USER=${var.iam_user}
-     export NEW_IAM_USER="gco-iam-svc-lead-mgmt-bc-prd@p-601-np-bcleadsmgmt-prd.iam"
+     export NEW_IAM_USER="gco-iam-svc-lead-mgmt-bc-prd@p-601-pd-bcleadsmgmt-prd.iam"
 
      envsubst < "../../../../postgres_resources/lead_mgmt_schema_creation.sql" > /tmp/lead_mgmt_schema_creation.sql
      # Connect using private IP with IAM authentication
@@ -69,7 +69,7 @@ resource "null_resource" "initial_database_setup" {
      export SCHEMA_NAME=${var.schema_name}
      export DATABASE_NAME=${var.database_name}
      export IAM_USER=${var.iam_user}
-     export NEW_IAM_USER="gco-iam-svc-lead-mgmt-bc-prd@p-601-np-bcleadsmgmt-prd.iam"
+     export NEW_IAM_USER="gco-iam-svc-lead-mgmt-bc-prd@p-601-pd-bcleadsmgmt-prd.iam"
 
 
      envsubst < "../../../../postgres_resources/costco_db_ddl.sql" > /tmp/costco_db_ddl.sql

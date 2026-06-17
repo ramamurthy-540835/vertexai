@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS
 	closed_fiscal_period int NULL,
     closed_fiscal_year int NULL,
 	batch_id uuid,
+    week int,
     load_date TIMESTAMP WITH TIME ZONE DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') ,
     updated_by VARCHAR(100),
     updated_date TIMESTAMP WITH TIME ZONE DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') ,
@@ -252,14 +253,20 @@ CONSTRAINT unique_confidence_level UNIQUE (confidence_level)
     oms_zip_3             VARCHAR(100),
     oms_zip_4             VARCHAR(100),
     matching_comments     TEXT,
+    is_processed boolean NOT NULL DEFAULT false,
+    process_datetime timestamp without time zone,
   FOREIGN KEY
     (lead_id)
   REFERENCES
     "$SCHEMA_NAME".lead (lead_id) ) ;
 	
 CREATE UNIQUE INDEX IF NOT EXISTS txn_uniq_sales_reference_id_idx  ON "$SCHEMA_NAME".transaction (sales_reference_id);
+CREATE INDEX IF NOT EXISTS idx_transaction_unprocessed
+    ON "$SCHEMA_NAME".transaction (is_processed)
+    WHERE is_processed = false;
 CREATE index IF NOT EXISTS txn_fiscal_year_period_idx  ON "$SCHEMA_NAME".transaction ( fiscal_year,fiscal_period);
 GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA  "$SCHEMA_NAME" TO "$NEW_IAM_USER";
+GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA  "$SCHEMA_NAME" TO "postgres";
 -- GRANT USAGE, SELECT ON SEQUENCE "$SCHEMA_NAME".transaction_pos_id_seq TO "$NEW_IAM_USER";
 
 
@@ -294,5 +301,18 @@ GRANT ALL PRIVILEGES ON "$SCHEMA_NAME".account,
                        "$SCHEMA_NAME".pos_embeddings,
                        "$SCHEMA_NAME".match_configuration
 TO "$NEW_IAM_USER";
+
+GRANT ALL PRIVILEGES ON "$SCHEMA_NAME".account, 
+                       "$SCHEMA_NAME".lead, 
+                       "$SCHEMA_NAME".contact,
+                       "$SCHEMA_NAME".transaction,
+                       "$SCHEMA_NAME".batch_audit,
+                       "$SCHEMA_NAME".match_audit,
+                       "$SCHEMA_NAME".error_audit,
+                       "$SCHEMA_NAME".api_audit,
+                       "$SCHEMA_NAME".leads_embeddings,
+                       "$SCHEMA_NAME".pos_embeddings,
+                       "$SCHEMA_NAME".match_configuration
+TO "postgres";
 
 GRANT USAGE, SELECT ON SEQUENCE "$SCHEMA_NAME".transaction_pos_id_seq TO "$NEW_IAM_USER";

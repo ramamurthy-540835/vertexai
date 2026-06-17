@@ -115,7 +115,7 @@ module "cloud_sql_instance" {
   host_project_id     = "gcp-prj-transit-hub"
   vpc_name            = "gcp-vpc-pd-host"
   private_network     = "projects/gcp-prj-transit-hub/global/networks/gcp-vpc-pd-host"
-  subnetwork          = ""
+  subnetwork          = "gcp-snt-pd-usc1-601-cloudsql"
   database_name       = "lead-mgmt-db"
   password            = var.db_password
 }
