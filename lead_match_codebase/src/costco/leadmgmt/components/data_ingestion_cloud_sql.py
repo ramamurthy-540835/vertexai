@@ -358,7 +358,7 @@ def _get_required_columns(base_name: str, stage: str):
                 'first_name', 'last_name', 'address_line_one', 'address_line_two',
                 'city', 'state', 'zip_code', 'phone', 'email',
                 'lead_id', 'updated_date',
-                'fiscal_year_lead', 'fiscal_period_lead',
+                'fiscal_year_lead', 'fiscal_period_lead','week'
             ]
         else:  # clean
             return [
@@ -380,7 +380,7 @@ def _get_required_columns(base_name: str, stage: str):
                 'COMBINED_FIELD', 'FULL_ADDRESS', 'CUSTOMER_NAME',
 
                 # Lead metadata
-                'updated_date', 'fiscal_year_lead', 'fiscal_period_lead',
+                'updated_date', 'fiscal_year_lead', 'fiscal_period_lead','week'
             ]
 
 
