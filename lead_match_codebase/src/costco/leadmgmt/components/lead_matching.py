@@ -185,6 +185,16 @@ MINIMUM_SCORE      = 70
 COMPLETE_SCORE     = 100
 MAX_POSSIBLE_SCORE = sum(FIELD_SCORES.values())  # 150
 
+# Fiscal calendar / Closed-Existing window.
+# A POS transaction is classified Closed-Existing only when it is
+# CHRONOLOGICALLY PRIOR to the lead AND the gap is at most
+# CE_PERIOD_WINDOW periods. Older priors (gap > CE_PERIOD_WINDOW) are
+# treated like post-lead transactions — they flow through the normal
+# six-set scoring with no special flag. Costco uses a 13-period fiscal
+# year; "exactly 6 periods" falls into CE per spec.
+PERIODS_PER_YEAR = 13
+CE_PERIOD_WINDOW = 6
+
 
 # ==============================================================
 # MATCHING COMMENT BUILDER
@@ -715,18 +725,29 @@ def classify_matches(
     file_sales: pd.DataFrame,
 ) -> pd.DataFrame:
     """
-    Chronological matching with Closed-Existing detection and 6-set
-    scoring (the set with the highest score wins, ties → lower set #).
+    Chronological matching with windowed Closed-Existing detection and
+    6-set scoring (the set with the highest score wins, ties → lower set #).
 
     For each (fiscal_year, fiscal_period, week) POS group in
-    chronological order:
-      1. Run warehouse-batched set scoring against active leads.
-      2. For each qualified pair, check if the transaction is prior
-         to the lead's fiscal year / period / week.
-      3. If yes → mark the lead Closed-Existing, remove it from the
-         active set, emit a stub row, and skip forever.
-      4. Otherwise the pair survives to the normal Match/Potential
-         path.
+    chronological order, every qualified pair (score ≥ MINIMUM_SCORE)
+    falls into one of three buckets:
+
+      • POS at or after lead creation
+            → normal Match / Potential output
+
+      • POS prior, gap > CE_PERIOD_WINDOW periods
+            → IGNORED (not a match, not CE).
+            The lead pre-dated the POS, so it isn't a real "match",
+            but the gap is too large for CE either. The lead stays
+            active and the search continues to subsequent POS groups.
+
+      • POS prior, gap <= CE_PERIOD_WINDOW periods
+            → Closed-Existing: lead is removed from the active set,
+              emit a stub row, and skip forever.
+
+    A "match" requires the lead to have been created BEFORE the
+    transaction. Prior-but-not-CE transactions are noise — they
+    neither halt the search nor produce output.
     """
     leads = preprocess_leads(file_leads)
     sales = preprocess_sales(file_sales)
@@ -814,7 +835,9 @@ def classify_matches(
                 qualified[_col], errors="coerce"
             ).astype("Int64")
 
-        # CE "prior" check — year, then period, then week.
+        # Chronological "prior" check at (year, period, week) granularity.
+        # This identifies pairs where the POS is strictly older than the lead;
+        # whether they're CE depends ALSO on the period-gap check below.
         prior_mask = (
             (qualified["fiscal_year_transaction"] < qualified["fiscal_year_lead"])
             | (
@@ -829,16 +852,59 @@ def classify_matches(
         )
         prior_mask = prior_mask.fillna(False).astype(bool)
 
-        new_ce = set(qualified.loc[prior_mask, "lead_id"].unique())
+        # Period gap (lead - pos), measured in fiscal periods. Used to
+        # decide whether a prior POS is "close enough" to be Closed-Existing
+        # or "old enough" to be treated as a normal historical match.
+        # Same period earlier-week → gap 0 → still within window → CE.
+        # Week is intentionally NOT in the gap calc; only the prior_mask
+        # uses week. NA-safe via fillna(False).
+        period_gap = (
+            (qualified["fiscal_year_lead"]
+             - qualified["fiscal_year_transaction"]) * PERIODS_PER_YEAR
+            + (qualified["fiscal_period_lead"]
+               - qualified["fiscal_period_transaction"])
+        )
+        within_ce_window = (
+            (period_gap <= CE_PERIOD_WINDOW).fillna(False).astype(bool)
+        )
+
+        # Three-way classification per pair:
+        #   prior AND gap <= CE_PERIOD_WINDOW → Closed-Existing
+        #       (lead marked CE, removed from active set, stub row)
+        #   prior AND gap >  CE_PERIOD_WINDOW → IGNORED
+        #       (not a match output, not CE; the lead stays active and
+        #        the chronological search continues to other POS groups)
+        #   not prior                           → Match candidate
+        #       (POS is at or after lead creation → goes to scoring output)
+        ce_mask = prior_mask & within_ce_window
+
+        new_ce = set(qualified.loc[ce_mask, "lead_id"].unique())
         if new_ce:
             ce_lead_ids.update(new_ce)
             active_lead_ids -= new_ce
             log.info(
-                "Group %s/%s/wk%s — %d new CE lead(s): %s",
-                fy, fp, wk, len(new_ce), list(new_ce)[:10],
+                "Group %s/%s/wk%s — %d new CE lead(s) (within %d periods): %s",
+                fy, fp, wk, len(new_ce), CE_PERIOD_WINDOW, list(new_ce)[:10],
             )
 
-        surviving = qualified[~qualified["lead_id"].isin(new_ce)].copy()
+        # Visibility: prior pairs older than the CE window are silently
+        # dropped — they don't become matches (the lead pre-dated the POS,
+        # so they're not a real "match"), but they also don't mark the
+        # lead CE. The lead remains active and may still match against
+        # POS transactions that occur AFTER its creation.
+        old_prior_count = int((prior_mask & ~within_ce_window).sum())
+        if old_prior_count:
+            log.info(
+                "Group %s/%s/wk%s — %d prior pair(s) older than %d periods "
+                "ignored (no match, no CE; lead stays active)",
+                fy, fp, wk, old_prior_count, CE_PERIOD_WINDOW,
+            )
+
+        # Only POST-LEAD pairs become matches. Both close-prior (already
+        # flagged CE above) and old-prior pairs are excluded from the
+        # normal output by ~prior_mask. A "match" requires the lead to
+        # have been created before the transaction.
+        surviving = qualified[~prior_mask].copy()
         if not surviving.empty:
             normal_pair_frames.append(
                 surviving[[
