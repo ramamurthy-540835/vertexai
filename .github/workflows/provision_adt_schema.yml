@@ -22,7 +22,7 @@ on:
 jobs:
   run:
     name: "Provision schema"
-    runs-on: cw-gcp-us-west1-np
+    runs-on: cw-gcp-us-central1-np
     environment: ${{ github.event.pull_request.head.ref }}
     strategy:
       matrix:
@@ -73,8 +73,7 @@ jobs:
           else
             echo "Node.js is already installed"
           fi
-
-      - name: "Download and setup Cloud SQL Proxy"
+     - name: "Download and setup Cloud SQL Proxy"
         run: |
           if ! command -v psql >/dev/null 2>&1; then
             echo "Installing PostgreSQL client..."
@@ -92,7 +91,7 @@ jobs:
           fi
 
           # Start Cloud SQL Proxy in background
-          ./cloud-sql-proxy p-601-np-bcleadsmgmt-adt:us-central1:lead-mgmt-adt \
+          ./cloud-sql-proxy p-601-np-bcleadsmgmt-qat:us-central1:lead-mgmt-qat \
             --port 5432 \
             --private-ip \
             --auto-iam-authn &
@@ -105,7 +104,7 @@ jobs:
             "hostaddr=127.0.0.1 port=5432 dbname=lead-mgmt-db user=gco-iam-svc-cicd-mbr-bc-np@gcp-prj-cicd-core.iam sslmode=disable" --no-password -c '\conninfo'
 
           echo "Cloud SQL Proxy started successfully"
-
+          
       - name: "Setup Terraform" 
         uses: hashicorp/setup-terraform@v3
 
@@ -120,3 +119,4 @@ jobs:
       - name: "Terraform Apply"
         working-directory: ./terraform/environments/${{ matrix.env }}/schema
         run: terraform apply -input=false -lock-timeout=10m plan.tfplan
+        
