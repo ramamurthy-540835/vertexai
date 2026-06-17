@@ -49,21 +49,18 @@ jobs:
 
       - name: "Install additional utilities"
         run: |
-          PKGS=()
-          command -v unzip >/dev/null 2>&1 || PKGS+=(unzip)
-          command -v psql  >/dev/null 2>&1 || PKGS+=(postgresql-client)
-          if [[ ${#PKGS[@]} -gt 0 ]]; then
-            echo "Installing: ${PKGS[*]}"
-            sudo apt-get update -qq && sudo apt-get install -y "${PKGS[@]}"
-          else
-            echo "unzip and psql already present"
-          fi
+          sudo apt-get update
+          sudo apt-get install -y unzip postgresql-client
+
+          # Confirm psql is now available before moving on
+          echo "psql version: $(psql --version)"
+
           if ! command -v node >/dev/null 2>&1; then
             echo "Installing Node.js..."
             curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
             sudo apt-get install -y nodejs
           else
-            echo "Node.js already installed"
+            echo "Node.js already installed: $(node --version)"
           fi
 
       - name: "Download and setup Cloud SQL Proxy"
