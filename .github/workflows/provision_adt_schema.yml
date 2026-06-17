@@ -22,7 +22,9 @@ on:
 jobs:
   run:
     name: "Provision schema"
-    runs-on: cw-gcp-us-west1-np
+    runs-on: 
+      - self-hosted
+      - us-central1
     environment: ${{ github.event.pull_request.head.ref }}
     strategy:
       matrix:
