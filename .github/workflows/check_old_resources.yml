@@ -5,7 +5,7 @@ on:
 
 jobs:
   view-state:
-    runs-on: ubuntu-latest
+    runs-on: cw-gcp-us-west1-np
 
     permissions:
       id-token: write

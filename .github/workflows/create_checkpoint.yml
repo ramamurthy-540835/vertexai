@@ -60,9 +60,7 @@ on:
 jobs:
   create_state:
     name: "Create checkpoint state — ${{ github.event.inputs.environment }}"
-    runs-on:
-      - self-hosted
-      - us-central1
+    runs-on: cw-gcp-us-west1-${{ inputs.environment == 'prd' && 'pd' || 'np' }}
 
     permissions:
       id-token: write

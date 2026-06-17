@@ -19,9 +19,7 @@ on:
 jobs:
   trigger_sync:
     name: "Drive → GCS sync (${{ github.event.inputs.environment }})"
-    runs-on:
-      - self-hosted
-      - us-central1
+    runs-on: cw-gcp-us-west1-${{ inputs.environment == 'prd' && 'pd' || 'np' }}
     environment: ${{ github.event.inputs.environment }}
 
     permissions:

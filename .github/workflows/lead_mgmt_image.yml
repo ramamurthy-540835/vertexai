@@ -12,9 +12,7 @@ on:
 jobs:
   build-and-push-container:
     name: Build and Push Container
-    runs-on:
-      - self-hosted
-      - us-central1
+    runs-on: cw-gcp-us-west1-np
     permissions:
       id-token: write
       contents: read
