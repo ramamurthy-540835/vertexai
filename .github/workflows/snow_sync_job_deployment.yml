@@ -19,7 +19,6 @@ on:
       - 'feature**'
     tags:
       - release-spt*
-      - release-prod*
       - release-prd*
     paths:
       - .github/workflows/snow_sync_job_deployment.yml
@@ -116,8 +115,8 @@ jobs:
             echo "PROJECT_ID=p-601-pd-bcleadsmgmt-prd" >> $GITHUB_ENV
             echo "SERVICE_ACCOUNT=gco-iam-svc-lead-mgmt-bc-prd@p-601-pd-bcleadsmgmt-prd.iam.gserviceaccount.com" >> $GITHUB_ENV
             echo "ENVIRONMENT_VARIABLES_PATH=./lead_management_job/app_prd.properties" >> $GITHUB_ENV
-            echo "NETWORK=TO_BE_UPDATED" >> $GITHUB_ENV
-            echo "SUBNET=TO_BE_UPDATED" >> $GITHUB_ENV
+            echo "NETWORK=projects/gcp-prj-transit-hub/global/networks/gcp-vpc-pd-host" >> $GITHUB_ENV
+            echo "SUBNET=projects/gcp-prj-transit-hub/regions/us-central1/subnetworks/gcp-snt-pd-usc1-601-cloudrunjobs" >> $GITHUB_ENV
 
           else
             echo "DEPLOY=false" >> $GITHUB_ENV
@@ -140,6 +139,7 @@ jobs:
           job: 'snow-sync-job'
           image: 'us-docker.pkg.dev/gcp-prj-images/gcp-gar-repo-mbrshp/lead-mgmt:latest'
           project_id: ${{ env.PROJECT_ID }}
+          region: us-central1 
           flags: |
             --service-account=${{ env.SERVICE_ACCOUNT }}
             --vpc-egress=all-traffic

@@ -22,228 +22,168 @@ def _friendly(field: str) -> str:
 
 
 # ==============================================================
-# FAMILY CONFIGURATION
+# SET-BASED MATCHING CONFIGURATION
 # ==============================================================
-# A "family" is a logical matching field on the lead side that
-# can be satisfied by ANY of several variant columns on the POS
-# side. The family is scored AT MOST ONCE per (lead, POS) pair —
-# the variant that hit first (or in the case of address bundles,
-# the highest-scoring one) is recorded in matched_key_fields for
-# the matching_comments output.
-
-KEY_FAMILIES = {
-    "business_name": (
-        "business_name_normalized",
-        [
-            "business_name_normalized",
-            "oms_company_normalized",
-            "oms_company_2_normalized",
-        ],
-        40,
-    ),
-    "email": (
-        "email_normalized",
-        [
-            "email_normalized",
-            "oms_email_1_normalized",
-            "oms_email_2_normalized",
-            "oms_email_3_normalized",
-        ],
-        30,
-    ),
-    "phone": (
-        "phone_normalized",
-        [
-            "phone_normalized",
-            "oms_phone_1_normalized",
-            "oms_phone_2_normalized",
-            "oms_phone_3_normalized",
-            "oms_cell_1_normalized",
-            "oms_cell_2_normalized",
-        ],
-        20,
-    ),
-}
-
-ADDRESS_BUNDLES = [
-    {
-        "name":  "primary",
-        "line":  "address_line_one_normalized",
-        "zip":   "zip_code_normalized",
-        "city":  "city_normalized",
-        "state": "state_normalized",
-    },
-    {
-        "name":  "oms",
-        "line":  "oms_address_line_1_normalized",
-        "zip":   "oms_zip_normalized",
-        "city":  "oms_city_normalized",
-        "state": "oms_state_normalized",
-    },
-    {
-        "name":  "oms_v2",
-        "line":  "oms_address_line_1_v2_normalized",
-        "zip":   "oms_zip_2_normalized",
-        "city":  "oms_city_2_normalized",
-        "state": "oms_state_2_normalized",
-    },
-]
-
-ADDRESS_LINE_SCORE  = 40
-ADDRESS_ZIP_SCORE   = 10
-ADDRESS_CITY_SCORE  = 5
-ADDRESS_STATE_SCORE = 5
-
-SUPP_FALLBACK_FAMILIES = {
-    "zip_code": (
-        "zip_code_normalized",
-        [
-            "zip_code_normalized",
-            "oms_zip_normalized",
-            "oms_zip_2_normalized",
-        ],
-        ADDRESS_ZIP_SCORE,
-    ),
-    "city": (
-        "city_normalized",
-        [
-            "city_normalized",
-            "oms_city_normalized",
-            "oms_city_2_normalized",
-        ],
-        ADDRESS_CITY_SCORE,
-    ),
-    "state": (
-        "state_normalized",
-        [
-            "state_normalized",
-            "oms_state_normalized",
-            "oms_state_2_normalized",
-        ],
-        ADDRESS_STATE_SCORE,
-    ),
-}
-
-LEAD_NORMALIZE_COLS = [
-    "business_name_normalized",
-    "email_normalized",
-    "phone_normalized",
-    "address_line_one_normalized",
-    "zip_code_normalized",
-    "city_normalized",
-    "state_normalized",
-]
-
-POS_NORMALIZE_COLS = list(
-    {col for fam in KEY_FAMILIES.values() for col in fam[1]}
-    | {b["line"]  for b in ADDRESS_BUNDLES}
-    | {b["zip"]   for b in ADDRESS_BUNDLES}
-    | {b["city"]  for b in ADDRESS_BUNDLES}
-    | {b["state"] for b in ADDRESS_BUNDLES}
-)
-
-# Blocking keys for candidate generation. Each entry pairs ONE lead
-# column with the list of POS variant columns it can match against.
-# A (lead, POS) pair becomes a candidate when they share a warehouse
-# AND agree on the value of any blocking key/variant. Only fields that
-# can score points ON THEIR OWN are blocking keys: the three key
-# families (business_name / email / phone) and the address-line
-# variants. zip/city/state are NOT blocking keys — they only score as
-# supplementary AFTER a key/address hit, so a pair agreeing solely on
-# zip was never a candidate under the original logic either.
-BLOCKING_KEYS = [
-    (lead_col, pos_variants)
-    for _fam, (lead_col, pos_variants, _score) in KEY_FAMILIES.items()
-]
-BLOCKING_KEYS.append(
-    ("address_line_one_normalized", [b["line"] for b in ADDRESS_BUNDLES])
-)
-
-# ==============================================================
-# OUTPUT SUBSTITUTION CONFIG
-# ==============================================================
-# When a match is won via an OMS variant, the final ServiceNow payload
-# must carry that variant's ORIGINAL (non-normalized) value — not the
-# primary column, which is often empty on OMS-only rows. These lists
-# map each substitutable family to its original variant columns, in the
-# same priority order as the normalized variants in KEY_FAMILIES.
+# Six matching sets. Each set defines which POS-side ORIGINAL column
+# supplies each of the seven scoring fields. A candidate pair is scored
+# AGAINST EVERY SET, and the set with the highest score wins. Ties are
+# broken in favor of the lower-numbered set (POS over OMS, primary OMS
+# over secondary), via numpy.argmax which returns the first occurrence.
 #
-# _friendly() turns a *_normalized column into its original column name
-# (e.g. "oms_company_normalized" -> "oms_company"), so these derive
-# directly from the family config and stay in sync.
-BUSINESS_ORIGINAL_COLS = [_friendly(c) for c in KEY_FAMILIES["business_name"][1]]
-EMAIL_ORIGINAL_COLS    = [_friendly(c) for c in KEY_FAMILIES["email"][1]]
-PHONE_ORIGINAL_COLS    = [_friendly(c) for c in KEY_FAMILIES["phone"][1]]
+# The seven fields, with point values:
+#   business : 40   addr  : 40
+#   email    : 30   phone : 20
+#   zip      : 10   city  :  5   state : 5
+# Maximum possible per-set score = 150.
 
-# Address bundle name -> the original output columns that bundle feeds.
-# If the "oms" bundle wins, address_line_one/zip_code/city/state in the
-# output all come from oms_address_line_1/oms_zip/oms_city/oms_state.
-ADDRESS_BUNDLE_ORIGINALS = {
-    b["name"]: {
-        "address_line_one": _friendly(b["line"]),
-        "zip_code":         _friendly(b["zip"]),
-        "city":             _friendly(b["city"]),
-        "state":            _friendly(b["state"]),
-    }
-    for b in ADDRESS_BUNDLES
+SETS = {
+    1: {
+        "name":     "POS",
+        "business": "business_name",
+        "email":    "email",
+        "phone":    "phone",
+        "addr":     "address_line_one",
+        "zip":      "zip_code",
+        "city":     "city",
+        "state":    "state",
+    },
+    2: {
+        "name":     "POS + OMS (Company)",
+        "business": "oms_company",
+        "email":    "email",
+        "phone":    "phone",
+        "addr":     "address_line_one",
+        "zip":      "zip_code",
+        "city":     "city",
+        "state":    "state",
+    },
+    3: {
+        "name":     "OMS Primary (Business)",
+        "business": "business_name",
+        "email":    "oms_email_1",
+        "phone":    "oms_phone_1",
+        "addr":     "oms_address_line_1",
+        "zip":      "oms_zip",
+        "city":     "oms_city",
+        "state":    "oms_state",
+    },
+    4: {
+        "name":     "OMS Primary (Company)",
+        "business": "oms_company",
+        "email":    "oms_email_1",
+        "phone":    "oms_phone_1",
+        "addr":     "oms_address_line_1",
+        "zip":      "oms_zip",
+        "city":     "oms_city",
+        "state":    "oms_state",
+    },
+    5: {
+        "name":     "OMS Secondary (Business)",
+        "business": "business_name",
+        "email":    "oms_email_2",
+        "phone":    "oms_phone_2",
+        "addr":     "oms_address_line_1_v2",
+        "zip":      "oms_zip_2",
+        "city":     "oms_city_2",
+        "state":    "oms_state_2",
+    },
+    6: {
+        "name":     "OMS Secondary (Company)",
+        "business": "oms_company_2",
+        "email":    "oms_email_2",
+        "phone":    "oms_phone_2",
+        "addr":     "oms_address_line_1_v2",
+        "zip":      "oms_zip_2",
+        "city":     "oms_city_2",
+        "state":    "oms_state_2",
+    },
 }
 
-# Every original variant column we must pull into the final merge so
-# substitution can read from it. Deduplicated, used to build sales_subset.
-ALL_VARIANT_ORIGINAL_COLS = list(dict.fromkeys(
-    BUSINESS_ORIGINAL_COLS + EMAIL_ORIGINAL_COLS + PHONE_ORIGINAL_COLS
-    + [col for bundle in ADDRESS_BUNDLE_ORIGINALS.values() for col in bundle.values()]
-))
+# Field point values. Order is preserved when reporting matched fields.
+FIELD_SCORES = {
+    "business": 40,
+    "addr":     40,
+    "email":    30,
+    "phone":    20,
+    "zip":      10,
+    "city":      5,
+    "state":     5,
+}
 
-MINIMUM_SCORE  = 80
-COMPLETE_SCORE = 100
+# Lead-side normalized column for each logical field.
+LEAD_COL = {
+    "business": "business_name_normalized",
+    "email":    "email_normalized",
+    "phone":    "phone_normalized",
+    "addr":     "address_line_one_normalized",
+    "zip":      "zip_code_normalized",
+    "city":     "city_normalized",
+    "state":    "state_normalized",
+}
 
-# Minimum length (on BOTH sides) for a business-name CONTAINS match to
-# count. Exact matches still count at any length; this guard only
-# applies to the substring path, so generic tokens like "inc"/"llc"
-# can't drag in unrelated businesses.
-MIN_CONTAINS_LEN = 5
+# Friendly display names for the matching comment.
+FIELD_DISPLAY = {
+    "business": "business_name",
+    "email":    "email",
+    "phone":    "phone",
+    "addr":     "address_line_one",
+    "zip":      "zip_code",
+    "city":     "city",
+    "state":    "state",
+}
 
-# Business family columns used by the contains candidate path.
-_BUSINESS_LEAD_COL     = KEY_FAMILIES["business_name"][0]      # business_name_normalized
-_BUSINESS_POS_VARIANTS = KEY_FAMILIES["business_name"][1]      # [business_name_normalized, oms_company_*]
+# Output column ← set-field-key. Used for the final substitution step:
+# for each row we look up the winning set, then pull the value from
+# that set's source column for each output field.
+OUTPUT_FIELD_TO_SET_KEY = {
+    "business_name_transaction": "business",
+    "email":                     "email",
+    "phone":                     "phone",
+    "address_line_one":          "addr",
+    "zip_code":                  "zip",
+    "city":                      "city",
+    "state":                     "state",
+}
 
+LEAD_NORMALIZE_COLS = list(LEAD_COL.values())
 
-def _business_match_mask(lead_vals: pd.Series, pos_vals: pd.Series) -> np.ndarray:
-    """
-    Boolean mask for a business-name match between two aligned Series.
+# Every POS-side normalized column referenced by any set, deduplicated.
+POS_NORMALIZE_COLS = list({
+    f"{mapping[field]}_normalized"
+    for mapping in SETS.values()
+    for field in FIELD_SCORES
+})
 
-    A pair matches when:
-      • the normalized values are exactly equal (any length), OR
-      • both values are >= MIN_CONTAINS_LEN chars AND one is a substring
-        of the other (bidirectional contains).
+# Every POS-side ORIGINAL column referenced by any set, deduplicated.
+# Used to build sales_subset for the final merge so output substitution
+# can read from the winning set's source columns.
+ALL_SET_ORIGINAL_COLS = list({
+    mapping[field]
+    for mapping in SETS.values()
+    for field in FIELD_SCORES
+})
 
-    Returns a numpy bool array aligned to the input order.
-    """
-    # Exact equality (NA-safe → False).
-    exact = (lead_vals == pos_vals).fillna(False).to_numpy()
+# Blocking keys for candidate generation. A (lead, POS) pair becomes a
+# candidate when they share a warehouse AND agree on the value of one
+# of these lead/POS-variant pairs. We block on the fields whose point
+# values are large enough to potentially push a pair to >= MINIMUM_SCORE
+# in combination with other hits — i.e. business, email, phone, addr.
+# zip/city/state alone (max 20 across all three) cannot reach 70, so
+# they are not blocking keys.
+_blocking = {}
+for _mapping in SETS.values():
+    for _field in ("business", "email", "phone", "addr"):
+        _blocking.setdefault(LEAD_COL[_field], set()).add(
+            f"{_mapping[_field]}_normalized"
+        )
+BLOCKING_KEYS = [
+    (lead_col, sorted(pos_vars))
+    for lead_col, pos_vars in _blocking.items()
+]
 
-    la = lead_vals.to_numpy()
-    pa = pos_vals.to_numpy()
-    contains = np.zeros(len(la), dtype=bool)
-
-    # Only the non-exact rows can newly qualify via substring. Looping
-    # just those keeps this cheap (candidate pairs are already blocked).
-    for i in np.where(~exact)[0]:
-        a = la[i]
-        b = pa[i]
-        if isinstance(a, str) and isinstance(b, str):
-            if len(a) >= MIN_CONTAINS_LEN and len(b) >= MIN_CONTAINS_LEN:
-                if a in b or b in a:
-                    contains[i] = True
-
-    return exact | contains
-
-MAX_POSSIBLE_SCORE = (
-    sum(score for _, _, score in KEY_FAMILIES.values())
-    + ADDRESS_LINE_SCORE + ADDRESS_ZIP_SCORE
-    + ADDRESS_CITY_SCORE + ADDRESS_STATE_SCORE
-)
+MINIMUM_SCORE      = 70
+COMPLETE_SCORE     = 100
+MAX_POSSIBLE_SCORE = sum(FIELD_SCORES.values())  # 150
 
 
 # ==============================================================
@@ -251,37 +191,50 @@ MAX_POSSIBLE_SCORE = (
 # ==============================================================
 def build_matching_comment(row: pd.Series) -> str:
     """
-    Constructs a human-readable comment explaining which fields drove
-    the match. matched_key_fields / matched_supp_fields are lists of
-    "family (winning_variant)" strings, e.g. "business_name (oms_company)".
+    Human-readable explanation of which fields hit and which POS column
+    each matched against. The set name itself is intentionally NOT in
+    the comment — the column mapping makes it explicit anyway (and the
+    winning_set column carries the structured value separately).
+
+    Example:
+        "Match (score 150/150). Fields matched:
+         business_name → business_name, email → oms_email_1,
+         phone → oms_phone_1, address_line_one → oms_address_line_1,
+         zip_code → oms_zip, city → oms_city, state → oms_state.
+         Designated as primary transaction (earliest fiscal period
+         for this lead)."
     """
-    score        = row["similarity_score"]
-    result       = row["match_result"]
-    matched_keys = row.get("matched_key_fields", [])
-    matched_supp = row.get("matched_supp_fields", [])
+    score          = row["similarity_score"]
+    result         = row["match_result"]
+    winning_set    = row.get("winning_set")
+    matched_fields = row.get("matched_fields", []) or []
 
     parts = []
     if result == "Match":
-        parts.append(
-            f"Complete match (score {score}/{MAX_POSSIBLE_SCORE}): "
-            f"sufficient key and supplementary fields aligned."
-        )
+        parts.append(f"Match (score {score}/{MAX_POSSIBLE_SCORE}).")
     else:
         parts.append(
-            f"Potential match (score {score}/{MAX_POSSIBLE_SCORE}): "
-            f"partial field alignment; Marketer review recommended."
+            f"Potential match (score {score}/{MAX_POSSIBLE_SCORE}); "
+            "Marketer review recommended."
         )
 
-    if matched_keys:
-        parts.append(f"Key fields matched: {', '.join(matched_keys)}.")
+    if matched_fields:
+        # Render "logical_name -> pos_column" in FIELD_SCORES order so
+        # the comment is stable across rows. The arrow is ALWAYS shown,
+        # even for pure-POS matches where logical and POS column names
+        # are identical (e.g. "email -> email"), so the format stays
+        # uniform for downstream parsers/UIs.
+        mapping = SETS[winning_set] if winning_set in SETS else {}
+        ordered = []
+        for f in FIELD_SCORES:
+            if f not in matched_fields:
+                continue
+            logical = FIELD_DISPLAY[f]
+            pos_col = mapping.get(f, logical)
+            ordered.append(f"{logical} -> {pos_col}")
+        parts.append(f"Fields matched: {', '.join(ordered)}.")
     else:
-        parts.append(
-            "No individual key fields matched exactly; "
-            "match qualified via supplementary fields only."
-        )
-
-    if matched_supp:
-        parts.append(f"Supplementary fields matched: {', '.join(matched_supp)}.")
+        parts.append("No fields matched exactly.")
 
     if row.get("primary_transaction"):
         parts.append(
@@ -328,7 +281,7 @@ def preprocess_leads(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def preprocess_sales(df: pd.DataFrame) -> pd.DataFrame:
-    """POS-side preprocessing — primary + all OMS variants."""
+    """POS-side preprocessing — every column referenced by any set."""
     df = df.copy()
     df = df.dropna(subset=["warehouse_number"])
     df["warehouse_number"] = (
@@ -351,224 +304,103 @@ def preprocess_sales(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # ==============================================================
-# SCORE A PAIR TABLE — pure per-pair family/bundle math
+# SCORE A PAIR TABLE — per-set scoring, pick max
 # ==============================================================
 def _score_pairs(
     pairs: pd.DataFrame,
     pos_primary_overlap: set,
 ) -> pd.DataFrame:
     """
-    Score an already-built candidate-pair table.
+    Score an already-built candidate-pair table against all six sets.
 
     `pairs` must contain lead_id, pos_id, the lead columns suffixed
     __l, and the POS columns (overlapping primaries suffixed __p, OMS
-    columns unsuffixed). Returns a per-pair score frame (NOT yet
-    thresholded) with:
-        lead_id, pos_id, similarity_score,
-        matched_key_fields (list[str]), matched_supp_fields (list[str]).
+    columns unsuffixed). For each pair we:
+      1. Compute a per-set score by summing the points for each field
+         that matches between the lead and the set's POS column.
+      2. Pick the set with the highest score (ties → lowest set #).
+      3. Record which fields hit in the winning set.
 
-    This is the inner kernel called once per warehouse by
-    `_score_group`. Keeping it warehouse-scoped bounds the size of the
-    Python lists below (matched_key / matched_supp) to a single
-    warehouse's pair count rather than the whole group's cartesian
-    product, which is what previously caused OOM at PRD scale.
+    Returns DataFrame[lead_id, pos_id, similarity_score, winning_set,
+    matched_fields] (NOT yet thresholded — the caller filters by
+    MINIMUM_SCORE).
     """
     n = len(pairs)
+    empty_cols = [
+        "lead_id", "pos_id", "similarity_score",
+        "winning_set", "matched_fields",
+    ]
     if n == 0:
-        return pd.DataFrame(columns=[
-            "lead_id", "pos_id", "similarity_score",
-            "matched_key_fields", "matched_supp_fields",
-        ])
+        return pd.DataFrame(columns=empty_cols)
 
     def _pos_col(name):
         """Resolve a normalized-column name to its post-rename form."""
         return f"{name}__p" if name in pos_primary_overlap else name
 
-    total_score  = np.zeros(n, dtype=np.int64)
-    matched_key  = [[] for _ in range(n)]
-    matched_supp = [[] for _ in range(n)]
+    set_ids   = sorted(SETS.keys())  # [1, 2, 3, 4, 5, 6]
+    n_sets    = len(set_ids)
+    set_index = {sid: i for i, sid in enumerate(set_ids)}
 
-    # Winning ORIGINAL column per substitutable family, for output
-    # substitution. Default to the primary original column; overwrite
-    # with the winning variant's original column on a family hit. This
-    # way a no-hit field keeps the primary value (possibly empty), and
-    # a hit field carries whatever variant actually matched.
-    win_business = np.array(["business_name"] * n, dtype=object)
-    win_email    = np.array(["email"] * n, dtype=object)
-    win_phone    = np.array(["phone"] * n, dtype=object)
-    _win_by_family = {
-        "business_name": win_business,
-        "email":         win_email,
-        "phone":         win_phone,
-    }
+    # Per-set score matrix [n_pairs, n_sets].
+    set_scores = np.zeros((n, n_sets), dtype=np.int64)
 
-    # -- Phase 1: KEY FAMILIES (business_name, email, phone) ----
-    for family_name, (lead_col, pos_variants, score) in KEY_FAMILIES.items():
-        lead_vals = pairs[f"{lead_col}__l"]
-        lead_present = lead_vals.notna()
+    # Per-(set, field) hit masks, kept around so we can recover the
+    # winning set's matched-field list after we pick the max.
+    field_hits = {}  # (set_id, field) -> bool ndarray of length n
 
-        family_hit = np.zeros(n, dtype=bool)
-        winning_variant = [None] * n
-
-        for variant in pos_variants:
-            col = _pos_col(variant)
-            if col not in pairs.columns:
+    for set_id in set_ids:
+        mapping = SETS[set_id]
+        col_idx = set_index[set_id]
+        for field, points in FIELD_SCORES.items():
+            lead_col = f"{LEAD_COL[field]}__l"
+            if lead_col not in pairs.columns:
                 continue
-            pos_vals = pairs[col]
-            if family_name == "business_name":
-                # Business uses exact-OR-contains (bidirectional, len-guarded).
-                match_mask = _business_match_mask(lead_vals, pos_vals)
-                hit = pd.Series(
-                    lead_present.to_numpy()
-                    & pos_vals.notna().to_numpy()
-                    & match_mask
-                    & ~family_hit,
-                    index=pairs.index,
-                )
-            else:
-                # All other families: exact equality only.
-                hit = (
-                    lead_present & pos_vals.notna()
-                    & (lead_vals == pos_vals) & ~family_hit
-                )
+            pos_norm = f"{mapping[field]}_normalized"
+            pos_col  = _pos_col(pos_norm)
+            if pos_col not in pairs.columns:
+                continue
+
+            lead_vals = pairs[lead_col]
+            pos_vals  = pairs[pos_col]
+            hit = (
+                lead_vals.notna()
+                & pos_vals.notna()
+                & (lead_vals == pos_vals)
+            ).to_numpy()
+
             if hit.any():
-                family_hit |= hit.values
-                for idx in np.where(hit.values)[0]:
-                    winning_variant[idx] = variant
+                set_scores[:, col_idx] += hit.astype(np.int64) * points
+                field_hits[(set_id, field)] = hit
+            else:
+                field_hits[(set_id, field)] = hit  # all-False, still record
 
-        if family_hit.any():
-            total_score += family_hit.astype(np.int64) * score
-            win_arr = _win_by_family[family_name]
-            for idx in np.where(family_hit)[0]:
-                matched_key[idx].append(
-                    f"{family_name} ({_friendly(winning_variant[idx])})"
-                )
-                # Record the ORIGINAL column name of the winning variant.
-                win_arr[idx] = _friendly(winning_variant[idx])
+    # Pick winning set per pair. argmax returns the FIRST max-index, so
+    # ties go to the lower set number (POS over OMS, primary over
+    # secondary), which matches the documented intent.
+    winning_col = set_scores.argmax(axis=1)
+    winning_set = np.array([set_ids[i] for i in winning_col], dtype=np.int64)
+    winning_score = set_scores[np.arange(n), winning_col]
 
-    # -- Phase 1: ADDRESS BUNDLES -------------------------------
-    lead_addr  = pairs["address_line_one_normalized__l"]
-    lead_zip   = pairs["zip_code_normalized__l"]
-    lead_city  = pairs["city_normalized__l"]
-    lead_state = pairs["state_normalized__l"]
-    lead_addr_present = lead_addr.notna()
-
-    best_score    = np.zeros(n, dtype=np.int64)
-    best_line     = [None] * n
-    best_zip_hit  = np.zeros(n, dtype=bool)
-    best_city_hit = np.zeros(n, dtype=bool)
-    best_state_hit = np.zeros(n, dtype=bool)
-    best_zip_col   = [None] * n
-    best_city_col  = [None] * n
-    best_state_col = [None] * n
-    # Winning bundle NAME per pair ("primary"/"oms"/"oms_v2"), defaulting
-    # to "primary" so non-address-matched rows keep primary address geo.
-    best_bundle_name = np.array(["primary"] * n, dtype=object)
-
-    for bundle in ADDRESS_BUNDLES:
-        line_col  = _pos_col(bundle["line"])
-        if line_col not in pairs.columns:
+    # Build matched_fields list for the winning set per row.
+    matched_fields = [[] for _ in range(n)]
+    for set_id in set_ids:
+        in_this_set = (winning_set == set_id)
+        if not in_this_set.any():
             continue
-
-        zip_col   = _pos_col(bundle["zip"])
-        city_col  = _pos_col(bundle["city"])
-        state_col = _pos_col(bundle["state"])
-
-        pos_addr = pairs[line_col]
-        line_hit = (
-            lead_addr_present & pos_addr.notna() & (lead_addr == pos_addr)
-        )
-        if not line_hit.any():
-            continue
-
-        pos_zip   = pairs.get(zip_col,   pd.Series(pd.NA, index=pairs.index))
-        pos_city  = pairs.get(city_col,  pd.Series(pd.NA, index=pairs.index))
-        pos_state = pairs.get(state_col, pd.Series(pd.NA, index=pairs.index))
-
-        zip_hit   = line_hit & lead_zip.notna()   & pos_zip.notna()   & (lead_zip   == pos_zip)
-        city_hit  = line_hit & lead_city.notna()  & pos_city.notna()  & (lead_city  == pos_city)
-        state_hit = line_hit & lead_state.notna() & pos_state.notna() & (lead_state == pos_state)
-
-        bundle_total = (
-            line_hit.astype(np.int64)   * ADDRESS_LINE_SCORE
-            + zip_hit.astype(np.int64)  * ADDRESS_ZIP_SCORE
-            + city_hit.astype(np.int64) * ADDRESS_CITY_SCORE
-            + state_hit.astype(np.int64) * ADDRESS_STATE_SCORE
-        )
-
-        better = bundle_total.values > best_score
-        if better.any():
-            idxs = np.where(better)[0]
-            best_score[idxs] = bundle_total.values[idxs]
-            for idx in idxs:
-                best_line[idx]      = bundle["line"]
-                best_zip_hit[idx]   = bool(zip_hit.iloc[idx])
-                best_city_hit[idx]  = bool(city_hit.iloc[idx])
-                best_state_hit[idx] = bool(state_hit.iloc[idx])
-                best_zip_col[idx]   = bundle["zip"]
-                best_city_col[idx]  = bundle["city"]
-                best_state_col[idx] = bundle["state"]
-                best_bundle_name[idx] = bundle["name"]
-
-    address_hit = best_score > 0
-    total_score += best_score
-    for idx in np.where(address_hit)[0]:
-        matched_key[idx].append(f"address ({_friendly(best_line[idx])})")
-        if best_zip_hit[idx]:
-            matched_supp[idx].append(f"zip_code ({_friendly(best_zip_col[idx])})")
-        if best_city_hit[idx]:
-            matched_supp[idx].append(f"city ({_friendly(best_city_col[idx])})")
-        if best_state_hit[idx]:
-            matched_supp[idx].append(f"state ({_friendly(best_state_col[idx])})")
-
-    # -- Phase 2: SUPPLEMENTARY FALLBACK ------------------------
-    # Gated: supplementary scoring runs ONLY for pairs that already
-    # scored on at least one key family. Within those, fallback supp
-    # runs only when no address bundle won.
-    is_key_candidate = total_score > 0
-    no_address       = ~address_hit
-    eligible         = no_address & is_key_candidate
-
-    if eligible.any():
-        for family_name, (lead_col, pos_variants, score) in SUPP_FALLBACK_FAMILIES.items():
-            lead_vals = pairs[f"{lead_col}__l"]
-            lead_present = lead_vals.notna() & eligible
-
-            family_hit = np.zeros(n, dtype=bool)
-            winning_variant = [None] * n
-
-            for variant in pos_variants:
-                col = _pos_col(variant)
-                if col not in pairs.columns:
-                    continue
-                pos_vals = pairs[col]
-                hit = (
-                    lead_present & pos_vals.notna()
-                    & (lead_vals == pos_vals) & ~family_hit
-                )
-                if hit.any():
-                    family_hit |= hit.values
-                    for idx in np.where(hit.values)[0]:
-                        winning_variant[idx] = variant
-
-            if family_hit.any():
-                total_score += family_hit.astype(np.int64) * score
-                for idx in np.where(family_hit)[0]:
-                    matched_supp[idx].append(
-                        f"{family_name} ({_friendly(winning_variant[idx])})"
-                    )
+        for field in FIELD_SCORES:
+            hits = field_hits.get((set_id, field))
+            if hits is None:
+                continue
+            rows = np.where(in_this_set & hits)[0]
+            for idx in rows:
+                matched_fields[idx].append(field)
 
     return pd.DataFrame({
-        "lead_id":             pairs["lead_id"].values,
-        "pos_id":              pairs["pos_id"].values,
-        "similarity_score":    total_score,
-        "matched_key_fields":  matched_key,
-        "matched_supp_fields": matched_supp,
-        # Winning ORIGINAL columns / bundle for output substitution.
-        "win_business":        win_business,
-        "win_email":           win_email,
-        "win_phone":           win_phone,
-        "win_addr_bundle":     best_bundle_name,
+        "lead_id":          pairs["lead_id"].values,
+        "pos_id":           pairs["pos_id"].values,
+        "similarity_score": winning_score,
+        "winning_set":      winning_set,
+        "matched_fields":   matched_fields,
     })
 
 
@@ -586,10 +418,9 @@ def _generate_candidates(
     key/variant.
 
     A pair is emitted only when the lead and POS row share a warehouse
-    AND agree on the value of some blocking field — so this never
-    materialises a cartesian product. Column names are already suffixed
-    (__l on leads, __p on overlapping POS primaries; OMS cols
-    unsuffixed).
+    AND agree on the value of some blocking field — never a cartesian
+    product. Column names are already suffixed (__l on leads, __p on
+    overlapping POS primaries; OMS cols unsuffixed).
 
     Returns DataFrame[lead_id, pos_id].
     """
@@ -644,100 +475,6 @@ def _generate_candidates(
 
 
 # ==============================================================
-# CONTAINS CANDIDATES — business-name substring pairs
-# ==============================================================
-def _generate_business_contains_candidates(
-    leads_small: pd.DataFrame,
-    sales_small: pd.DataFrame,
-    pos_primary_overlap: set,
-) -> pd.DataFrame:
-    """
-    Candidate (lead_id, pos_id) pairs where the lead business name and a
-    POS business variant are a bidirectional substring match (and both
-    >= MIN_CONTAINS_LEN). Exact equality is already covered by the main
-    equi-join blocking; this adds the substring-only pairs that hash
-    joins can't find (e.g. "abc corp" vs "abc corp inc").
-
-    Bounded for memory/CPU: works per warehouse on the UNIQUE business
-    values only, so the substring comparison is over distinct values
-    rather than every row pair. The len>=5 filter further prunes.
-
-    Returns DataFrame[lead_id, pos_id].
-    """
-    lcol = f"{_BUSINESS_LEAD_COL}__l"
-    if lcol not in leads_small.columns:
-        return pd.DataFrame(columns=["lead_id", "pos_id"])
-
-    lhas = leads_small[["lead_id", "warehouse_number", lcol]].dropna(subset=[lcol])
-    if lhas.empty:
-        return pd.DataFrame(columns=["lead_id", "pos_id"])
-    lhas = lhas[lhas[lcol].str.len() >= MIN_CONTAINS_LEN]
-    if lhas.empty:
-        return pd.DataFrame(columns=["lead_id", "pos_id"])
-
-    out_frames = []
-
-    for variant in _BUSINESS_POS_VARIANTS:
-        pcol = f"{variant}__p" if variant in pos_primary_overlap else variant
-        if pcol not in sales_small.columns:
-            continue
-
-        phas = sales_small[["pos_id", "warehouse_number", pcol]].dropna(subset=[pcol])
-        if phas.empty:
-            continue
-        phas = phas[phas[pcol].str.len() >= MIN_CONTAINS_LEN]
-        if phas.empty:
-            continue
-
-        # Group both sides by warehouse so comparisons stay within a
-        # warehouse and peak memory is one warehouse's value grid.
-        l_by_wh = dict(tuple(lhas.groupby("warehouse_number", sort=False)))
-        p_by_wh = dict(tuple(phas.groupby("warehouse_number", sort=False)))
-
-        for wh, lg in l_by_wh.items():
-            pg = p_by_wh.get(wh)
-            if pg is None:
-                continue
-
-            lvals = lg[lcol].unique()
-            pvals = pg[pcol].unique()
-
-            # Find unique value pairs where one contains the other
-            # (skip exact equality — the equi-join path already has it).
-            matched_l, matched_p = [], []
-            for lv in lvals:
-                for pv in pvals:
-                    if lv == pv:
-                        continue
-                    if lv in pv or pv in lv:
-                        matched_l.append(lv)
-                        matched_p.append(pv)
-
-            if not matched_l:
-                continue
-
-            value_pairs = pd.DataFrame({lcol: matched_l, pcol: matched_p})
-
-            # Map matched value-pairs back to row ids within this warehouse.
-            res = (
-                lg[["lead_id", lcol]]
-                .merge(value_pairs, on=lcol)
-                .merge(pg[["pos_id", pcol]], on=pcol)
-                [["lead_id", "pos_id"]]
-            )
-            if not res.empty:
-                out_frames.append(res)
-
-    if not out_frames:
-        return pd.DataFrame(columns=["lead_id", "pos_id"])
-
-    return (
-        pd.concat(out_frames, ignore_index=True)
-        .drop_duplicates(subset=["lead_id", "pos_id"])
-    )
-
-
-# ==============================================================
 # SCORE ONE GROUP — blocking candidate generation + scoring
 # ==============================================================
 def _score_group(
@@ -750,24 +487,20 @@ def _score_group(
 
     Strategy — blocking, not cartesian:
       1. Generate candidate pairs by equi-joining on (warehouse, value)
-         for each blocking key/variant (key families + address lines).
-         Only pairs that actually agree on some scoring field survive,
-         which is dramatically fewer rows than a per-warehouse cartesian
-         product (typically 40–50× fewer at PRD scale).
+         for each blocking key/variant.
       2. Hydrate those candidate pairs with the columns needed for
          scoring.
-      3. Run the identical _score_pairs kernel (key families, address
-         bundles with best-bundle selection, supplementary fallback
-         gating) and threshold at MINIMUM_SCORE.
+      3. Run _score_pairs (set-based scoring, pick highest set) and
+         threshold at MINIMUM_SCORE.
 
     Returns:
-        DataFrame[lead_id, pos_id, similarity_score,
-                  matched_key_fields, matched_supp_fields]
+        DataFrame[lead_id, pos_id, similarity_score, winning_set,
+                  matched_fields]
         filtered to similarity_score >= MINIMUM_SCORE.
     """
     empty = pd.DataFrame(columns=[
         "lead_id", "pos_id", "similarity_score",
-        "matched_key_fields", "matched_supp_fields",
+        "winning_set", "matched_fields",
     ])
     if active_leads.empty or sales_slice.empty:
         return empty
@@ -789,26 +522,12 @@ def _score_group(
 
     # 1) Candidate pairs via blocking equi-joins (exact agreement).
     candidates = _generate_candidates(leads_small, sales_small, pos_primary_overlap)
-
-    # 1b) Add business-name substring candidates (e.g. "abc corp" vs
-    #     "abc corp inc") that exact equi-joins can't find.
-    contains_candidates = _generate_business_contains_candidates(
-        leads_small, sales_small, pos_primary_overlap
-    )
-    if not contains_candidates.empty:
-        candidates = (
-            pd.concat([candidates, contains_candidates], ignore_index=True)
-            .drop_duplicates(subset=["lead_id", "pos_id"])
-        )
-        del contains_candidates
-
     if candidates.empty:
         return empty
 
     # 2) Hydrate candidate pairs with the columns needed for scoring.
     #    Drop warehouse_number from both sides before the join — it has
-    #    served its purpose as a blocking key and would otherwise need
-    #    suffix handling.
+    #    served its purpose as a blocking key.
     pairs = (
         candidates
         .merge(leads_small.drop(columns=["warehouse_number"]), on="lead_id", how="left")
@@ -834,6 +553,7 @@ def _output_columns() -> list:
         "pos_id",
         "match_result",
         "similarity_score",
+        "winning_set",
         "match_type",
         "primary_transaction",
         "matched_by",
@@ -879,10 +599,7 @@ def _output_columns() -> list:
 # Sales are processed in batches of WHOLE warehouses, accumulated up to
 # a row budget. A warehouse is never split across batches: a lead lives
 # in exactly one warehouse, and CE / primary-transaction logic needs all
-# of a warehouse's transactions together and in order. If a single
-# warehouse alone exceeds the budget it becomes its own (oversized)
-# batch — still whole. Blocking keeps even large single-warehouse
-# batches memory-safe, so not splitting costs nothing.
+# of a warehouse's transactions together and in order.
 WAREHOUSE_BATCH_ROW_BUDGET = 150_000
 
 
@@ -923,14 +640,8 @@ def run_batched_classification(
 
     Returns (final_df, processed_pos_ids):
       • final_df: concatenation of each batch's classify_matches output.
-        Identical to a single-shot classify_matches because no lead's
-        rows are ever split across batches (a lead → one warehouse → one
-        batch).
       • processed_pos_ids: every POS id SCANNED this run — i.e. every
-        transaction whose warehouse had >=1 lead (so it was compared
-        against all leads in that warehouse), match or not. Transactions
-        in no-lead warehouses are NOT scanned and NOT returned, so they
-        stay eligible for a future cycle when a lead may appear.
+        transaction whose warehouse had >=1 lead, match or not.
     """
     fa = file_leads.copy()
     fb = file_sales.copy()
@@ -975,9 +686,9 @@ def run_batched_classification(
 def _write_processed_manifest(storage_config, processed_pos_ids: list) -> str:
     """
     Write the scanned-this-run POS ids to a manifest CSV in
-    temporary_folder. The update_cloud_sql job reads this and flips
-    is_processed=true in the transaction table (after the match write
-    commits), so these transactions are excluded from future cycles.
+    temporary_folder. update_cloud_sql reads this and flips
+    is_processed=true on those transactions after the match write
+    commits, excluding them from future cycles.
     """
     bucket_name = storage_config.output_bucket_name
     folder      = storage_config.temporary_folder
@@ -987,7 +698,6 @@ def _write_processed_manifest(storage_config, processed_pos_ids: list) -> str:
     bucket = client.get_bucket(bucket_name)
     blob   = bucket.blob(object_path)
 
-    # Single-column CSV; deduped, str-typed.
     ids = pd.Series(pd.unique(pd.Series(processed_pos_ids, dtype="object")))
     csv_text = "pos_id\n" + "\n".join(ids.astype(str).tolist()) + "\n"
     blob.upload_from_string(csv_text, content_type="text/csv")
@@ -1005,21 +715,18 @@ def classify_matches(
     file_sales: pd.DataFrame,
 ) -> pd.DataFrame:
     """
-    Chronological matching with Closed-Existing detection and
-    family-based scoring (OMS variants on POS side).
+    Chronological matching with Closed-Existing detection and 6-set
+    scoring (the set with the highest score wins, ties → lower set #).
 
     For each (fiscal_year, fiscal_period, week) POS group in
     chronological order:
-      1. Run warehouse-batched family scoring against active leads.
+      1. Run warehouse-batched set scoring against active leads.
       2. For each qualified pair, check if the transaction is prior
          to the lead's fiscal year / period / week.
       3. If yes → mark the lead Closed-Existing, remove it from the
          active set, emit a stub row, and skip forever.
       4. Otherwise the pair survives to the normal Match/Potential
          path.
-
-    Because CE detection happens chronologically inside the loop,
-    no separate fiscal filter is needed downstream.
     """
     leads = preprocess_leads(file_leads)
     sales = preprocess_sales(file_sales)
@@ -1038,10 +745,6 @@ def classify_matches(
         return pd.DataFrame(columns=_output_columns())
 
     # Lead fiscal lookup — used for CE check (year, period, AND week).
-    # Lead's `week` is renamed to `week_lead` so it never collides with
-    # the POS transaction `week` when the two are merged below. If the
-    # leads file predates the week column, synthesize an all-NA
-    # week_lead so the week branch of the CE check is simply inert.
     _lead_fiscal_cols = ["lead_id", "fiscal_year_lead", "fiscal_period_lead"]
     if "week" in leads.columns:
         lead_fiscal = (
@@ -1102,8 +805,7 @@ def classify_matches(
         qualified["week"]                      = wk
         qualified = qualified.join(lead_fiscal, on="lead_id", how="left")
 
-        # Coerce all six comparison columns to nullable Int so the
-        # < / == comparisons are numeric, never lexicographic.
+        # Coerce comparison columns to nullable Int so < / == are numeric.
         for _col in (
             "fiscal_year_transaction", "fiscal_period_transaction", "week",
             "fiscal_year_lead", "fiscal_period_lead", "week_lead",
@@ -1141,8 +843,7 @@ def classify_matches(
             normal_pair_frames.append(
                 surviving[[
                     "lead_id", "pos_id", "similarity_score",
-                    "matched_key_fields", "matched_supp_fields",
-                    "win_business", "win_email", "win_phone", "win_addr_bundle",
+                    "winning_set", "matched_fields",
                 ]].copy()
             )
 
@@ -1177,9 +878,19 @@ def classify_matches(
     )
     log.info("Normal pairs carried forward: %d", len(normal_qualified))
 
+    # Quick visibility into winning-set distribution (helps diagnose
+    # which OMS variants are pulling weight in production).
+    try:
+        log.info(
+            "Winning-set distribution: %s",
+            normal_qualified["winning_set"].value_counts().sort_index().to_dict(),
+        )
+    except Exception:
+        pass
+
     # ==========================================================
-    # FINAL MERGE — original (non-normalized) POS columns for the
-    # ServiceNow payload, plus lead fiscal/updated_date.
+    # FINAL MERGE — pull originals needed by every set, plus lead
+    # fiscal / updated_date.
     # ==========================================================
     lead_subset = leads[[
         "lead_id",
@@ -1207,18 +918,12 @@ def classify_matches(
         "industry_description",
     ]
 
-    # All original variant columns needed so substitution can read the
-    # winning variant's value. Includes the primary originals
-    # (business_name, email, phone, address_line_one, zip_code, city,
-    # state) plus every OMS original.
-    _sales_variant_cols = list(dict.fromkeys(
-        ALL_VARIANT_ORIGINAL_COLS  # business/email/phone + all bundle geo
-    ))
+    # Every original column referenced by any set, so substitution
+    # can read from the winning set's source column.
+    _sales_variant_cols = list(ALL_SET_ORIGINAL_COLS)
 
-    # Guard: ensure every column we intend to select actually exists on
-    # `sales`. Any missing original (e.g. an OMS column absent on this
-    # run) is created as NA so the select + substitution never KeyErrors.
-    _needed = _sales_base_cols + _sales_variant_cols
+    # Guard: ensure every column we intend to select exists on `sales`.
+    _needed = list(dict.fromkeys(_sales_base_cols + _sales_variant_cols))
     for _c in _needed:
         if _c not in sales.columns:
             sales[_c] = pd.NA
@@ -1232,16 +937,14 @@ def classify_matches(
     )
 
     # ==========================================================
-    # OUTPUT SUBSTITUTION — winning variant's ORIGINAL value
+    # OUTPUT SUBSTITUTION — pull values from the winning set's columns
     # ==========================================================
-    # For each matched pair, pull the output value from whichever variant
-    # actually won the match (recorded in win_business/win_email/
-    # win_phone/win_addr_bundle). On OMS-only rows the primary column is
-    # empty, so without this the ServiceNow payload would carry a blank
-    # business name / email / phone / address. _gather_by_name reads the
-    # value from the column named per-row; it reads into a fresh Series
-    # BEFORE we overwrite the same-named source columns, so overwriting
-    # email/phone (which are both source and dest) is safe.
+    # For each output field, build a per-row "source column" by mapping
+    # winning_set → SETS[winning_set][set_key]. Then gather the value
+    # from that source column. We read ALL source values into a dict
+    # first, THEN assign, so overwrites of columns like email/phone/
+    # zip_code (which appear both as source AND destination) don't
+    # corrupt later reads.
     def _gather_by_name(df, name_series, candidate_cols):
         result = pd.Series(pd.NA, index=df.index, dtype=object)
         names = name_series.to_numpy()
@@ -1253,33 +956,18 @@ def classify_matches(
                 result.loc[mask] = df[col].to_numpy()[mask]
         return result
 
-    # business_name_transaction comes from the winning business variant.
-    matched_df["business_name_transaction"] = _gather_by_name(
-        matched_df, matched_df["win_business"], BUSINESS_ORIGINAL_COLS
-    )
-
-    # email / phone overwritten in place from their winning variant.
-    _new_email = _gather_by_name(matched_df, matched_df["win_email"], EMAIL_ORIGINAL_COLS)
-    _new_phone = _gather_by_name(matched_df, matched_df["win_phone"], PHONE_ORIGINAL_COLS)
-    matched_df["email"] = _new_email
-    matched_df["phone"] = _new_phone
-
-    # Address bundle: all four geo fields come from the winning bundle.
-    # Build each output column by selecting, per row, the bundle's
-    # original source column for that field.
-    for _out_field in ("address_line_one", "zip_code", "city", "state"):
-        # Map each row's winning bundle -> that bundle's source column
-        # for this output field, then gather.
-        _src_per_row = matched_df["win_addr_bundle"].map(
-            lambda b, f=_out_field: ADDRESS_BUNDLE_ORIGINALS.get(b, {}).get(f, f)
+    substituted = {}
+    for out_field, set_key in OUTPUT_FIELD_TO_SET_KEY.items():
+        src_per_row = matched_df["winning_set"].map(
+            lambda s, k=set_key: SETS[s][k] if s in SETS else None
         )
-        matched_df[_out_field] = _gather_by_name(
-            matched_df, _src_per_row,
-            # candidate columns = every bundle's source col for this field
-            list(dict.fromkeys(
-                bundle[_out_field] for bundle in ADDRESS_BUNDLE_ORIGINALS.values()
-            )),
+        candidate_cols = list({SETS[s][set_key] for s in SETS})
+        substituted[out_field] = _gather_by_name(
+            matched_df, src_per_row, candidate_cols
         )
+
+    for out_field, vals in substituted.items():
+        matched_df[out_field] = vals
 
     # ==========================================================
     # ASSIGN MATCH RESULT
@@ -1406,9 +1094,6 @@ def primary_classification(
         "oms_zip_2":           str,
         "oms_phone_1":         str,
         "oms_phone_2":         str,
-        "oms_phone_3":         str,
-        "oms_cell_1":          str,
-        "oms_cell_2":          str,
     }
 
     log.info("Loading leads file: %s", file_a_path)
