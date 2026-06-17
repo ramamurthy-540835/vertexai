@@ -1,34 +1,150 @@
-import csv, os, sys
+name: "update_lead_week_from_csv"
 
-csv_path   = os.environ["CSV_FILE"]
-batch_size = int(os.environ["BATCH_SIZE"])
-schema     = os.environ["SCHEMA_NAME"]
-out_path   = os.environ["OUTPUT_SQL"]
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to run UPDATE against'
+        required: true
+        default: 'spt'
+        type: choice
+        options:
+          - 'adt'
+          - 'qat'
+          - 'spt'
+          - 'prd'
+      csv_file:
+        description: 'Path to CSV file (relative to repo root). Columns: lead_id, week'
+        required: true
+        default: 'postgres_resources/lead_week_update.csv'
+        type: string
+      batch_size:
+        description: 'Rows per UPDATE batch (recommended: 1000-5000)'
+        required: true
+        default: '2000'
+        type: string
+      dry_run:
+        description: 'Dry run - generate SQL but do NOT execute'
+        required: true
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
 
-with open(csv_path, newline="") as f:
-    reader = csv.DictReader(f)
-    reader.fieldnames = [h.strip().lower() for h in reader.fieldnames]
-    rows = [(r["lead_id"].strip(), r["week"].strip()) for r in reader]
+jobs:
+  update_lead_week:
+    name: "Update lead.week on ${{ github.event.inputs.environment }}"
+    runs-on:
+      - self-hosted
+      - us-central1
 
-if not rows:
-    sys.exit("CSV contains no data rows")
+    permissions:
+      id-token: write
+      contents: read
 
-batches = [rows[i : i + batch_size] for i in range(0, len(rows), batch_size)]
+    steps:
+      - name: "Checkout code"
+        uses: actions/checkout@v4
 
-with open(out_path, "w") as sql:
-    sql.write("-- Auto-generated batched UPDATE for {}.lead\n".format(schema))
-    sql.write("-- Total rows: {:,}  Batch size: {:,}  Batches: {:,}\n\n".format(
-        len(rows), batch_size, len(batches)))
-    sql.write("BEGIN;\n\n")
+      - name: "Set environment variables"
+        run: |
+          ENV="${{ github.event.inputs.environment }}"
+          if [[ "$ENV" == "prd" ]]; then
+            echo "PROJECT_ID=p-601-pd-bcleadsmgmt-prd" >> $GITHUB_ENV
+            echo "SCHEMA_NAME=lead_mgmt_prd"            >> $GITHUB_ENV
+            echo "INSTANCE_NAME=lead-mgmt-prd"          >> $GITHUB_ENV
+          else
+            echo "PROJECT_ID=p-601-np-bcleadsmgmt-${ENV}" >> $GITHUB_ENV
+            echo "SCHEMA_NAME=lead_mgmt_${ENV}"            >> $GITHUB_ENV
+            echo "INSTANCE_NAME=lead-mgmt-${ENV}"          >> $GITHUB_ENV
+          fi
 
-    for i, batch in enumerate(batches, 1):
-        sql.write("-- Batch {}/{} ({} rows)\n".format(i, len(batches), len(batch)))
-        sql.write("UPDATE {}.lead AS t\n   SET week = v.week\n  FROM (\n    VALUES\n".format(schema))
-        values = ["      ({}::bigint, {!r})".format(int(lead_id), week) for lead_id, week in batch]
-        sql.write(",\n".join(values))
-        sql.write("\n  ) AS v(lead_id, week)\n WHERE t.lead_id = v.lead_id;\n\n")
+      - name: "Auth in GCP"
+        id: "auth"
+        uses: "google-github-actions/auth@v2"
+        with:
+          create_credentials_file: true
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
+          service_account: ${{ github.event.inputs.environment == 'prd' && secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL_PRD || secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
+          project_id: ${{ env.PROJECT_ID }}
 
-    sql.write("COMMIT;\n")
+      - name: "Download psql and Cloud SQL Proxy"
+        run: |
+          gcloud storage cp gs://p-601-np-bcleadsmgmt-adt-cicd-tools/psql "$HOME/psql"
+          chmod +x "$HOME/psql"
+          echo "$HOME" >> "$GITHUB_PATH"
 
-print("SQL written to", out_path)
-print("Rows: {:,}  |  Batches: {:,}".format(len(rows), len(batches)))
+          wget -q https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/v2.8.0/cloud-sql-proxy.linux.amd64 -O "$HOME/cloud-sql-proxy"
+          chmod +x "$HOME/cloud-sql-proxy"
+
+      - name: "Start Cloud SQL Proxy"
+        run: |
+          "$HOME/cloud-sql-proxy" "${{ env.PROJECT_ID }}:us-central1:${{ env.INSTANCE_NAME }}" --port 5432 --private-ip --auto-iam-authn &
+
+          for i in $(seq 1 15); do
+            bash -c "echo > /dev/tcp/127.0.0.1/5432" 2>/dev/null && echo "Proxy ready after ${i}s" && break
+            sleep 1
+          done
+
+          PGPASSWORD="$(gcloud auth print-access-token)" "$HOME/psql" "hostaddr=127.0.0.1 port=5432 dbname=lead-mgmt-db user=gco-iam-svc-cicd-mbr-bc-np@gcp-prj-cicd-core.iam sslmode=disable" --no-password -c '\conninfo'
+
+      - name: "Validate CSV"
+        run: |
+          CSV="${{ github.event.inputs.csv_file }}"
+          if [[ ! -f "$CSV" ]]; then
+            echo "CSV not found: $CSV"
+            exit 1
+          fi
+          HEADER=$(head -1 "$CSV")
+          if ! echo "$HEADER" | grep -qi "lead_id" || ! echo "$HEADER" | grep -qi "week"; then
+            echo "CSV must have lead_id and week columns. Found: $HEADER"
+            exit 1
+          fi
+          TOTAL=$(( $(wc -l < "$CSV") - 1 ))
+          echo "Valid CSV - $TOTAL rows found"
+          echo "TOTAL_ROWS=$TOTAL" >> $GITHUB_ENV
+
+      - name: "Generate batched UPDATE SQL"
+        run: |
+          CSV_FILE="${{ github.event.inputs.csv_file }}" \
+          BATCH_SIZE="${{ github.event.inputs.batch_size }}" \
+          SCHEMA_NAME="${{ env.SCHEMA_NAME }}" \
+          OUTPUT_SQL="/tmp/lead_week_update.sql" \
+          python3 postgres_resources/gen_update.py
+
+          echo "OUTPUT_SQL=/tmp/lead_week_update.sql" >> $GITHUB_ENV
+          head -60 /tmp/lead_week_update.sql
+
+      - name: "Dry run"
+        if: github.event.inputs.dry_run == 'true'
+        run: |
+          echo "Dry run only - no rows modified"
+          echo "Total rows in CSV: ${{ env.TOTAL_ROWS }}"
+          echo "Re-run with dry_run=false to apply"
+
+      - name: "Execute batched UPDATE"
+        if: github.event.inputs.dry_run == 'false'
+        run: |
+          PGPASSWORD="$(gcloud auth print-access-token)" "$HOME/psql" "hostaddr=127.0.0.1 port=5432 dbname=lead-mgmt-db user=gco-iam-svc-cicd-mbr-bc-np@gcp-prj-cicd-core.iam sslmode=disable" --no-password --echo-errors -v ON_ERROR_STOP=1 -f "/tmp/lead_week_update.sql"
+          echo "UPDATE complete"
+
+      - name: "Verify spot-check"
+        if: github.event.inputs.dry_run == 'false'
+        run: |
+          PGPASSWORD="$(gcloud auth print-access-token)" "$HOME/psql" "hostaddr=127.0.0.1 port=5432 dbname=lead-mgmt-db user=gco-iam-svc-cicd-mbr-bc-np@gcp-prj-cicd-core.iam sslmode=disable" --no-password -c "SELECT lead_id, week FROM ${{ env.SCHEMA_NAME }}.lead ORDER BY updated_at DESC LIMIT 10;"
+
+      - name: "Summary"
+        if: always()
+        run: |
+          {
+            echo "## Lead Week Update - ${{ github.event.inputs.environment }}"
+            echo "| Field | Value |"
+            echo "|-------|-------|"
+            echo "| Environment | \`${{ github.event.inputs.environment }}\` |"
+            echo "| Schema      | \`${{ env.SCHEMA_NAME }}\` |"
+            echo "| CSV File    | \`${{ github.event.inputs.csv_file }}\` |"
+            echo "| CSV Rows    | \`${{ env.TOTAL_ROWS }}\` |"
+            echo "| Batch Size  | \`${{ github.event.inputs.batch_size }}\` |"
+            echo "| Dry Run     | \`${{ github.event.inputs.dry_run }}\` |"
+          } >> $GITHUB_STEP_SUMMARY
