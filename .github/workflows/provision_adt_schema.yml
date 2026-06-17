@@ -1,7 +1,6 @@
 name: "provision_adt_schema"
 
 on:
-  # Triggers the workflow on push or pull request events but only for the "feature" branch
   push:
     branches:
       - "feature**"
@@ -14,10 +13,9 @@ on:
     branches:
       - "feature*"
     paths:
-     - 'terraform/environments/adt/schema/**.tf'
-     - 'postgres_resources/**.sql'
-     - '.github/workflows/provision_adt_schema.yml'
-
+      - 'terraform/environments/adt/schema/**.tf'
+      - 'postgres_resources/**.sql'
+      - '.github/workflows/provision_adt_schema.yml'
 
 jobs:
   run:
@@ -26,16 +24,16 @@ jobs:
     environment: ${{ github.event.pull_request.head.ref }}
     strategy:
       matrix:
-        env: ['adt'] #,['adt', 'qat', 'spt'] # Exclude prd from auto-plan
-    
+        env: ['adt']
+
     permissions:
       id-token: write
       contents: read
       packages: write
 
-    env: 
+    env:
       TF_VAR_gcp_workload_identity_sa_email: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
-      TF_VAR_db_password: ${{secrets.CLOUD_SQL_ADT_PASSWORD}}
+      TF_VAR_db_password: ${{ secrets.CLOUD_SQL_ADT_PASSWORD }}
 
     steps:
       - name: "Checkout code"
@@ -50,20 +48,18 @@ jobs:
           service_account: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
           project_id: 'p-601-np-bcleadsmgmt-adt'
 
+      # ── MUST come BEFORE Cloud SQL Proxy step ──────────────────────────────
       - name: "Install additional utilities"
         run: |
-          if ! command -v unzip >/dev/null 2>&1; then
-            echo "Installing unzip..."
-            sudo apt-get update && sudo apt-get install -y unzip
-          else
-            echo "unzip is already installed"
-          fi 
+          PKGS=()
+          command -v unzip >/dev/null 2>&1 || PKGS+=(unzip)
+          command -v psql  >/dev/null 2>&1 || PKGS+=(postgresql-client)
 
-          if ! command -v psql >/dev/null 2>&1; then
-            echo "Installing PostgreSQL client..."
-            sudo apt-get update && sudo apt-get install -y postgresql-client
+          if [[ ${#PKGS[@]} -gt 0 ]]; then
+            echo "Installing: ${PKGS[*]}"
+            sudo apt-get update -qq && sudo apt-get install -y "${PKGS[@]}"
           else
-            echo "psql is already installed"
+            echo "unzip and psql already present"
           fi
 
           if ! command -v node >/dev/null 2>&1; then
@@ -71,42 +67,35 @@ jobs:
             curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
             sudo apt-get install -y nodejs
           else
-            echo "Node.js is already installed"
+            echo "Node.js already installed"
           fi
+
       - name: "Download and setup Cloud SQL Proxy"
         run: |
           if ! command -v cloud-sql-proxy >/dev/null 2>&1; then
             echo "Installing Cloud SQL Auth Proxy..."
-            # Download Cloud SQL Proxy
-            wget https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/v2.8.0/cloud-sql-proxy.linux.amd64 -O cloud-sql-proxy
+            wget https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/v2.8.0/cloud-sql-proxy.linux.amd64 \
+              -O cloud-sql-proxy
             chmod +x cloud-sql-proxy
           else
-            echo "Cloud SQL Proxy is already installed"
+            echo "Cloud SQL Proxy already installed"
           fi
-          # Start Cloud SQL Proxy in background
+
           ./cloud-sql-proxy p-601-np-bcleadsmgmt-adt:us-central1:lead-mgmt-adt \
             --port 5432 \
             --private-ip \
             --auto-iam-authn &
-          
-          # Wait for proxy to be ready
+
           sleep 10
 
-          # Set access token for IAM DB auth
-            export PGPASSWORD=$(gcloud auth print-access-token)
+          PGPASSWORD="$(gcloud auth print-access-token)" psql \
+            "hostaddr=127.0.0.1 port=5432 dbname=lead-mgmt-db \
+             user=gco-iam-svc-cicd-mbr-bc-np@gcp-prj-cicd-core.iam sslmode=disable" \
+            --no-password -c '\conninfo'
 
-          # Verify connection to database with psql (check connection only, no queries)
-            PGPASSWORD="$(gcloud auth print-access-token)" psql \
-            "hostaddr=127.0.0.1 port=5432 dbname=lead-mgmt-db user=gco-iam-svc-cicd-mbr-bc-np@gcp-prj-cicd-core.iam sslmode=disable" --no-password -c '\conninfo'
-
-          #  psql \
-          #  "hostaddr=127.0.0.1 port=5432 dbname=lead-mgmt-db user=postgres password=qJoVywHigYGlA1d sslmode=disable" \
-          #  -c 'GRANT ALL PRIVILEGES ON DATABASE "lead-mgmt-db" TO "gco-iam-svc-cicd-mbr-bc-np@gcp-prj-cicd-core.iam";'
-
-          # Verify connection
           echo "Cloud SQL Proxy started successfully"
-          
-      - name: "Setup Terraform" 
+
+      - name: "Setup Terraform"
         uses: hashicorp/setup-terraform@v3
 
       - name: "Terraform Init"
@@ -116,8 +105,7 @@ jobs:
       - name: "Terraform Plan"
         working-directory: ./terraform/environments/${{ matrix.env }}/schema
         run: terraform plan -out=plan.tfplan -input=false -lock-timeout=10m
-      
+
       - name: "Terraform Apply"
         working-directory: ./terraform/environments/${{ matrix.env }}/schema
         run: terraform apply -input=false -lock-timeout=10m plan.tfplan
-        
