@@ -1138,13 +1138,15 @@ def primary_classification(
     at a time via run_streaming_classification, and archives the output
     to GCS.
 
-    NOTE: the POS/sales file is NEVER loaded fully into memory. Only its
-    path is passed downstream; run_streaming_classification reads it in
-    chunks and partitions by warehouse, so peak memory is one chunk plus
-    the rows for the ~26 warehouses that actually have leads — not the
-    full 20M-row file. The audit row's pos_count is backfilled with the
-    true total row count after streaming completes (counted during the
-    single streaming pass, so no second read of the file).
+    NOTE: the POS/sales file is NEVER loaded fully into memory. It is
+    streamed and SPILLED per warehouse to a temp GCS prefix (one chunk in
+    RAM at a time), then processed one warehouse at a time (one warehouse
+    in RAM at a time). Spill-to-GCS rather than in-memory buffering is
+    required because every transaction belongs to a lead-bearing warehouse,
+    so buffering all warehouses would equal buffering the whole 20M-row
+    file. The audit row's pos_count is backfilled with the true total row
+    count after the spill pass (counted in that single pass — no second
+    read of the file).
     """
     job_config     = JobConfig(config_file_path)
     storage_config = job_config.storage_config
@@ -1173,12 +1175,44 @@ def primary_classification(
         "warehouse_number":    str,
         "membership_number":   str,
         "account_number":      str,
-        # OMS string-typed columns — force string dtype so pandas
-        # doesn't infer numeric for things like phone digits/zips.
-        "oms_zip":             str,
-        "oms_zip_2":           str,
-        "oms_phone_1":         str,
-        "oms_phone_2":         str,
+        # OMS string-typed columns — force string dtype so pandas doesn't
+        # infer numeric for things like phone/cell digits and zips. These
+        # cover every OMS column (and its _normalized variant) present in
+        # the POS CSV; without them, per-chunk dtype inference flips some
+        # columns to float and concat → .astype(str) reintroduces the
+        # trailing-".0" corruption (same bug already fixed for phone/zip).
+        "oms_company":                 str,
+        "oms_company_2":               str,
+        "oms_email_1":                 str,
+        "oms_email_2":                 str,
+        "oms_email_3":                 str,
+        "oms_phone_1":                 str,
+        "oms_phone_2":                 str,
+        "oms_phone_3":                 str,
+        "oms_cell_1":                  str,
+        "oms_cell_2":                  str,
+        "oms_address_line_1":          str,
+        "oms_city":                    str,
+        "oms_state":                   str,
+        "oms_zip":                     str,
+        "oms_address_line_1_v2":       str,
+        "oms_city_2":                  str,
+        "oms_state_2":                 str,
+        "oms_zip_2":                   str,
+        # _normalized variants present in the POS CSV
+        "oms_company_normalized":            str,
+        "oms_company_2_normalized":          str,
+        "oms_email_1_normalized":            str,
+        "oms_email_2_normalized":            str,
+        "oms_phone_1_normalized":            str,
+        "oms_cell_1_normalized":             str,
+        "oms_cell_2_normalized":             str,
+        "oms_address_line_1_normalized":     str,
+        "oms_city_normalized":               str,
+        "oms_state_normalized":              str,
+        "oms_address_line_1_v2_normalized":  str,
+        "oms_city_2_normalized":             str,
+        "oms_state_2_normalized":            str,
     }
 
     log.info("Loading leads file: %s", file_a_path)
@@ -1215,8 +1249,20 @@ def primary_classification(
     # processed_pos_ids = every txn scanned this run (warehouse had >=1
     # lead), match or not — same contract as before. total_pos_rows =
     # total rows in the file (== old len(file_b)).
+    #
+    # Temp spill location: per-warehouse part files are written here during
+    # the spill pass and deleted as each warehouse is processed. Made unique
+    # per run (match_id + timestamp) so concurrent/retried runs don't collide.
+    _spill_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    tmp_prefix = (
+        f"gs://{storage_config.output_bucket_name}/"
+        f"{storage_config.temporary_folder}/match_spill/{match_id}_{_spill_ts}"
+    )
+    log.info("Per-warehouse spill prefix: %s", tmp_prefix)
+
     final_df, processed_pos_ids, total_pos_rows = run_streaming_classification(
-        file_a, file_b_path, classify_matches, sales_dtype=STRING_COLS,
+        file_a, file_b_path, classify_matches,
+        tmp_prefix=tmp_prefix, sales_dtype=STRING_COLS,
     )
     log.info("POS count (streamed): %d", total_pos_rows)
 
