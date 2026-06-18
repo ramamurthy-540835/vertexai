@@ -45,32 +45,23 @@ jobs:
           cache: 'pip'
           cache-dependency-path: 'lead_management_job/requirements.txt'
 
-      - name: Auth to GCP (With Service Account Impersonation)
+      - name: Auth to GCP
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
-          service_account: ${{ github.event.inputs.environment == 'prd' && secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL_PRD || secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
-          impersonate_service_account: gco-iam-svc-lead-mgmt-bc-${{ github.event.inputs.environment }}@${{ github.event.inputs.environment == 'prd' && 'p-601-pd-bcleadsmgmt-prd' || format('p-601-np-bcleadsmgmt-{0}', github.event.inputs.environment) }}.iam.gserviceaccount.com
+          service_account: gco-iam-svc-lead-mgmt-bc-${{ github.event.inputs.environment }}@${{ github.event.inputs.environment == 'prd' && 'p-601-pd-bcleadsmgmt-prd' || format('p-601-np-bcleadsmgmt-{0}', github.event.inputs.environment) }}.iam.gserviceaccount.com
+          create_credentials_file: true
+          export_environment_variables: true
 
       - name: Set up gcloud
         uses: google-github-actions/setup-gcloud@v2
 
-      - name: GCP Auth & Configuration Debug Prints
+      - name: Show Active GCP Identity
         run: |
-          echo "=========================================================="
-          echo "DEBUG: Listing Active Gcloud Authentications"
-          echo "=========================================================="
+          echo "Active accounts:"
           gcloud auth list
-          
-          echo "=========================================================="
-          echo "DEBUG: Displaying Active Gcloud Config Values"
-          echo "=========================================================="
+          echo "Config:"
           gcloud config list
-          
-          echo "=========================================================="
-          echo "DEBUG: Printing Impersonated Service Account Token Info"
-          echo "=========================================================="
-          gcloud auth print-access-token --impersonate-service-account=gco-iam-svc-lead-mgmt-bc-${ENV_NAME}@${PROJECT_ID}.iam.gserviceaccount.com --quiet || echo "Direct token printing not permitted by VPC-SC"
 
       - name: Install Dependencies
         run: |
