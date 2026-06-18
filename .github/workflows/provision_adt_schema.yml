@@ -12,7 +12,7 @@ on:
 
   pull_request:
     branches:
-      - "feature*"
+      - "feature/**"
     paths:
      - 'terraform/environments/adt/schema/**.tf'
      - 'postgres_resources/**.sql'
@@ -22,7 +22,7 @@ on:
 jobs:
   run:
     name: "Provision schema"
-    runs-on: cw-gcp-us-central1-np
+    runs-on: cw-gcp-us-west1-np
     environment: ${{ github.event.pull_request.head.ref }}
     strategy:
       matrix:
