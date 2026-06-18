@@ -5,17 +5,19 @@ Warehouse Smoke Test Script (Generic & Safe)
 - Schema is taken dynamically from config (no hardcoding)
 - Read-only queries only
 - Gracefully handles missing optional tables
+- Bypasses wheel dependency bugs by parsing INI config manually
 """
 
 import argparse
+import configparser
 import json
 import sys
 from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
-
-from costco.leadmgmt.config.Configuration import JobConfig
+import sqlalchemy
+from google.cloud.sql.connector import Connector, IPTypes
 
 
 def get_db_metrics_safe(engine, schema_name: str, warehouse: str):
@@ -75,7 +77,8 @@ def get_db_metrics_safe(engine, schema_name: str, warehouse: str):
               AND lead_status IN (
                   'Open', 
                   'Closed Cold', 'Closed – Cold', 'Closed-Cold',
-                  'Closed Match', 'Closed – Match', 'Closed-Match'
+                  'Closed Match', 'Closed – Match', 'Closed-Match',
+                  'Closed - Match', 'Closed - Cold'
               )
         """
         df = pd.read_sql(query, engine)
@@ -115,7 +118,8 @@ def get_db_metrics_safe(engine, schema_name: str, warehouse: str):
                 relname AS table_name,
                 pg_size_pretty(pg_total_relation_size(relid)) AS total_size,
                 pg_size_pretty(pg_relation_size(relid)) AS table_size,
-                pg_size_pretty(pg_total_relation_size(relid) - pg_relation_size(relid)) AS index_toast_size
+                pg_size_pretty(pg_total_relation_size(relid) - pg_relation_size(relid) - pg_indexes_size(relid)) AS toast_size,
+                pg_size_pretty(pg_indexes_size(relid)) AS index_size
             FROM pg_catalog.pg_statio_user_tables
             WHERE schemaname = '{schema_name}'
               AND relname IN ('transaction', 'lead', 'pos_embeddings', 'leads_embeddings')
@@ -171,15 +175,45 @@ def main():
     print(f"Timestamp   : {datetime.now().isoformat()}")
     print("=" * 70)
 
-    # Load config and connect (schema comes from config, not hardcoded)
+    # Parse INI manually to avoid buggy compiled wheel configurations
     try:
-        job_config = JobConfig(args.config)
-        db_config = job_config.db_config
-        engine = db_config.get_engine()
-        schema_name = db_config.schema_name
-        print(f"\n[OK] Connected to schema: {schema_name}")
+        config = configparser.ConfigParser()
+        config.read(args.config)
+
+        # Retrieve connection parameters directly from [DATABASE] section
+        instance_connection_name = config.get("DATABASE", "db_connection_name")
+        db_name = config.get("DATABASE", "postgres_db_name")
+        schema_name = config.get("DATABASE", "db_schema")
+        db_user = config.get("DATABASE", "postgres_db_user")
+        sql_ip_type = config.get("DATABASE", "cloud_sql_ip_type", fallback="PRIVATE")
+
+        ip_type = IPTypes.PRIVATE if sql_ip_type == "PRIVATE" else IPTypes.PUBLIC
+
+        print(f"\n[INFO] Loaded DB user from INI: {db_user}")
+        print(f"[INFO] Target schema: {schema_name}")
+
+        # Secure connection creator function using WIF IAM auth
+        def get_conn():
+            connector = Connector()
+            conn = connector.connect(
+                instance_connection_name,
+                "pg8000",
+                user=db_user,
+                db=db_name,
+                enable_iam_auth=True,
+                ip_type=ip_type
+            )
+            return conn
+
+        # Create SQLAlchemy engine manually
+        engine = sqlalchemy.create_engine(
+            "postgresql+pg8000://",
+            creator=get_conn,
+            pool_pre_ping=True
+        )
+        print("[OK] Manual SQLAlchemy engine initialized successfully.")
     except Exception as e:
-        print(f"[ERROR] Failed to load config or connect to database: {e}")
+        print(f"[ERROR] Failed to parse config or initialize manual engine: {e}")
         sys.exit(1)
 
     # Collect metrics
