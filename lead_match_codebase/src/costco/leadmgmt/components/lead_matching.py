@@ -5,12 +5,16 @@ from datetime import datetime
 import numpy as np
 import pandas as pd
 from google.cloud import storage
-from sqlalchemy import MetaData, Table, insert
+from sqlalchemy import MetaData, Table, insert, update
 
 from costco.leadmgmt.config.Configuration import JobConfig
 from costco.leadmgmt.util.apputil import (
     load_file_from_gcs,
     process_and_archive_files,
+)
+# CHANGE 1: import the new streaming function
+from costco.leadmgmt.components.streaming_partition import (
+    run_streaming_classification,
 )
 
 log = logging.getLogger(__name__)
@@ -607,10 +611,11 @@ def _output_columns() -> list:
 # ==============================================================
 # WAREHOUSE BATCHING (memory bounding for the match run)
 # ==============================================================
-# Sales are processed in batches of WHOLE warehouses, accumulated up to
-# a row budget. A warehouse is never split across batches: a lead lives
-# in exactly one warehouse, and CE / primary-transaction logic needs all
-# of a warehouse's transactions together and in order.
+# NOTE: run_batched_classification below is now SUPERSEDED by
+# run_streaming_classification (in streaming_partition.py), which avoids
+# loading the full 20M-row sales file into memory at all. It is kept here
+# unused for reference / rollback; primary_classification no longer calls
+# it. Safe to delete once the streaming path is confirmed in PRD.
 WAREHOUSE_BATCH_ROW_BUDGET = 150_000
 
 
@@ -647,6 +652,8 @@ def run_batched_classification(
     budget: int = WAREHOUSE_BATCH_ROW_BUDGET,
 ):
     """
+    SUPERSEDED — see run_streaming_classification in streaming_partition.py.
+
     Run classify_matches over whole-warehouse batches to bound memory.
 
     Returns (final_df, processed_pos_ids):
@@ -1126,8 +1133,18 @@ def primary_classification(
 ) -> str:
     """
     Orchestrates the end-to-end leads-to-POS matching pipeline for a
-    single match run. Loads config + files, writes an InProgress audit
-    row, runs classify_matches, and archives the output to GCS.
+    single match run. Loads config + the (small) leads file, writes an
+    InProgress audit row, then STREAMS the (large) POS file one warehouse
+    at a time via run_streaming_classification, and archives the output
+    to GCS.
+
+    NOTE: the POS/sales file is NEVER loaded fully into memory. Only its
+    path is passed downstream; run_streaming_classification reads it in
+    chunks and partitions by warehouse, so peak memory is one chunk plus
+    the rows for the ~26 warehouses that actually have leads — not the
+    full 20M-row file. The audit row's pos_count is backfilled with the
+    true total row count after streaming completes (counted during the
+    single streaming pass, so no second read of the file).
     """
     job_config     = JobConfig(config_file_path)
     storage_config = job_config.storage_config
@@ -1167,30 +1184,52 @@ def primary_classification(
     log.info("Loading leads file: %s", file_a_path)
     file_a = load_file_from_gcs(file_a_path, dtype=STRING_COLS)
 
-    log.info("Loading POS file: %s", file_b_path)
-    file_b = load_file_from_gcs(file_b_path, dtype=STRING_COLS)
-
-    log.info("Lead count: %d | POS count: %d", len(file_a), len(file_b))
+    # CHANGE 2 & 3: the POS file is no longer loaded here — it is streamed
+    # by run_streaming_classification. Only the lead count is logged.
+    log.info(
+        "Lead count: %d | POS file will be streamed (not pre-loaded): %s",
+        len(file_a), file_b_path,
+    )
 
     user_table_obj = Table(
         table_name, metadata,
         autoload_with=engine,
         schema=schema,
     )
+    # The POS file isn't pre-loaded, so its row count isn't known yet at
+    # InProgress time. Insert 0 as a placeholder now, then backfill the
+    # real count after streaming (see UPDATE below) — this keeps the audit
+    # row's pos_count accurate without a second read of the file.
     stmt = insert(user_table_obj).values(
         match_id=match_id,
         lead_count=len(file_a),
-        pos_count=len(file_b),
+        pos_count=0,
         status="InProgress",
     )
     with engine.connect() as conn:
         conn.execute(stmt)
         conn.commit()
 
-    # Run matching in whole-warehouse batches (bounds memory; output is
-    # identical to a single-shot run). processed_pos_ids = every txn
-    # scanned this run (warehouse had >=1 lead), match or not.
-    final_df, processed_pos_ids = run_batched_classification(file_a, file_b)
+    # CHANGE 4: stream the POS file one warehouse at a time instead of
+    # loading it fully and calling run_batched_classification.
+    # processed_pos_ids = every txn scanned this run (warehouse had >=1
+    # lead), match or not — same contract as before. total_pos_rows =
+    # total rows in the file (== old len(file_b)).
+    final_df, processed_pos_ids, total_pos_rows = run_streaming_classification(
+        file_a, file_b_path, classify_matches, sales_dtype=STRING_COLS,
+    )
+    log.info("POS count (streamed): %d", total_pos_rows)
+
+    # Backfill the real POS count onto the InProgress audit row now that
+    # streaming has counted every row. Scoped by match_id (the run key).
+    upd = (
+        update(user_table_obj)
+        .where(user_table_obj.c.match_id == match_id)
+        .values(pos_count=total_pos_rows)
+    )
+    with engine.connect() as conn:
+        conn.execute(upd)
+        conn.commit()
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     base_name = f"primary_match_output_{match_id}_{timestamp}"
@@ -1211,7 +1250,8 @@ def primary_classification(
     # excluded from future cycles.
     _write_processed_manifest(storage_config, processed_pos_ids)
 
-    del file_a, file_b, final_df
+    # CHANGE 5: file_b no longer exists, so it's dropped from cleanup.
+    del file_a, final_df
     gc.collect()
 
     return uri
