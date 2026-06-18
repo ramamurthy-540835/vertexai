@@ -572,6 +572,7 @@ def _output_columns() -> list:
 
         # POS dominant
         "account_number",
+        "transaction_count",
         "business_name_transaction",
         "membership_number",
         "warehouse_number",
@@ -969,6 +970,7 @@ def classify_matches(
     _sales_base_cols = [
         "pos_id",
         "account_number",
+        "transaction_count",
         "membership_number",
         "warehouse_number",
         "fiscal_year_transaction",

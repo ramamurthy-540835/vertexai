@@ -194,6 +194,7 @@ def generate_post_json(df):
         "warehouse_number",
         "primary_transaction",
         "order_amount",
+        "transaction_count"
     ]
 
     for col in numeric_columns:
@@ -237,6 +238,7 @@ def generate_post_json(df):
             "u_period_1":          str(int(row.get("fiscal_period_transaction", 0))),
             "u_week":              str(int(row.get("week", 0))),
             "u_sales_reference_id": str(row.get("sales_reference_id", "")),
+            "u_transaction_count" : str(int(row.get("transaction_count",0))),
             "u_account_number":    _safe_columns(row.get("account_number", "")),
             "u_warehouse_number":  str(int(row.get("warehouse_number", 0))),
             "u_membership_number": _safe_columns(row.get("membership_number", "")),
