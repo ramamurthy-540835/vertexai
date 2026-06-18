@@ -207,7 +207,7 @@ def build_matching_comment(row: pd.Series) -> str:
     winning_set column carries the structured value separately).
 
     Example:
-        "Match (score 150/150). Fields matched:
+        "Complete Match (score 150/150). Fields matched:
          business_name → business_name, email → oms_email_1,
          phone → oms_phone_1, address_line_one → oms_address_line_1,
          zip_code → oms_zip, city → oms_city, state → oms_state.
@@ -221,7 +221,7 @@ def build_matching_comment(row: pd.Series) -> str:
 
     parts = []
     if result == "Match":
-        parts.append(f"Match (score {score}/{MAX_POSSIBLE_SCORE}).")
+        parts.append(f"Complete Match (score {score}/{MAX_POSSIBLE_SCORE}).")
     else:
         parts.append(
             f"Potential match (score {score}/{MAX_POSSIBLE_SCORE}); "
