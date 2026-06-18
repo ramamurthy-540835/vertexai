@@ -9,7 +9,7 @@ name: cloud_run_service_image_creation
 on:
   push:
     branches:
-      - 'feature**' 
+      - 'feature/**' 
     paths:
       - .github/workflows/cloud_run_service_image.yml
       - cloud_run_service/**
@@ -17,7 +17,9 @@ on:
 jobs:
   build-and-push-container:
     name: Build and Push Cloud Run service image
-    runs-on: cw-gcp-us-west1-np
+    runs-on: 
+      - self-hosted
+      - us-central1
     permissions:
       id-token: write
       contents: read
