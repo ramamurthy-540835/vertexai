@@ -13,7 +13,7 @@ jobs:
     environment: ${{ github.event.pull_request.head.ref }}
     strategy:
       matrix:
-        env: ['prd']
+        env: ['pd']
 
     permissions:
       id-token: write
