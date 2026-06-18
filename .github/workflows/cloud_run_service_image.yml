@@ -17,7 +17,9 @@ on:
 jobs:
   build-and-push-container:
     name: Build and Push Cloud Run service image
-    runs-on: cw-gcp-us-west1-np
+    runs-on: 
+      - self-hosted
+      - us-central1
     permissions:
       id-token: write
       contents: read
