@@ -45,14 +45,32 @@ jobs:
           cache: 'pip'
           cache-dependency-path: 'lead_management_job/requirements.txt'
 
-      - name: Auth to GCP
+      - name: Auth to GCP (With Service Account Impersonation)
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
           service_account: ${{ github.event.inputs.environment == 'prd' && secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL_PRD || secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
+          impersonate_service_account: gco-iam-svc-lead-mgmt-bc-${{ github.event.inputs.environment }}@${{ github.event.inputs.environment == 'prd' && 'p-601-pd-bcleadsmgmt-prd' || format('p-601-np-bcleadsmgmt-{0}', github.event.inputs.environment) }}.iam.gserviceaccount.com
 
       - name: Set up gcloud
         uses: google-github-actions/setup-gcloud@v2
+
+      - name: GCP Auth & Configuration Debug Prints
+        run: |
+          echo "=========================================================="
+          echo "DEBUG: Listing Active Gcloud Authentications"
+          echo "=========================================================="
+          gcloud auth list
+          
+          echo "=========================================================="
+          echo "DEBUG: Displaying Active Gcloud Config Values"
+          echo "=========================================================="
+          gcloud config list
+          
+          echo "=========================================================="
+          echo "DEBUG: Printing Impersonated Service Account Token Info"
+          echo "=========================================================="
+          gcloud auth print-access-token --impersonate-service-account=gco-iam-svc-lead-mgmt-bc-${ENV_NAME}@${PROJECT_ID}.iam.gserviceaccount.com --quiet || echo "Direct token printing not permitted by VPC-SC"
 
       - name: Install Dependencies
         run: |
@@ -83,7 +101,7 @@ jobs:
             --warehouse "${WAREHOUSE}" \
             --output "${OUTPUT_FILE}"
 
-      - name: Upload Smoke Test Results
+      - name: Upload Smoke Test Results (GHA Artifact)
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -91,10 +109,27 @@ jobs:
           path: warehouse_${{ env.WAREHOUSE }}_smoke_test_results.json
           retention-days: 14
 
-      - name: Display Execution Summary
-        if: success()
+      - name: Upload Smoke Test Results to GCS
+        if: always()
         run: |
           OUTPUT_FILE="warehouse_${WAREHOUSE}_smoke_test_results.json"
+          BUCKET="gcp-gcs-lead-mgmt-us-${ENV_NAME}-pos-raw"
+          DEST_PATH="validation_reports/warehouse_${WAREHOUSE}/run_${{ github.run_number }}_${OUTPUT_FILE}"
+
+          if [ -f "${OUTPUT_FILE}" ]; then
+            gcloud storage cp "${OUTPUT_FILE}" "gs://${BUCKET}/${DEST_PATH}" \
+              --project="${PROJECT_ID}"
+            echo "Successfully uploaded report to gs://${BUCKET}/${DEST_PATH}"
+          else
+            echo "Output file not found: ${OUTPUT_FILE}"
+            exit 1
+          fi
+
+      - name: Display Execution Summary & Validate Metrics
+        if: always()
+        run: |
+          OUTPUT_FILE="warehouse_${WAREHOUSE}_smoke_test_results.json"
+          
           if [ -f "${OUTPUT_FILE}" ]; then
             echo "## Warehouse ${WAREHOUSE} Smoke Test Result" >> $GITHUB_STEP_SUMMARY
             echo "### Database Schema and Table Counts" >> $GITHUB_STEP_SUMMARY
@@ -106,4 +141,16 @@ jobs:
               COUNT=$(echo "$item" | jq -r '.count')
               echo "- **Status:** \`${STATUS}\` — **Count:** ${COUNT}" >> $GITHUB_STEP_SUMMARY
             done
+            
+            # Defensive Failure Boundary: Fail build if metrics contain ERROR
+            if grep -q "ERROR:" "${OUTPUT_FILE}"; then
+              echo "=========================================================="
+              echo "CRITICAL: Database queries or authentication failed!"
+              echo "=========================================================="
+              grep "ERROR:" "${OUTPUT_FILE}"
+              exit 1
+            fi
+          else
+            echo "Output results file not found! Validation failed."
+            exit 1
           fi
