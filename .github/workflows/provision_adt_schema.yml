@@ -149,7 +149,7 @@ jobs:
           fi
 
           # Start Cloud SQL Proxy in background
-          ./cloud-sql-proxy p-601-np-bcleadsmgmt-qat:us-central1:lead-mgmt-qat \
+          ./cloud-sql-proxy p-601-np-bcleadsmgmt-adt:us-central1:lead-mgmt-adt \
             --port 5432 \
             --private-ip \
             --auto-iam-authn &
