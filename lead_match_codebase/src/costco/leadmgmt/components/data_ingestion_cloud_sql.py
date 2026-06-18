@@ -302,7 +302,7 @@ def _get_required_columns(base_name: str, stage: str):
                 'shop_type', 'order_amount', 'bd_industry', 'sales_reference_id',
                 'industry_description', 'account_number',
                 'fiscal_year_transaction', 'fiscal_period_transaction', 'week',
-                'updated_date', 'pos_id',
+                'updated_date', 'pos_id','transaction_count',
                 # OMS variants
                 *ALL_OMS_FIELDS,
             ]
@@ -345,7 +345,7 @@ def _get_required_columns(base_name: str, stage: str):
 
                 # Passthrough — untransformed, only stripped
                 'shop_type', 'sales_reference_id', 'bd_industry', 'industry_description',
-                'order_amount',
+                'order_amount','transaction_count',
 
                 # Transaction metadata
                 'fiscal_year_transaction', 'fiscal_period_transaction', 'week',
