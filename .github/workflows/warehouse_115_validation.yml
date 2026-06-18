@@ -1,0 +1,109 @@
+name: warehouse_115_validation
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'adt'
+        type: choice
+        options: ['adt', 'qat', 'spt', 'prd']
+
+      warehouse:
+        description: 'Warehouse number to validate'
+        required: true
+        default: '115'
+        type: string
+
+jobs:
+  validate_warehouse:
+    name: "Validate Warehouse ${{ github.event.inputs.warehouse }} (${{ github.event.inputs.environment }})"
+    runs-on:
+      - self-hosted
+      - us-central1
+    environment: ${{ github.event.inputs.environment }}
+
+    permissions:
+      id-token: write
+      contents: read
+
+    env:
+      ENV_NAME:   ${{ github.event.inputs.environment }}
+      WAREHOUSE:  ${{ github.event.inputs.warehouse }}
+      PROJECT_ID: ${{ github.event.inputs.environment == 'prd' && 'p-601-pd-bcleadsmgmt-prd' || format('p-601-np-bcleadsmgmt-{0}', github.event.inputs.environment) }}
+      CONFIG_DIR: 'lead_management_job'
+
+    steps:
+      - name: Checkout Codebase
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: 'lead_management_job/requirements.txt'
+
+      - name: Auth to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
+          service_account: ${{ github.event.inputs.environment == 'prd' && secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL_PRD || secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          
+          # Install the custom local wheel package first
+          if [ -f lead_management_job/costco_lead_managment-0.0.14-py3-none-any.whl ]; then
+            pip install lead_management_job/costco_lead_managment-0.0.14-py3-none-any.whl
+          fi
+          
+          # Install other requirements
+          pip install -r lead_management_job/requirements.txt
+
+      - name: Run Read-Only Smoke Test
+        run: |
+          set -euo pipefail
+          
+          CONFIG_FILE="${CONFIG_DIR}/configuration_${ENV_NAME}.ini"
+          OUTPUT_FILE="warehouse_${WAREHOUSE}_smoke_test_results.json"
+          
+          echo "Executing read-only safe config-driven smoke validation..."
+          echo "Config File : ${CONFIG_FILE}"
+          echo "Warehouse   : ${WAREHOUSE}"
+          echo "Project ID  : ${PROJECT_ID}"
+          
+          python scripts/warehouse_115_smoke_test.py \
+            --config "${CONFIG_FILE}" \
+            --warehouse "${WAREHOUSE}" \
+            --output "${OUTPUT_FILE}"
+
+      - name: Upload Smoke Test Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: warehouse-${{ env.WAREHOUSE }}-${{ env.ENV_NAME }}-smoke-test-results
+          path: warehouse_${{ env.WAREHOUSE }}_smoke_test_results.json
+          retention-days: 14
+
+      - name: Display Execution Summary
+        if: success()
+        run: |
+          OUTPUT_FILE="warehouse_${WAREHOUSE}_smoke_test_results.json"
+          if [ -f "${OUTPUT_FILE}" ]; then
+            echo "## Warehouse ${WAREHOUSE} Smoke Test Result" >> $GITHUB_STEP_SUMMARY
+            echo "### Database Schema and Table Counts" >> $GITHUB_STEP_SUMMARY
+            jq -r '.metrics | "- **Total POS Records:** " + (.total_pos_records | tostring) + "\n- **Total Eligible Leads:** " + (.eligible_leads_count | tostring) + "\n- **Total POS Embeddings:** " + (.pos_embeddings_count | tostring) + "\n- **Total Leads Embeddings:** " + (.leads_embeddings_count | tostring)' "${OUTPUT_FILE}" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### Lead Distributions" >> $GITHUB_STEP_SUMMARY
+            jq -c '.metrics.leads_by_status[]?' "${OUTPUT_FILE}" | while read -r item; do
+              STATUS=$(echo "$item" | jq -r '.lead_status')
+              COUNT=$(echo "$item" | jq -r '.count')
+              echo "- **Status:** \`${STATUS}\` — **Count:** ${COUNT}" >> $GITHUB_STEP_SUMMARY
+            done
+          fi
