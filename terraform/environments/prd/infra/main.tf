@@ -130,7 +130,7 @@ module "monitoring_alert" {
   second_condition_display_name = "SNOW Sync Job Failure Condition"
 }
 
-module "iam_management" {
+/*module "iam_management" {
   source     = "../../../modules/iam_management"
   project_id = var.projectId
   bucket_iam_bindings = [
@@ -140,7 +140,7 @@ module "iam_management" {
       member = "serviceAccount:${var.service_account_email}"
     }
   ]
-}
+}*/
 
 module "workflows" {
   source                = "../../../modules/workflows"
