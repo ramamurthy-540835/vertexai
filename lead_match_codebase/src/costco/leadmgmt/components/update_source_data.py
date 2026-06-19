@@ -245,7 +245,7 @@ def update_cloud_sql(config_file_path: str,file_path: str = ""):
     leads_dataframe = leads_dataframe.drop_duplicates(subset='lead_id', keep='first').reset_index(drop=True)
     leads_dataframe = leads_dataframe[
         ['lead_id','account_number',  'match_result', 'updated_date', 'updated_by']]
-    leads_dataframe['account_number'] = leads_dataframe['account_number'].astype(int)
+    leads_dataframe['account_number'] = leads_dataframe['account_number'].astype('Int64')
     print('lead table dataframe: ', len(leads_dataframe))
 
 

@@ -5,7 +5,7 @@ name: dataflow_image_creation
 #   feature*       → BUILD image, tag :latest, register adt template
 #   main           → register qat template (using same :latest image)
 #   release-spt*   → register spt template (using same :latest image)
-#   release-prd*   → register prd template (using same :latest image)
+#   release-prd-phase2-*   → register prd template (using same :latest image)
 #
 # All environments use the SAME image (:latest). Environment-specific
 # values (project, bucket, db, etc.) come from Flex Template registration
@@ -19,7 +19,7 @@ on:
       - 'main'
     tags:
       - 'release-spt*'
-      - 'release-prd*'
+      - 'release-prd-phase2-*'
     paths:
       - .github/workflows/dataflow_image_creation.yml
       - .github/workflows/register_flex_template.yml
@@ -56,7 +56,7 @@ jobs:
           elif [[ "$REF_TYPE" == "tag" && "$REF_NAME" == release-spt* ]]; then
             TARGET_ENV="spt"
             SHOULD_BUILD="false"
-          elif [[ "$REF_TYPE" == "tag" && "$REF_NAME" == release-prd* ]]; then
+          elif [[ "$REF_TYPE" == "tag" && "$REF_NAME" == release-prd-phase2-* ]]; then
             TARGET_ENV="prd"
             SHOULD_BUILD="false"
           else
