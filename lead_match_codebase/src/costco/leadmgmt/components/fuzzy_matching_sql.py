@@ -110,6 +110,8 @@ def fuzzy_matching(
     source_folder             = storage_config.source_folder_output
     destination_bucket_name   = storage_config.destination_bucket_name
     destination_folder        = storage_config.destination_folder_output
+    vertex_source_folder      = storage_config.source_folder_output_vertex
+    vertex_destination_folder = storage_config.destination_folder_output_vertex
 
     query_fuzzy_wh            = query_config.query_fuzzy_wh
     query_fuzzy_null_wh       = query_config.query_fuzzy_null_wh
@@ -325,7 +327,6 @@ def fuzzy_matching(
             text(f"""
                 SELECT
                     pos_id,
-                    transaction_count,
                     membership_number,
                     shop_type,
                     sales_reference_id,
@@ -354,7 +355,6 @@ def fuzzy_matching(
 
         # Update customer detail cols only on fuzzy-overridden rows
         detail_cols = [
-            "transaction_count",
             "membership_number",
             "shop_type",
             "sales_reference_id",
@@ -440,13 +440,11 @@ def fuzzy_matching(
         "similarity_score",
         "match_type",
         "primary_transaction",
-        "closed_existing_flag",
         "matched_by",
         "matching_comments",
 
         # POS dominant — transaction
         "account_number",
-        "transaction_count",
         "business_name_transaction",
         "membership_number",
         "warehouse_number",
@@ -484,9 +482,10 @@ def fuzzy_matching(
     # ----------------------------------------------------------
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     match_id = os.environ.get("MATCH_ID", "").strip()
+    warehouse_label = (warehouse or "all").replace(",", "-").strip() or "all"
     base_name = (
-        f"final_update_dataframe_{match_id}_{timestamp}"
-        if match_id else f"final_update_dataframe_{timestamp}"
+        f"final_update_dataframe_{match_id}_{warehouse_label}_{timestamp}"
+        if match_id else f"final_update_dataframe_{warehouse_label}_{timestamp}"
     )
 
     uri = process_and_archive_files(
@@ -499,4 +498,14 @@ def fuzzy_matching(
     )
 
     print(f"Fuzzy match output written to: {uri}")
+    vertex_uri = process_and_archive_files(
+        source_bucket_name,
+        vertex_source_folder,
+        destination_bucket_name,
+        vertex_destination_folder,
+        final_df,
+        base_name,
+    )
+
+    print(f"Fuzzy explainability output written to: {vertex_uri}")
     return uri

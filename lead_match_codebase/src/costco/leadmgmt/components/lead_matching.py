@@ -1179,9 +1179,9 @@ def primary_classification(
         file_b_path = storage_config.temp_pos_path
 
     source_bucket_name      = storage_config.source_bucket_name
-    source_folder           = storage_config.source_folder_output
+    source_folder           = storage_config.source_folder_output_exact
     destination_bucket_name = storage_config.destination_bucket_name
-    destination_folder      = storage_config.destination_folder_output
+    destination_folder      = storage_config.destination_folder_output_exact
 
     schema     = db_config.schema_name
     table_name = db_config.audit_table_name
