@@ -85,6 +85,7 @@ if __name__ == "__main__":
     project_id = os.environ.get("PROJECT_ID") or os.environ.get("GCP_PROJECT_ID")
     max_workers = int(os.environ.get("MAX_WORKERS", "5"))
     warehouse = os.environ.get("WAREHOUSE")
+    final_output_path = os.environ.get("FINAL_OUTPUT_PATH", "")
 
     if stage.lower() == "compile_run_pipeline":
         compile_and_upload_pipeline(pipeline_name,registry_url)
@@ -94,9 +95,9 @@ if __name__ == "__main__":
     elif stage.lower() == "compile_pipeline":
         compile_and_upload_pipeline(pipeline_name, registry_url)
     elif stage.lower() == "update_database":
-        update_cloud_sql(config_file_path)
+        update_cloud_sql(config_file_path, file_path=final_output_path)
     elif stage.lower() == "update_service_now":
-        update_servicenow(config_file_path)
+        update_servicenow(config_file_path, file_path=final_output_path)
     elif stage.lower() == "ingest_leads_from_cloud_sql":
         load_and_preprocess_data_cloud_sql('leads',config_file_path, warehouse=warehouse)
     elif stage.lower() == "ingest_pos_from_cloud_sql":
