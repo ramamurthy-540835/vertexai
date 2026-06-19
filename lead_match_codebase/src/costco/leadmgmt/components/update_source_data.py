@@ -26,14 +26,21 @@ def get_gcs_file_path(uri: str) -> str:
     client = storage.Client()
     bucket = client.bucket(bucket_name)
 
-    # List blobs under the folder
-    blobs = list(bucket.list_blobs(prefix=folder_path))
-    files = [blob.name for blob in blobs if not blob.name.endswith('/')]
+    # Retries or archive timing can leave more than one final output in the
+    # folder. Use the latest CSV instead of failing both update branches.
+    blobs = [
+        blob for blob in bucket.list_blobs(prefix=folder_path)
+        if not blob.name.endswith('/') and blob.name.lower().endswith('.csv')
+    ]
 
-    if len(files) != 1:
-        raise ValueError(f"Expected exactly one file in '{uri}', found {len(files)}")
+    if not blobs:
+        raise ValueError(f"No CSV files found in '{uri}'")
 
-    return f"gs://{bucket_name}/{files[0]}"
+    blobs.sort(key=lambda blob: blob.updated, reverse=True)
+    if len(blobs) > 1:
+        print(f"Found {len(blobs)} CSV files in '{uri}', using latest: {blobs[0].name}")
+
+    return f"gs://{bucket_name}/{blobs[0].name}"
 
 
 def _is_truthy(v) -> bool:

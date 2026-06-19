@@ -272,6 +272,9 @@ main:
                                 args:
                                   - run.py
                                   - update_service_now
+                                env:
+                                  - name: MATCH_ID
+                                    value: ${match_id}
                           connector_params:
                             timeout: 72000
                             polling_policy:
@@ -293,6 +296,9 @@ main:
                                 args:
                                   - run.py
                                   - update_database
+                                env:
+                                  - name: MATCH_ID
+                                    value: ${match_id}
                           connector_params:
                             timeout: 72000
                             polling_policy:
