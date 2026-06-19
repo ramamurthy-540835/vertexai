@@ -335,6 +335,10 @@ class StorageConfig:
     destination_bucket_name: str
     source_folder_output: str
     destination_folder_output: str
+    source_folder_output_exact: str
+    destination_folder_output_exact: str
+    source_folder_output_vertex: str
+    destination_folder_output_vertex: str
     standalone_file_path: str
     temp_leads_path: str
     temp_pos_path: str
@@ -369,8 +373,14 @@ class StorageConfig:
                    destination_folder_input_pos=os.environ.get("DESTINATION_FOLDER_INPUT_POS"),
                    destination_bucket_name=os.environ.get("DESTINATION_BUCKET_NAME"),
                    source_folder_output=os.environ.get("SOURCE_FOLDER_OUTPUT"),
-                   destination_folder_output=os.environ.get("GCP_PROJECT_ID"),
-                   standalone_file_path=os.environ.get("STANDALONE_FILE_PATH"))
+                   destination_folder_output=os.environ.get("DESTINATION_FOLDER_OUTPUT"),
+                   source_folder_output_exact=os.environ.get("SOURCE_FOLDER_OUTPUT_EXACT"),
+                   destination_folder_output_exact=os.environ.get("DESTINATION_FOLDER_OUTPUT_EXACT"),
+                   source_folder_output_vertex=os.environ.get("SOURCE_FOLDER_OUTPUT_VERTEX"),
+                   destination_folder_output_vertex=os.environ.get("DESTINATION_FOLDER_OUTPUT_VERTEX"),
+                   standalone_file_path=os.environ.get("STANDALONE_FILE_PATH"),
+                   temp_leads_path=os.environ.get("TEMP_LEADS_PATH"),
+                   temp_pos_path=os.environ.get("TEMP_POS_PATH"))
 
     @classmethod
     def from_config(cls, config):
@@ -406,6 +416,18 @@ class StorageConfig:
                    destination_bucket_name=cls.get_config("STORAGE", "destination_bucket_name", config, ""),
                    source_folder_output=cls.get_config("STORAGE", "source_folder_output", config, ""),
                    destination_folder_output=cls.get_config("STORAGE", "destination_folder_output", config, ""),
+                   source_folder_output_exact=cls.get_config(
+                       "STORAGE", "source_folder_output_exact", config, "match/exact/final_match_result"
+                   ),
+                   destination_folder_output_exact=cls.get_config(
+                       "STORAGE", "destination_folder_output_exact", config, "archive/match/exact/final_match_result"
+                   ),
+                   source_folder_output_vertex=cls.get_config(
+                       "STORAGE", "source_folder_output_vertex", config, "match/vertex/final_match_result"
+                   ),
+                   destination_folder_output_vertex=cls.get_config(
+                       "STORAGE", "destination_folder_output_vertex", config, "archive/match/vertex/final_match_result"
+                   ),
                    temp_leads_path=cls.get_config("STORAGE", "temp_leads_path", config, ""),
                    standalone_file_path=cls.get_config("STORAGE", "standalone_file_path", config, ""),
                    temp_pos_path=cls.get_config("STORAGE", "temp_pos_path", config, "")
