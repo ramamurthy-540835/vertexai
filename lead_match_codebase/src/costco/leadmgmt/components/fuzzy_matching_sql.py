@@ -96,6 +96,29 @@ def persist_match_decision_detail(engine, schema_name: str, detail_df: pd.DataFr
 
     try:
         with engine.connect() as connection:
+            with connection.begin():
+                connection.execute(
+                    text(
+                        f"""
+                        CREATE TABLE IF NOT EXISTS {schema_name}.match_decision_detail (
+                            match_run_id varchar(100),
+                            lead_id varchar(150),
+                            pos_id varchar(150),
+                            warehouse_number int,
+                            match_type varchar(100),
+                            final_score double precision,
+                            combined_field_score double precision,
+                            full_address_score double precision,
+                            business_name_score double precision,
+                            weight_formula varchar(100),
+                            embedding_model varchar(100),
+                            created_date timestamp DEFAULT current_timestamp
+                        )
+                        """
+                    )
+                )
+
+        with engine.connect() as connection:
             table_exists = connection.execute(
                 text(
                     """
