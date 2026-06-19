@@ -1,0 +1,429 @@
+name: Lead Match Preflight Ops
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'spt'
+        type: choice
+        options:
+          - 'adt'
+          - 'qat'
+          - 'spt'
+          - 'prd'
+      warehouse:
+        description: 'Warehouse number, comma-separated warehouses, blank, or all'
+        required: false
+        default: '115'
+        type: string
+      include_cloud_sql:
+        description: 'Run read-only Cloud SQL health and warehouse count checks?'
+        required: true
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+      prepare_resources:
+        description: 'Create preflight GCS folders and match_decision_detail table if missing?'
+        required: true
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+
+jobs:
+  preflight:
+    name: "preflight-${{ github.event.inputs.environment }}-${{ github.event.inputs.warehouse || 'all' }}"
+    runs-on: cw-gcp-us-west1-${{ inputs.environment == 'prd' && 'pd' || 'np' }}
+    environment: ${{ github.event.inputs.environment }}
+
+    permissions:
+      id-token: write
+      contents: read
+
+    env:
+      ENV_NAME: ${{ github.event.inputs.environment }}
+      REGION: us-central1
+      JOB_NAME: lead-match-job
+
+    steps:
+      - name: Checkout Codebase
+        uses: actions/checkout@v4
+
+      - name: Resolve environment
+        env:
+          RAW_WAREHOUSE: ${{ github.event.inputs.warehouse }}
+        run: |
+          set -euo pipefail
+
+          if [[ "${ENV_NAME}" == "prd" ]]; then
+            PROJECT_ID="p-601-pd-bcleadsmgmt-prd"
+            SCHEMA_NAME="lead_mgmt_prd"
+            INSTANCE_NAME="lead-mgmt-prd"
+            BUCKET_NAME="gcp-gcs-lead-mgmt-us-prd"
+            ENV_CLASS="prd"
+          else
+            PROJECT_ID="p-601-np-bcleadsmgmt-${ENV_NAME}"
+            SCHEMA_NAME="lead_mgmt_${ENV_NAME}"
+            INSTANCE_NAME="lead-mgmt-${ENV_NAME}"
+            BUCKET_NAME="gcp-gcs-lead-mgmt-us-${ENV_NAME}"
+            ENV_CLASS="non-prd"
+          fi
+
+          WAREHOUSE="$(printf '%s' "${RAW_WAREHOUSE}" | tr -d '[:space:]')"
+          if [[ -z "${WAREHOUSE}" || "${WAREHOUSE,,}" == "all" ]]; then
+            WAREHOUSE=""
+            WAREHOUSE_LABEL="all"
+            WAREHOUSE_SQL_FILTER=""
+          else
+            if [[ ! "${WAREHOUSE}" =~ ^[0-9]+(,[0-9]+)*$ ]]; then
+              echo "Invalid warehouse input: ${WAREHOUSE}"
+              echo "Use a single number like 115, comma-separated numbers like 115,1663, or blank/all."
+              exit 1
+            fi
+            WAREHOUSE_LABEL="${WAREHOUSE}"
+            WAREHOUSE_SQL_FILTER="AND warehouse_number IN (${WAREHOUSE})"
+          fi
+
+          REPORT_TS="$(date -u +%Y%m%d_%H%M%S)"
+          REPORT_OBJECT="preflight/lead_match/${ENV_NAME}/${WAREHOUSE_LABEL}/lead_match_preflight_${ENV_NAME}_${WAREHOUSE_LABEL}_${REPORT_TS}.md"
+          REPORT_URI="gs://${BUCKET_NAME}/${REPORT_OBJECT}"
+
+          {
+            echo "PROJECT_ID=${PROJECT_ID}"
+            echo "SCHEMA_NAME=${SCHEMA_NAME}"
+            echo "INSTANCE_NAME=${INSTANCE_NAME}"
+            echo "BUCKET_NAME=${BUCKET_NAME}"
+            echo "ENV_CLASS=${ENV_CLASS}"
+            echo "WAREHOUSE=${WAREHOUSE}"
+            echo "WAREHOUSE_LABEL=${WAREHOUSE_LABEL}"
+            echo "WAREHOUSE_SQL_FILTER=${WAREHOUSE_SQL_FILTER}"
+            echo "REPORT_OBJECT=${REPORT_OBJECT}"
+            echo "REPORT_URI=${REPORT_URI}"
+            echo "REPORT_FILE=${RUNNER_TEMP}/lead_match_preflight_report.md"
+          } >> "$GITHUB_ENV"
+
+      - name: Auth to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
+          service_account: ${{ github.event.inputs.environment == 'prd' && secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL_PRD || secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
+          create_credentials_file: true
+          export_environment_variables: true
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Initialize report
+        run: |
+          set -euo pipefail
+          {
+            echo "# Lead Match Preflight"
+            echo ""
+            echo "- Environment: \`${ENV_NAME}\`"
+            echo "- Project: \`${PROJECT_ID}\`"
+            echo "- Schema: \`${SCHEMA_NAME}\`"
+            echo "- Bucket: \`${BUCKET_NAME}\`"
+            echo "- Warehouse: \`${WAREHOUSE_LABEL}\`"
+            echo "- Region: \`${REGION}\`"
+            echo "- Cloud SQL checks: \`${{ github.event.inputs.include_cloud_sql }}\`"
+            echo "- Prepare resources: \`${{ github.event.inputs.prepare_resources }}\`"
+            echo "- Generated UTC: \`$(date -u +%Y-%m-%dT%H:%M:%SZ)\`"
+            echo ""
+          } > "${REPORT_FILE}"
+
+      - name: Prepare GCS folders
+        if: github.event.inputs.prepare_resources == 'true'
+        run: |
+          set -euo pipefail
+          unset CLOUDSDK_CORE_PROJECT CLOUDSDK_PROJECT GCLOUD_PROJECT GCP_PROJECT GOOGLE_CLOUD_PROJECT
+          gcloud config set project "${PROJECT_ID}"
+
+          MARKER_FILE="${RUNNER_TEMP}/.keep"
+          printf 'created by lead_match_preflight_ops at %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "${MARKER_FILE}"
+
+          create_marker() {
+            local uri="$1"
+            gsutil cp "${MARKER_FILE}" "${uri}.keep" >/dev/null
+          }
+
+          create_marker "gs://${BUCKET_NAME}/match/exact/final_match_result/"
+          create_marker "gs://${BUCKET_NAME}/archive/match/exact/final_match_result/"
+          create_marker "gs://${BUCKET_NAME}/match/vertex/final_match_result/"
+          create_marker "gs://${BUCKET_NAME}/archive/match/vertex/final_match_result/"
+          create_marker "gs://${BUCKET_NAME}/preflight/lead_match/${ENV_NAME}/${WAREHOUSE_LABEL}/"
+
+          {
+            echo "## Prepared GCS Folders"
+            echo ""
+            echo "- \`gs://${BUCKET_NAME}/match/exact/final_match_result/\`"
+            echo "- \`gs://${BUCKET_NAME}/archive/match/exact/final_match_result/\`"
+            echo "- \`gs://${BUCKET_NAME}/match/vertex/final_match_result/\`"
+            echo "- \`gs://${BUCKET_NAME}/archive/match/vertex/final_match_result/\`"
+            echo "- \`gs://${BUCKET_NAME}/preflight/lead_match/${ENV_NAME}/${WAREHOUSE_LABEL}/\`"
+            echo ""
+          } >> "${REPORT_FILE}"
+
+      - name: Inspect GCS folders
+        run: |
+          set -euo pipefail
+          unset CLOUDSDK_CORE_PROJECT CLOUDSDK_PROJECT GCLOUD_PROJECT GCP_PROJECT GOOGLE_CLOUD_PROJECT
+          gcloud config set project "${PROJECT_ID}"
+
+          append_listing() {
+            local title="$1"
+            local uri="$2"
+            echo "## ${title}" >> "${REPORT_FILE}"
+            echo "" >> "${REPORT_FILE}"
+            echo "\`${uri}\`" >> "${REPORT_FILE}"
+            echo "" >> "${REPORT_FILE}"
+            echo '```text' >> "${REPORT_FILE}"
+            gsutil ls -l "${uri}" >> "${REPORT_FILE}" 2>&1 || true
+            echo '```' >> "${REPORT_FILE}"
+            echo "" >> "${REPORT_FILE}"
+          }
+
+          append_listing "Final match output folder" "gs://${BUCKET_NAME}/match/final_match_result/"
+          append_listing "Final match archive folder" "gs://${BUCKET_NAME}/archive/match/final_match_result/"
+          append_listing "Exact final output folder" "gs://${BUCKET_NAME}/match/exact/final_match_result/"
+          append_listing "Exact final archive folder" "gs://${BUCKET_NAME}/archive/match/exact/final_match_result/"
+          append_listing "Vertex final output folder" "gs://${BUCKET_NAME}/match/vertex/final_match_result/"
+          append_listing "Vertex final archive folder" "gs://${BUCKET_NAME}/archive/match/vertex/final_match_result/"
+          append_listing "Temporary folder" "gs://${BUCKET_NAME}/temporary_folder/"
+          append_listing "Match spill folder" "gs://${BUCKET_NAME}/temporary_folder/match_spill/"
+
+      - name: Inspect Cloud Run job
+        run: |
+          set -euo pipefail
+          {
+            echo "## Cloud Run Job"
+            echo ""
+            echo "### Job Description"
+            echo '```yaml'
+            gcloud run jobs describe "${JOB_NAME}" \
+              --region="${REGION}" \
+              --project="${PROJECT_ID}" \
+              --format="yaml(metadata.labels,spec.template.spec.containers[0].image,spec.template.spec.containers[0].resources,spec.template.spec.containers[0].env,spec.template.spec.timeoutSeconds,spec.template.spec.serviceAccountName)" \
+              2>&1 || true
+            echo '```'
+            echo ""
+            echo "### Recent Executions"
+            echo '```text'
+            gcloud run jobs executions list \
+              --job="${JOB_NAME}" \
+              --region="${REGION}" \
+              --project="${PROJECT_ID}" \
+              --limit=10 \
+              --format="table(name,status.conditions[0].type,status.conditions[0].status,metadata.creationTimestamp,status.startTime,status.completionTime)" \
+              2>&1 || true
+            echo '```'
+            echo ""
+          } >> "${REPORT_FILE}"
+
+      - name: Install psql
+        if: github.event.inputs.include_cloud_sql == 'true'
+        run: |
+          set -euo pipefail
+          if ! command -v psql >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y postgresql-client
+          fi
+
+      - name: Setup Cloud SQL Proxy
+        if: github.event.inputs.include_cloud_sql == 'true'
+        run: |
+          set -euo pipefail
+          if ! command -v cloud-sql-proxy >/dev/null 2>&1; then
+            wget -q https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/v2.8.0/cloud-sql-proxy.linux.amd64 -O cloud-sql-proxy
+            chmod +x cloud-sql-proxy
+          fi
+
+          ./cloud-sql-proxy "${PROJECT_ID}:us-central1:${INSTANCE_NAME}" \
+            --port 5432 \
+            --private-ip \
+            --auto-iam-authn &
+
+          sleep 10
+
+      - name: Prepare Cloud SQL audit table
+        if: github.event.inputs.include_cloud_sql == 'true' && github.event.inputs.prepare_resources == 'true'
+        run: |
+          set -euo pipefail
+
+          cat > "${RUNNER_TEMP}/lead_match_prepare.sql" <<SQL
+          CREATE TABLE IF NOT EXISTS ${SCHEMA_NAME}.match_decision_detail (
+            match_run_id varchar(100),
+            lead_id varchar(150),
+            pos_id varchar(150),
+            warehouse_number int,
+            match_type varchar(100),
+            final_score double precision,
+            combined_field_score double precision,
+            full_address_score double precision,
+            business_name_score double precision,
+            weight_formula varchar(100),
+            embedding_model varchar(100),
+            created_date timestamp DEFAULT current_timestamp
+          );
+          SQL
+
+          export PGPASSWORD="$(gcloud auth print-access-token)"
+          {
+            echo "## Prepared Cloud SQL Resources"
+            echo ""
+            echo "### match_decision_detail"
+            echo '```text'
+            psql "host=127.0.0.1 port=5432 dbname=lead-mgmt-db user=gco-iam-svc-cicd-mbr-bc-np@gcp-prj-cicd-core.iam sslmode=disable" \
+              -v ON_ERROR_STOP=1 \
+              -f "${RUNNER_TEMP}/lead_match_prepare.sql"
+            echo '```'
+            echo ""
+          } >> "${REPORT_FILE}"
+
+      - name: Run Cloud SQL preflight queries
+        if: github.event.inputs.include_cloud_sql == 'true'
+        run: |
+          set -euo pipefail
+
+          cat > "${RUNNER_TEMP}/lead_match_preflight.sql" <<SQL
+          \\echo '## Cloud SQL Health'
+          \\echo ''
+          \\echo '### max_connections'
+          SHOW max_connections;
+
+          \\echo ''
+          \\echo '### active_connections'
+          SELECT count(*) AS active_connections
+          FROM pg_stat_activity;
+
+          \\echo ''
+          \\echo '### connections_by_user_state'
+          SELECT usename, application_name, state, count(*)
+          FROM pg_stat_activity
+          GROUP BY usename, application_name, state
+          ORDER BY count(*) DESC;
+
+          \\echo ''
+          \\echo '### active_queries'
+          SELECT pid, state, wait_event_type, wait_event, now() - query_start AS runtime, left(query, 500) AS query
+          FROM pg_stat_activity
+          WHERE state <> 'idle'
+          ORDER BY runtime DESC;
+
+          \\echo ''
+          \\echo '## Warehouse Readiness'
+          \\echo ''
+          \\echo '### lead_count'
+          SELECT count(*) AS lead_count
+          FROM ${SCHEMA_NAME}.lead
+          WHERE 1=1 ${WAREHOUSE_SQL_FILTER};
+
+          \\echo ''
+          \\echo '### transaction_count'
+          SELECT count(*) AS transaction_count
+          FROM ${SCHEMA_NAME}.transaction
+          WHERE 1=1 ${WAREHOUSE_SQL_FILTER};
+
+          \\echo ''
+          \\echo '### lead_embedding_count'
+          SELECT count(*) AS lead_embedding_count
+          FROM ${SCHEMA_NAME}.leads_embeddings
+          WHERE 1=1 ${WAREHOUSE_SQL_FILTER};
+
+          \\echo ''
+          \\echo '### pos_embedding_count'
+          SELECT count(*) AS pos_embedding_count
+          FROM ${SCHEMA_NAME}.pos_embeddings
+          WHERE 1=1 ${WAREHOUSE_SQL_FILTER};
+
+          \\echo ''
+          \\echo '### embedding_coverage'
+          SELECT
+            (SELECT count(*) FROM ${SCHEMA_NAME}.transaction WHERE 1=1 ${WAREHOUSE_SQL_FILTER}) AS pos_total,
+            (SELECT count(*) FROM ${SCHEMA_NAME}.pos_embeddings WHERE 1=1 ${WAREHOUSE_SQL_FILTER}) AS pos_embedded,
+            (SELECT count(*) FROM ${SCHEMA_NAME}.lead WHERE 1=1 ${WAREHOUSE_SQL_FILTER}) AS lead_total,
+            (SELECT count(*) FROM ${SCHEMA_NAME}.leads_embeddings WHERE 1=1 ${WAREHOUSE_SQL_FILTER}) AS lead_embedded;
+
+          \\echo ''
+          \\echo '### match_type_distribution'
+          SELECT COALESCE(match_type, 'NULL') AS match_type, count(*)
+          FROM ${SCHEMA_NAME}.transaction
+          WHERE 1=1 ${WAREHOUSE_SQL_FILTER}
+          GROUP BY COALESCE(match_type, 'NULL')
+          ORDER BY count(*) DESC;
+
+          \\echo ''
+          \\echo '### match_decision_detail_table'
+          SELECT column_name, data_type
+          FROM information_schema.columns
+          WHERE table_schema = '${SCHEMA_NAME}'
+            AND table_name = 'match_decision_detail'
+          ORDER BY ordinal_position;
+
+          \\echo ''
+          \\echo '### match_decision_detail_count'
+          SELECT count(*) AS match_decision_detail_rows
+          FROM ${SCHEMA_NAME}.match_decision_detail
+          WHERE 1=1 ${WAREHOUSE_SQL_FILTER};
+
+          \\echo ''
+          \\echo '### vertex_audit_columns'
+          SELECT column_name, data_type
+          FROM information_schema.columns
+          WHERE table_schema = '${SCHEMA_NAME}'
+            AND table_name = 'transaction'
+            AND column_name IN (
+              'match_type',
+              'match_score',
+              'matching_comments',
+              'primary_transaction',
+              'vertex_combined_score',
+              'vertex_address_score',
+              'vertex_name_score',
+              'vertex_weight_formula',
+              'vertex_model',
+              'match_run_id'
+            )
+          ORDER BY column_name;
+          SQL
+
+          export PGPASSWORD="$(gcloud auth print-access-token)"
+          {
+            echo '```text'
+            psql "host=127.0.0.1 port=5432 dbname=lead-mgmt-db user=gco-iam-svc-cicd-mbr-bc-np@gcp-prj-cicd-core.iam sslmode=disable" \
+              -v ON_ERROR_STOP=1 \
+              -f "${RUNNER_TEMP}/lead_match_preflight.sql"
+            echo '```'
+            echo ""
+          } >> "${REPORT_FILE}"
+
+      - name: Add readiness notes
+        if: always()
+        run: |
+          {
+            echo "## Readiness Notes"
+            echo ""
+            echo "- This workflow is read-only except writing this preflight report."
+            echo "- If prepare_resources=true, it also creates GCS marker files and \`${SCHEMA_NAME}.match_decision_detail\` if missing."
+            echo "- It does not execute \`lead_match_workflow\`."
+            echo "- It does not execute \`lead-match-job\`."
+            echo "- Exact vs Vertex/Fuzzy is tracked by \`transaction.match_type\`."
+            echo "- Vertex component scores should be written to \`${SCHEMA_NAME}.match_decision_detail\` by the semantic matching code."
+            echo ""
+            echo "Report GCS URI: \`${REPORT_URI}\`"
+          } >> "${REPORT_FILE}"
+
+      - name: Upload report to GCS
+        if: always()
+        run: |
+          set -euo pipefail
+          gsutil cp "${REPORT_FILE}" "${REPORT_URI}"
+
+      - name: Summary
+        if: always()
+        run: |
+          cat "${REPORT_FILE}" >> "$GITHUB_STEP_SUMMARY"
