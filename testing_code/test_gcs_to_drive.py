@@ -96,32 +96,22 @@ def upload_to_drive(drive, data: bytes, filename: str, mime_type: str = "applica
 
 def pick_gcs_blob(gcs_client) -> tuple[str, bytes]:
     """
-    If GCS_BLOB_NAME is set, download that blob.
-    Otherwise scan GCS_PREFIX and pick the first non-checkpoint blob.
-    Returns (blob_name, data_bytes).
+    Writes a tiny test file to GCS then reads it back.
+    Keeps the test fast — no large production files downloaded.
     """
     bucket = gcs_client.bucket(BUCKET_NAME)
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    blob_name = f"{GCS_PREFIX}/_test_gcs_write_{timestamp}.txt"
+    test_data = f"GCS connectivity test\ntimestamp: {timestamp}\n".encode("utf-8")
 
-    if GCS_BLOB_NAME:
-        blob = bucket.blob(GCS_BLOB_NAME)
-        if not blob.exists():
-            log.error("Blob not found in GCS: gs://%s/%s", BUCKET_NAME, GCS_BLOB_NAME)
-            sys.exit(1)
-        log.info("Using specified blob: gs://%s/%s", BUCKET_NAME, GCS_BLOB_NAME)
-        return GCS_BLOB_NAME, blob.download_as_bytes()
-
-    log.info("Scanning gs://%s/%s for blobs ...", BUCKET_NAME, GCS_PREFIX)
-    blobs = list(gcs_client.list_blobs(BUCKET_NAME, prefix=GCS_PREFIX + "/"))
-    real_blobs = [b for b in blobs if not b.name.endswith("/") and ".run_checkpoint" not in b.name]
-
-    if not real_blobs:
-        log.error("No blobs found under gs://%s/%s", BUCKET_NAME, GCS_PREFIX)
-        log.error("Set GCS_BLOB_NAME env var to specify a blob explicitly.")
-        sys.exit(1)
-
-    chosen = real_blobs[0]
-    log.info("Picked blob: gs://%s/%s  (size=%s bytes)", BUCKET_NAME, chosen.name, chosen.size)
-    return chosen.name, chosen.download_as_bytes()
+    log.info("Writing test blob to gs://%s/%s ...", BUCKET_NAME, blob_name)
+    bucket.blob(blob_name).upload_from_string(test_data, content_type="text/plain")
+    log.info("GCS write OK — reading back ...")
+    data = bucket.blob(blob_name).download_as_bytes()
+    log.info("GCS read OK (%d bytes)", len(data))
+    bucket.blob(blob_name).delete()
+    log.info("GCS test blob deleted")
+    return blob_name, data
 
 
 # ── Test steps ────────────────────────────────────────────────────────────────
