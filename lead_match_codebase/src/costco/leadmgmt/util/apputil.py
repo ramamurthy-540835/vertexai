@@ -1,8 +1,11 @@
 from datetime import datetime, timedelta
+from io import StringIO
+
+import pandas as pd
 from google.cloud import secretmanager
 from google.cloud import storage
-from io import StringIO
-import pandas as pd
+from pandas.errors import EmptyDataError
+
 from costco.leadmgmt.util.logger import app_logger
 
 def access_secret_version(project_id, secret_id, version_id="latest"):
@@ -68,8 +71,36 @@ def load_file_from_gcs(file_path, dtype=None):
     bucket = storage_client.bucket(bucket_name)
     blob = bucket.blob(file_name)
     file_content = blob.download_as_text()
+    if not file_content.strip():
+        raise ValueError(f"GCS CSV is empty: {file_path}")
     csv_data = StringIO(file_content)
-    return pd.read_csv(csv_data, dtype=dtype)
+    try:
+        return pd.read_csv(csv_data, dtype=dtype)
+    except EmptyDataError as exc:
+        raise ValueError(f"GCS CSV has no parseable columns: {file_path}") from exc
+
+
+def build_match_output_uri(storage_config, match_id="", warehouse=""):
+    warehouse_label = (warehouse or "all").replace(",", "-").strip() or "all"
+    file_name = (
+        f"final_update_dataframe_{match_id}_{warehouse_label}.csv"
+        if match_id else f"final_update_dataframe_{warehouse_label}.csv"
+    )
+    return (
+        f"gs://{storage_config.output_bucket_name}/"
+        f"{storage_config.source_folder_output}/"
+        f"{file_name}"
+    )
+
+
+def gcs_blob_exists(file_path):
+    if not file_path.startswith("gs://"):
+        raise ValueError("Invalid GCS URI. Must start with 'gs://'.")
+    storage_client = storage.Client()
+    bucket_name, file_name = file_path.replace("gs://", "").split("/", 1)
+    bucket = storage_client.bucket(bucket_name)
+    blob = bucket.blob(file_name)
+    return blob.exists()
 
 
 def process_and_archive_files(source_bucket_name, source_folder, destination_bucket_name, destination_folder, new_file,
