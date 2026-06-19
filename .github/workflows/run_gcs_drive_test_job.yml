@@ -13,6 +13,11 @@ on:
           - 'qat'
           - 'spt'
           - 'prd'
+      drive_folder_id:
+        description: 'Override Drive folder ID (leave blank to use env default)'
+        required: false
+        type: string
+        default: ''
 
 jobs:
   run-test:
@@ -53,6 +58,10 @@ jobs:
             echo "POS_BUCKET_NAME=gcp-gcs-lead-mgmt-us-adt-pos-raw" >> $GITHUB_ENV
             echo "DRIVE_FOLDER_ID=1DNs3o1WxHMdZJXT0OibD3KLfeiAczWCi" >> $GITHUB_ENV
             echo "SERVICE_ACCOUNT=gco-iam-svc-lead-mgmt-bc-adt@p-601-np-bcleadsmgmt-adt.iam.gserviceaccount.com" >> $GITHUB_ENV
+          fi
+          # Override Drive folder if provided
+          if [[ -n "${{ github.event.inputs.drive_folder_id }}" ]]; then
+            echo "DRIVE_FOLDER_ID=${{ github.event.inputs.drive_folder_id }}" >> $GITHUB_ENV
           fi
           echo "IMAGE=us-docker.pkg.dev/gcp-prj-images/gcp-gar-repo-mbrshp/gcs-drive-test:latest" >> $GITHUB_ENV
           echo "JOB_NAME=gcs-drive-test-job" >> $GITHUB_ENV
