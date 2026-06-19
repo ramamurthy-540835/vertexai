@@ -19,7 +19,7 @@ on:
       - 'feature/**'
     tags:
       - release-spt*
-      - release-prd-phase2-*
+      - release-prd*
     paths:
       - .github/workflows/lead_match_job_deployment.yml
       - lead_management_job/**
@@ -27,7 +27,7 @@ on:
 
 jobs:
   build-and-deploy:
-    runs-on: ${{ startsWith(github.ref, 'refs/tags/release-prd-phase2') && 'cw-gcp-us-west1-pd' || 'cw-gcp-us-west1-np' }}
+    runs-on: ${{ startsWith(github.ref, 'refs/tags/release-prd') && 'cw-gcp-us-west1-pd' || 'cw-gcp-us-west1-np' }}
     permissions:
       id-token: write
       contents: read
@@ -41,7 +41,7 @@ jobs:
 
       - name: Set ENV early for auth
         run: |
-          if [[ "${GITHUB_REF}" == refs/tags/release-prd-phase2-* ]]; then
+          if [[ "${GITHUB_REF}" == refs/tags/release-prd* ]]; then
             echo "ENV=prd" >> $GITHUB_ENV
           else
             echo "ENV=non-prd" >> $GITHUB_ENV
@@ -106,7 +106,7 @@ jobs:
             echo "NETWORK=projects/gcp-prj-transit-hub/global/networks/gcp-vpc-np-host" >> $GITHUB_ENV
             echo "SUBNET=projects/gcp-prj-transit-hub/regions/us-central1/subnetworks/gcp-snt-np-usc1-601-cloudrunjobs-np" >> $GITHUB_ENV
 
-          elif [[ "$REF" == refs/tags/release-prd-phase2-* ]]; then
+          elif [[ "$REF" == refs/tags/release-prd* ]]; then
             echo "ENV=prd" >> $GITHUB_ENV
             echo "DEPLOY=true" >> $GITHUB_ENV
             echo "PROJECT_ID=p-601-pd-bcleadsmgmt-prd" >> $GITHUB_ENV

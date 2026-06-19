@@ -1,12 +1,10 @@
 import pandas as pd
-import os
 from sqlalchemy import text, bindparam
 from datetime import datetime
 
 from costco.leadmgmt.config.Configuration import JobConfig
 from costco.leadmgmt.util.apputil import load_file_from_gcs, process_and_archive_files
 from costco.leadmgmt.util.fiscal_year import get_costco_fiscal_info
-from costco.leadmgmt.util.warehouse_scope import parse_warehouse_scope
 
 
 # ==============================================================
@@ -92,11 +90,7 @@ def get_confidence_level(similarity_score, match_configuration_df):
 # ==============================================================
 # FUZZY MATCHING
 # ==============================================================
-def fuzzy_matching(
-    file_classified_path: str,
-    config_file_path: str,
-    warehouse: str | None = None,
-) -> str:
+def fuzzy_matching(file_classified_path: str, config_file_path: str) -> str:
 
     # ----------------------------------------------------------
     # INITIALIZATION
@@ -110,8 +104,6 @@ def fuzzy_matching(
     source_folder             = storage_config.source_folder_output
     destination_bucket_name   = storage_config.destination_bucket_name
     destination_folder        = storage_config.destination_folder_output
-    vertex_source_folder      = storage_config.source_folder_output_vertex
-    vertex_destination_folder = storage_config.destination_folder_output_vertex
 
     query_fuzzy_wh            = query_config.query_fuzzy_wh
     query_fuzzy_null_wh       = query_config.query_fuzzy_null_wh
@@ -132,11 +124,6 @@ def fuzzy_matching(
         .astype("Int64")
     )
     classified_df["pos_id"] = classified_df["pos_id"].astype(str)
-    warehouse_scope = parse_warehouse_scope(warehouse)
-    if warehouse_scope:
-        classified_df = classified_df[
-            classified_df["warehouse_number"].isin(warehouse_scope)
-        ].copy()
 
     # ----------------------------------------------------------
     # RUN FUZZY QUERY — leads with a warehouse number
@@ -169,38 +156,13 @@ def fuzzy_matching(
     # ----------------------------------------------------------
     # COMPUTE FUZZY SIMILARITY SCORE
     # ----------------------------------------------------------
-    if master_df.empty:
-        df_fuzzy_result = pd.DataFrame(columns=[
-            "lead_id",
-            "pos_id",
-            "similarity_score",
-            "combined_field_score",
-            "full_address_score",
-            "business_name_score",
-            "account_number",
-            "fiscal_year",
-            "fiscal_period",
-            "week",
-            "warehouse_number",
-            "business_name",
-        ])
-    else:
-        for score_column in [
-            "combined_field_score",
-            "full_address_score",
-            "business_name_score",
-        ]:
-            master_df[score_column] = pd.to_numeric(
-                master_df[score_column], errors="coerce"
-            ).fillna(0)
+    master_df["similarity_score"] = (
+        (master_df["combined_field_score"]
+         + 4 * master_df["full_address_score"]
+         + 3 * master_df["business_name_score"]) / 8
+    )
 
-        master_df["similarity_score"] = (
-            (master_df["combined_field_score"]
-             + 4 * master_df["full_address_score"]
-             + 3 * master_df["business_name_score"]) / 8
-        )
-
-        df_fuzzy_result = master_df[master_df["similarity_score"] >= 80].copy()
+    df_fuzzy_result = master_df[master_df["similarity_score"] >= 80].copy()
 
     # ----------------------------------------------------------
     # KEEP FUZZY RESULT SLIM — only scoring + core match fields.
@@ -481,12 +443,7 @@ def fuzzy_matching(
     # WRITE TO GCS
     # ----------------------------------------------------------
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    match_id = os.environ.get("MATCH_ID", "").strip()
-    warehouse_label = (warehouse or "all").replace(",", "-").strip() or "all"
-    base_name = (
-        f"final_update_dataframe_{match_id}_{warehouse_label}_{timestamp}"
-        if match_id else f"final_update_dataframe_{warehouse_label}_{timestamp}"
-    )
+    base_name = f"final_update_dataframe_{timestamp}"
 
     uri = process_and_archive_files(
         source_bucket_name,
@@ -498,14 +455,4 @@ def fuzzy_matching(
     )
 
     print(f"Fuzzy match output written to: {uri}")
-    vertex_uri = process_and_archive_files(
-        source_bucket_name,
-        vertex_source_folder,
-        destination_bucket_name,
-        vertex_destination_folder,
-        final_df,
-        base_name,
-    )
-
-    print(f"Fuzzy explainability output written to: {vertex_uri}")
     return uri

@@ -725,27 +725,6 @@ def _write_processed_manifest(storage_config, processed_pos_ids: list) -> str:
     return uri
 
 
-def _write_classified_handoff(storage_config, classified_df: pd.DataFrame) -> str:
-    """
-    Write the deterministic match output to a stable temporary object so a
-    later Cloud Run stage can read it without KFP-style output passing.
-    """
-    bucket_name = storage_config.output_bucket_name
-    object_path = (
-        f"{storage_config.temporary_folder}/"
-        f"{storage_config.leads_classified_file_name}"
-    )
-
-    client = storage.Client()
-    bucket = client.get_bucket(bucket_name)
-    blob = bucket.blob(object_path)
-    blob.upload_from_string(classified_df.to_csv(index=False), content_type="text/csv")
-
-    uri = f"gs://{bucket_name}/{object_path}"
-    log.info("Wrote classified handoff file: %s", uri)
-    return uri
-
-
 # ==============================================================
 # CLASSIFY MATCHES
 # ==============================================================
@@ -1179,9 +1158,9 @@ def primary_classification(
         file_b_path = storage_config.temp_pos_path
 
     source_bucket_name      = storage_config.source_bucket_name
-    source_folder           = storage_config.source_folder_output_exact
+    source_folder           = storage_config.source_folder_output
     destination_bucket_name = storage_config.destination_bucket_name
-    destination_folder      = storage_config.destination_folder_output_exact
+    destination_folder      = storage_config.destination_folder_output
 
     schema     = db_config.schema_name
     table_name = db_config.audit_table_name
@@ -1285,8 +1264,6 @@ def primary_classification(
         file_a, file_b_path, classify_matches,
         tmp_prefix=tmp_prefix, sales_dtype=STRING_COLS,
     )
-    if final_df.empty and len(final_df.columns) == 0:
-        final_df = pd.DataFrame(columns=_output_columns())
     log.info("POS count (streamed): %d", total_pos_rows)
 
     # Backfill the real POS count onto the InProgress audit row now that
@@ -1313,7 +1290,6 @@ def primary_classification(
     )
 
     log.info("Final output written to: %s", uri)
-    _write_classified_handoff(storage_config, final_df)
 
     # Manifest of scanned transactions — update_cloud_sql marks these
     # is_processed=true (after the match write commits) so they're

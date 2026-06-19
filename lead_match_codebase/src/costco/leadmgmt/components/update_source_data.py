@@ -1,20 +1,15 @@
 import pandas as pd
 import sqlalchemy
-import os
 from sqlalchemy import text, bindparam
 from datetime import datetime
 from costco.leadmgmt.config.Configuration import JobConfig
-from costco.leadmgmt.util.apputil import (
-    build_match_output_uri,
-    gcs_blob_exists,
-    load_file_from_gcs,
-)
+from costco.leadmgmt.util.apputil import load_file_from_gcs
 from google.cloud import storage
 from sqlalchemy.types import TIMESTAMP
 import numpy as np
 
 
-def get_gcs_file_path(uri: str, match_id: str = "") -> str:
+def get_gcs_file_path(uri: str) -> str:
     if not uri.startswith("gs://"):
         raise ValueError("Invalid GCS URI. Must start with 'gs://'.")
 
@@ -31,38 +26,14 @@ def get_gcs_file_path(uri: str, match_id: str = "") -> str:
     client = storage.Client()
     bucket = client.bucket(bucket_name)
 
-    # Retries or archive timing can leave more than one final output in the
-    # folder. Prefer this workflow's match_id-stamped CSV, then fall back to
-    # the latest CSV so old artifacts remain recoverable.
-    blobs = [
-        blob for blob in bucket.list_blobs(prefix=folder_path)
-        if (
-            not blob.name.endswith("/")
-            and blob.name.lower().endswith(".csv")
-            and (blob.size or 0) > 0
-        )
-    ]
+    # List blobs under the folder
+    blobs = list(bucket.list_blobs(prefix=folder_path))
+    files = [blob.name for blob in blobs if not blob.name.endswith('/')]
 
-    if not blobs:
-        raise ValueError(f"No non-empty CSV files found in '{uri}'")
+    if len(files) != 1:
+        raise ValueError(f"Expected exactly one file in '{uri}', found {len(files)}")
 
-    if match_id:
-        scoped_blobs = [blob for blob in blobs if match_id in blob.name]
-        if scoped_blobs:
-            blobs = scoped_blobs
-        else:
-            print(f"No CSV files containing MATCH_ID '{match_id}' found in '{uri}', using latest CSV")
-
-    blobs.sort(key=lambda blob: blob.updated, reverse=True)
-    if len(blobs) > 1:
-        print(f"Found {len(blobs)} CSV files in '{uri}', using latest: {blobs[0].name}")
-
-    print(
-        "Selected final match CSV: "
-        f"gs://{bucket_name}/{blobs[0].name} "
-        f"(size={blobs[0].size}, updated={blobs[0].updated})"
-    )
-    return f"gs://{bucket_name}/{blobs[0].name}"
+    return f"gs://{bucket_name}/{files[0]}"
 
 
 def _is_truthy(v) -> bool:
@@ -227,23 +198,7 @@ def update_cloud_sql(config_file_path: str,file_path: str = ""):
     standalone_file_path=storage_config.standalone_file_path
 
     if file_path == "":
-        file_path = os.environ.get("FINAL_OUTPUT_PATH", "")
-
-    if file_path == "":
-        match_id = os.environ.get("MATCH_ID", "").strip()
-        warehouse = os.environ.get("WAREHOUSE", "").strip()
-        if match_id:
-            candidate_path = build_match_output_uri(
-                storage_config,
-                match_id=match_id,
-                warehouse=warehouse,
-            )
-            if gcs_blob_exists(candidate_path):
-                file_path = candidate_path
-                print(f"Resolved exact match output for MATCH_ID {match_id}: {file_path}")
-
-    if file_path == "":
-        file_path = get_gcs_file_path(standalone_file_path, os.environ.get("MATCH_ID", ""))
+        file_path = get_gcs_file_path(standalone_file_path)
 
     # Load the files from GCS into pandas DataFrames
     final_df = load_file_from_gcs(file_path)

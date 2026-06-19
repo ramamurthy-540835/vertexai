@@ -5,12 +5,8 @@ from costco.leadmgmt.components.update_source_data import update_cloud_sql
 from costco.leadmgmt.components.update_servicenow import update_servicenow
 from costco.leadmgmt.components.data_ingestion_cloud_sql import load_and_preprocess_data_cloud_sql
 from costco.leadmgmt.components.lead_matching import primary_classification
-from costco.leadmgmt.components.vector_db_loading_leads import embedding_generation as embedding_generation_leads
-from costco.leadmgmt.components.vector_db_loading_pos import embedding_generation as embedding_generation_pos
-from costco.leadmgmt.components.fuzzy_matching_sql import fuzzy_matching
 #from costco.leadmgmt.components.temporary_file_deletion import delete_temp_files_from_gcs
 from costco.leadmgmt.components.validation_del_temp_files import delete_temp_files_from_gcs,mark_match_failed
-from costco.leadmgmt.config.Configuration import JobConfig
 import sys
 import os
 
@@ -19,7 +15,7 @@ print(f"Using match_id: {match_id}")
 
 def run_pipeline(config_file_path,match_id):
 
-    project_id = os.environ.get("PROJECT_ID") or os.environ.get("GCP_PROJECT_ID")
+    project_id = os.environ.get("PROJECT_ID")
     region = os.environ.get("REGION")
     pipeline_name = os.environ.get("PIPELINE_NAME")
     vertex_ai_network = os.environ.get("VERTEX_AI_NETWORK")
@@ -82,10 +78,6 @@ if __name__ == "__main__":
     config_file_path = os.environ.get("CONFIG_FILE_PATH")
     pipeline_name = os.environ.get("PIPELINE_NAME")
     registry_url = os.environ.get("ARTIFACT_REGISTRY_URL")
-    project_id = os.environ.get("PROJECT_ID") or os.environ.get("GCP_PROJECT_ID")
-    max_workers = int(os.environ.get("MAX_WORKERS", "5"))
-    warehouse = os.environ.get("WAREHOUSE")
-    final_output_path = os.environ.get("FINAL_OUTPUT_PATH", "")
 
     if stage.lower() == "compile_run_pipeline":
         compile_and_upload_pipeline(pipeline_name,registry_url)
@@ -95,46 +87,15 @@ if __name__ == "__main__":
     elif stage.lower() == "compile_pipeline":
         compile_and_upload_pipeline(pipeline_name, registry_url)
     elif stage.lower() == "update_database":
-        update_cloud_sql(config_file_path, file_path=final_output_path)
+        update_cloud_sql(config_file_path)
     elif stage.lower() == "update_service_now":
-        update_servicenow(config_file_path, file_path=final_output_path)
+        update_servicenow(config_file_path)
     elif stage.lower() == "ingest_leads_from_cloud_sql":
-        load_and_preprocess_data_cloud_sql('leads',config_file_path, warehouse=warehouse)
+        load_and_preprocess_data_cloud_sql('leads',config_file_path)
     elif stage.lower() == "ingest_pos_from_cloud_sql":
-        load_and_preprocess_data_cloud_sql('pos',config_file_path, warehouse=warehouse)
-    elif stage.lower() == "embedding_generation_leads":
-        job_config = JobConfig(config_file_path)
-        embedding_generation_leads(
-            file_leads=job_config.storage_config.temp_leads_path,
-            config_file_path=config_file_path,
-            project_id=project_id,
-            max_workers=max_workers,
-            warehouse=warehouse,
-        )
-    elif stage.lower() == "embedding_generation_pos":
-        job_config = JobConfig(config_file_path)
-        embedding_generation_pos(
-            file_pos=job_config.storage_config.temp_pos_path,
-            config_file_path=config_file_path,
-            project_id=project_id,
-            max_workers=max_workers,
-            warehouse=warehouse,
-        )
+        load_and_preprocess_data_cloud_sql('pos',config_file_path)   
     elif stage.lower() == "primary_matching":
         primary_classification(match_id,config_file_path)
-    elif stage.lower() == "fuzzy_matching":
-        job_config = JobConfig(config_file_path)
-        storage_config = job_config.storage_config
-        classified_path = (
-            f"gs://{storage_config.output_bucket_name}/"
-            f"{storage_config.temporary_folder}/"
-            f"{storage_config.leads_classified_file_name}"
-        )
-        fuzzy_matching(
-            file_classified_path=classified_path,
-            config_file_path=config_file_path,
-            warehouse=warehouse,
-        )
     elif stage.lower() == "temporary_file_deletion":
         delete_temp_files_from_gcs(match_id,config_file_path)
     elif stage.lower() == "mark_match_failed":
