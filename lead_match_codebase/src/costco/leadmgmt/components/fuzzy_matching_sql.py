@@ -1,4 +1,5 @@
 import pandas as pd
+import os
 from sqlalchemy import text, bindparam
 from datetime import datetime
 
@@ -482,7 +483,11 @@ def fuzzy_matching(
     # WRITE TO GCS
     # ----------------------------------------------------------
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    base_name = f"final_update_dataframe_{timestamp}"
+    match_id = os.environ.get("MATCH_ID", "").strip()
+    base_name = (
+        f"final_update_dataframe_{match_id}_{timestamp}"
+        if match_id else f"final_update_dataframe_{timestamp}"
+    )
 
     uri = process_and_archive_files(
         source_bucket_name,
