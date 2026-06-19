@@ -3,11 +3,29 @@
 
 import argparse
 import json
+import os
 import sys
 from datetime import datetime
 from pathlib import Path
 
+import google.auth
+from google.auth import impersonated_credentials
 from google import genai
+
+
+def get_credentials():
+    target_service_account = os.environ.get("TARGET_SERVICE_ACCOUNT")
+    if not target_service_account:
+        return None
+
+    source_credentials, _ = google.auth.default(
+        scopes=["https://www.googleapis.com/auth/cloud-platform"]
+    )
+    return impersonated_credentials.Credentials(
+        source_credentials=source_credentials,
+        target_principal=target_service_account,
+        target_scopes=["https://www.googleapis.com/auth/cloud-platform"],
+    )
 
 
 def main() -> int:
@@ -31,7 +49,12 @@ def main() -> int:
     }
 
     try:
-        client = genai.Client(vertexai=True, project=args.project_id, location=args.location)
+        client = genai.Client(
+            vertexai=True,
+            project=args.project_id,
+            location=args.location,
+            credentials=get_credentials(),
+        )
         response = client.models.embed_content(
             model=args.model,
             contents="Warehouse 115 validation smoke test",

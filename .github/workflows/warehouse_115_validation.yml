@@ -32,6 +32,7 @@ jobs:
       ENV_NAME:   ${{ github.event.inputs.environment }}
       WAREHOUSE:  ${{ github.event.inputs.warehouse }}
       PROJECT_ID: ${{ github.event.inputs.environment == 'prd' && 'p-601-pd-bcleadsmgmt-prd' || format('p-601-np-bcleadsmgmt-{0}', github.event.inputs.environment) }}
+      TARGET_SERVICE_ACCOUNT: gco-iam-svc-lead-mgmt-bc-${{ github.event.inputs.environment }}@${{ github.event.inputs.environment == 'prd' && 'p-601-pd-bcleadsmgmt-prd' || format('p-601-np-bcleadsmgmt-{0}', github.event.inputs.environment) }}.iam.gserviceaccount.com
       CONFIG_DIR: 'lead_management_job'
 
     steps:
@@ -48,9 +49,8 @@ jobs:
       - name: Auth to GCP
         uses: google-github-actions/auth@v2
         with:
-          token_format: 'access_token'
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
-          service_account: gco-iam-svc-lead-mgmt-bc-${{ github.event.inputs.environment }}@${{ github.event.inputs.environment == 'prd' && 'p-601-pd-bcleadsmgmt-prd' || format('p-601-np-bcleadsmgmt-{0}', github.event.inputs.environment) }}.iam.gserviceaccount.com
+          service_account: ${{ github.event.inputs.environment == 'prd' && secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL_PRD || secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
           create_credentials_file: true
           export_environment_variables: true
 
@@ -63,6 +63,11 @@ jobs:
           gcloud auth list
           echo "Config:"
           gcloud config list
+          echo "Target service account:"
+          echo "${TARGET_SERVICE_ACCOUNT}"
+          gcloud auth print-access-token \
+            --impersonate-service-account="${TARGET_SERVICE_ACCOUNT}" \
+            --quiet >/dev/null
 
       - name: Install Dependencies
         run: |

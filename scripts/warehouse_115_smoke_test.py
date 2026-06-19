@@ -11,13 +11,31 @@ Warehouse Smoke Test Script (Generic & Safe)
 import argparse
 import configparser
 import json
+import os
 import sys
 from datetime import datetime
 from pathlib import Path
 
+import google.auth
 import pandas as pd
 import sqlalchemy
+from google.auth import impersonated_credentials
 from google.cloud.sql.connector import Connector, IPTypes
+
+
+def get_target_credentials():
+    target_service_account = os.environ.get("TARGET_SERVICE_ACCOUNT")
+    if not target_service_account:
+        return None
+
+    source_credentials, _ = google.auth.default(
+        scopes=["https://www.googleapis.com/auth/cloud-platform"]
+    )
+    return impersonated_credentials.Credentials(
+        source_credentials=source_credentials,
+        target_principal=target_service_account,
+        target_scopes=["https://www.googleapis.com/auth/cloud-platform"],
+    )
 
 
 def get_db_metrics_safe(engine, schema_name: str, warehouse: str):
@@ -188,13 +206,16 @@ def main():
         sql_ip_type = config.get("DATABASE", "cloud_sql_ip_type", fallback="PRIVATE")
 
         ip_type = IPTypes.PRIVATE if sql_ip_type == "PRIVATE" else IPTypes.PUBLIC
+        target_credentials = get_target_credentials()
 
         print(f"\n[INFO] Loaded DB user from INI: {db_user}")
         print(f"[INFO] Target schema: {schema_name}")
+        if target_credentials:
+            print(f"[INFO] Using impersonated credentials for: {os.environ['TARGET_SERVICE_ACCOUNT']}")
 
         # Secure connection creator function using WIF IAM auth
         def get_conn():
-            connector = Connector()
+            connector = Connector(credentials=target_credentials)
             conn = connector.connect(
                 instance_connection_name,
                 "pg8000",
