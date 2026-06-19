@@ -1,0 +1,143 @@
+{
+  "_meta": {
+    "rule_set": "costco_lead_to_pos_semantic_match",
+    "schema_version": "1.0",
+    "purpose": "Externalizes the Lead-to-POS matching business rules so the engine reads them from config instead of hardcoding. Values below reflect the CURRENT behavior in the code; the 'divergences' block lists where today's code does not yet match this contract.",
+    "grounded_in": {
+      "candidate_retrieval_and_scoring": "fuzzy_matching_sql.py + configuration_adt.ini [QUERY].query_fuzzy_wh",
+      "exact_scoring": "primary_matching.py",
+      "six_set_and_closed_existing": "lead_matching.py (NOT wired into the active pipeline)",
+      "embedding_generation": "vector_db_loading_pos.py (POS), vector_db_loading_leads.py (leads)"
+    },
+    "primary_fact": "A LEAD can match MANY POS transactions (one-to-many). A POS transaction belongs to AT MOST ONE lead (one-to-one): when several leads score against the same pos_id, the highest similarity_score wins and the others are dropped. Among the POS a lead matches, the earliest qualifying ('Complete') transaction by fiscal_year -> fiscal_period -> week is flagged primary_transaction.",
+    "divergences_current_code_vs_this_contract": [
+      "Leads are still embedded with text-embedding-005 (vector_db_loading_leads.py); this contract requires gemini-embedding-001 on BOTH sides. Until fixed, cross-model cosine is invalid.",
+      "Leads are not L2-normalized and still write a zero-vector fallback; this contract requires l2_normalize=true and drop-on-failure.",
+      "Confidence bands are currently read from the lead_mgmt_*.match_configuration DB table, not from code; this JSON proposes moving them here. Keep ONE source of truth.",
+      "The validation plan mentions embedding OMS address fields, but the embedders only embed combined_field / full_address / business_name. OMS fields feed the deterministic (exact) matcher only.",
+      "Schema is hardcoded as lead_mgmt_costco in the matching SQL; 'environment.schema' below is the value the SQL must be parameterized with."
+    ]
+  },
+
+  "environment": {
+    "name": "spt",
+    "schema": "lead_mgmt_spt",
+    "project_id": "p-601-np-bcleadsmgmt-spt",
+    "vector_store": "postgres_pgvector",
+    "embedding_model": "gemini-embedding-001",
+    "task_type": "SEMANTIC_SIMILARITY",
+    "output_dimensionality": 768,
+    "l2_normalize": true
+  },
+
+  "scope": {
+    "warehouse_number": 115,
+    "warehouse_mode": "single",
+    "_warehouse_options": "integer = single warehouse | [int,int,...] = subset | null = all warehouses",
+    "fiscal_year": null,
+    "_fiscal_year_note": "null = bind :fiscal_year_sales at runtime from current Costco fiscal info",
+    "candidate_constraints": {
+      "same_warehouse": true,
+      "fiscal_rule": "lead_period_on_or_before_transaction",
+      "fiscal_expression": "lead.fiscal_year < pos.fiscal_year OR (lead.fiscal_year = pos.fiscal_year AND lead.fiscal_period <= pos.fiscal_period)"
+    }
+  },
+
+  "embeddings": [
+    {
+      "name": "combined_field",
+      "source_text_column": "combined_field",
+      "lead_vector_column": "combined_embedding",
+      "pos_vector_column": "combined_embedding",
+      "dimension": 768,
+      "weight": 1,
+      "role": "candidate_gate_and_scoring"
+    },
+    {
+      "name": "full_address",
+      "source_text_column": "full_address",
+      "lead_vector_column": "address_embedding",
+      "pos_vector_column": "address_embedding",
+      "dimension": 768,
+      "weight": 4,
+      "role": "scoring"
+    },
+    {
+      "name": "business_name",
+      "source_text_column": "business_name",
+      "lead_vector_column": "name_embedding",
+      "pos_vector_column": "name_embedding",
+      "dimension": 768,
+      "weight": 3,
+      "role": "scoring"
+    }
+  ],
+
+  "candidate_retrieval": {
+    "method": "pgvector_hnsw",
+    "distance_metric": "cosine",
+    "operator": "<=>",
+    "gate_embedding": "combined_field",
+    "max_cosine_distance": 0.2,
+    "_gate_note": "Keep candidate only if (lead.combined_embedding <=> pos.combined_embedding) <= 0.2, i.e. cosine similarity >= 0.80.",
+    "per_field_score_expression": "(1 - cosine_distance) * 100",
+    "nan_handling": "coalesce_to_zero",
+    "combined_score_formula": "(combined_field_score + 4 * full_address_score + 3 * business_name_score) / 8",
+    "_combined_score_note": "Weighted average; divisor 8 = sum of weights (1+4+3). Range 0-100."
+  },
+
+  "confidence_bands": {
+    "_note": "Applied to combined_score (0-100). Inclusive lower bound, exclusive upper bound except the top band.",
+    "bands": [
+      { "result": "Complete",  "min_score": 100, "max_score": 100 },
+      { "result": "Potential", "min_score": 80,  "max_score": 99 },
+      { "result": "No Match",  "min_score": 0,   "max_score": 79 }
+    ],
+    "qualify_min_score": 80
+  },
+
+  "cardinality": {
+    "lead_to_pos": "one_to_many",
+    "pos_to_lead": "one_to_one",
+    "pos_resolution": {
+      "dedup_key": "pos_id",
+      "tie_break": "highest_similarity_score_wins",
+      "sort": [{ "field": "similarity_score", "direction": "desc" }],
+      "keep": "first"
+    },
+    "primary_transaction": {
+      "definition": "Earliest qualifying transaction per lead is flagged primary_transaction = true.",
+      "qualifying_result": "Complete",
+      "order_by": ["fiscal_year_transaction", "fiscal_period_transaction", "week"],
+      "select": "rank == 1"
+    }
+  },
+
+  "closed_existing": {
+    "enabled": true,
+    "_status": "Implemented in lead_matching.py (six-set engine); NOT active in the wired fuzzy path.",
+    "rule": "If a matched transaction predates the lead (earlier fiscal_year, or same year earlier period, or same year/period earlier week), mark the lead Closed-Existing, remove it from the active matching set, and stop matching it for the rest of the run.",
+    "comparison_order": ["fiscal_year", "fiscal_period", "week"]
+  },
+
+  "exact_match_reference": {
+    "_note": "Deterministic exact matcher that runs before/alongside semantic. Kept here so both layers share one rule file.",
+    "key_fields": { "business_name": 40, "address_line_one": 40, "email": 30, "phone": 20 },
+    "supplementary_fields": { "zip_code": 10, "state": 5, "city": 5 },
+    "minimum_score": 80,
+    "complete_score": 100,
+    "max_possible_score": 150
+  },
+
+  "override_policy": {
+    "rule": "Semantic (fuzzy) result overrides the exact result for a lead ONLY when fuzzy similarity_score is strictly greater than the exact similarity_score.",
+    "match_type_when_overridden": "Fuzzy",
+    "match_type_default": "Exact"
+  },
+
+  "output_contract": {
+    "key_columns": ["lead_id", "pos_id"],
+    "result_columns": ["match_result", "similarity_score", "match_type", "primary_transaction", "closed_existing_flag", "matching_comments"],
+    "dedup_final": ["lead_id", "pos_id"]
+  }
+}

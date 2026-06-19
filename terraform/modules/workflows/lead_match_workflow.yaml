@@ -8,6 +8,7 @@ main:
           - job_location: us-central1
           - job_name: lead-match-job
           - match_id: ${uuid.generate()}
+          - warehouse: ${string(default(map.get(input, "warehouse"), ""))}
 
     # ── Ingestion (parallel) ──
     # These stages don't use match_id — no audit failure write needed,
@@ -29,6 +30,9 @@ main:
                                 args:
                                   - run.py
                                   - ingest_leads_from_cloud_sql
+                                env:
+                                  - name: WAREHOUSE
+                                    value: ${warehouse}
                           connector_params:
                             timeout: 72000
                             polling_policy:
@@ -50,6 +54,9 @@ main:
                                 args:
                                   - run.py
                                   - ingest_pos_from_cloud_sql
+                                env:
+                                  - name: WAREHOUSE
+                                    value: ${warehouse}
                           connector_params:
                             timeout: 72000
                             polling_policy:
@@ -79,6 +86,80 @@ main:
             - raise_ingest_error:
                 raise: ${ingest_error}
 
+    # ── Embedding generation (parallel) ──
+    - embed_parallel:
+        try:
+          parallel:
+            branches:
+              - embed_leads_branch:
+                  steps:
+                    - embed_leads:
+                        call: googleapis.run.v1.namespaces.jobs.run
+                        args:
+                          name: ${"namespaces/" + project_id + "/jobs/" + job_name}
+                          location: ${job_location}
+                          body:
+                            overrides:
+                              containerOverrides:
+                                args:
+                                  - run.py
+                                  - embedding_generation_leads
+                                env:
+                                  - name: WAREHOUSE
+                                    value: ${warehouse}
+                          connector_params:
+                            timeout: 72000
+                            polling_policy:
+                              initial_delay: 5
+                              multiplier: 1.5
+                              max_delay: 60
+                            skip_polling: false
+
+              - embed_pos_branch:
+                  steps:
+                    - embed_pos:
+                        call: googleapis.run.v1.namespaces.jobs.run
+                        args:
+                          name: ${"namespaces/" + project_id + "/jobs/" + job_name}
+                          location: ${job_location}
+                          body:
+                            overrides:
+                              containerOverrides:
+                                args:
+                                  - run.py
+                                  - embedding_generation_pos
+                                env:
+                                  - name: WAREHOUSE
+                                    value: ${warehouse}
+                          connector_params:
+                            timeout: 72000
+                            polling_policy:
+                              initial_delay: 5
+                              multiplier: 1.5
+                              max_delay: 60
+                            skip_polling: false
+        except:
+          as: embed_error
+          steps:
+            - mark_failed_embed:
+                call: googleapis.run.v1.namespaces.jobs.run
+                args:
+                  name: ${"namespaces/" + project_id + "/jobs/" + job_name}
+                  location: ${job_location}
+                  body:
+                    overrides:
+                      containerOverrides:
+                        args:
+                          - run.py
+                          - mark_match_failed
+                        env:
+                          - name: MATCH_ID
+                            value: ${match_id}
+                          - name: FAILURE_STAGE
+                            value: "embedding"
+            - raise_embed_error:
+                raise: ${embed_error}
+
     # ── Lead matching ──
     - lead_matching:
         try:
@@ -95,6 +176,8 @@ main:
                   env:
                     - name: MATCH_ID
                       value: ${match_id}
+                    - name: WAREHOUSE
+                      value: ${warehouse}
             connector_params:
               timeout: 72000
               polling_policy:
@@ -123,6 +206,53 @@ main:
                             value: "primary_matching"
             - raise_match_error:
                 raise: ${match_error}
+
+    # ── Fuzzy (semantic) matching overlay ──
+    - fuzzy_matching:
+        try:
+          call: googleapis.run.v1.namespaces.jobs.run
+          args:
+            name: ${"namespaces/" + project_id + "/jobs/" + job_name}
+            location: ${job_location}
+            body:
+              overrides:
+                containerOverrides:
+                  args:
+                    - run.py
+                    - fuzzy_matching
+                  env:
+                    - name: MATCH_ID
+                      value: ${match_id}
+                    - name: WAREHOUSE
+                      value: ${warehouse}
+            connector_params:
+              timeout: 72000
+              polling_policy:
+                initial_delay: 5
+                multiplier: 1.5
+                max_delay: 60
+              skip_polling: false
+        except:
+          as: fuzzy_error
+          steps:
+            - mark_failed_fuzzy:
+                call: googleapis.run.v1.namespaces.jobs.run
+                args:
+                  name: ${"namespaces/" + project_id + "/jobs/" + job_name}
+                  location: ${job_location}
+                  body:
+                    overrides:
+                      containerOverrides:
+                        args:
+                          - run.py
+                          - mark_match_failed
+                        env:
+                          - name: MATCH_ID
+                            value: ${match_id}
+                          - name: FAILURE_STAGE
+                            value: "fuzzy_matching"
+            - raise_fuzzy_error:
+                raise: ${fuzzy_error}
 
     # ── Updates (parallel) ──
     - update_parallel:
