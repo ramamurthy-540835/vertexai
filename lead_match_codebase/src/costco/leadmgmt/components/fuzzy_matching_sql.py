@@ -5,6 +5,7 @@ from datetime import datetime
 from costco.leadmgmt.config.Configuration import JobConfig
 from costco.leadmgmt.util.apputil import load_file_from_gcs, process_and_archive_files
 from costco.leadmgmt.util.fiscal_year import get_costco_fiscal_info
+from costco.leadmgmt.util.warehouse_scope import parse_warehouse_scope
 
 
 # ==============================================================
@@ -90,7 +91,11 @@ def get_confidence_level(similarity_score, match_configuration_df):
 # ==============================================================
 # FUZZY MATCHING
 # ==============================================================
-def fuzzy_matching(file_classified_path: str, config_file_path: str) -> str:
+def fuzzy_matching(
+    file_classified_path: str,
+    config_file_path: str,
+    warehouse: str | None = None,
+) -> str:
 
     # ----------------------------------------------------------
     # INITIALIZATION
@@ -124,6 +129,11 @@ def fuzzy_matching(file_classified_path: str, config_file_path: str) -> str:
         .astype("Int64")
     )
     classified_df["pos_id"] = classified_df["pos_id"].astype(str)
+    warehouse_scope = parse_warehouse_scope(warehouse)
+    if warehouse_scope:
+        classified_df = classified_df[
+            classified_df["warehouse_number"].isin(warehouse_scope)
+        ].copy()
 
     # ----------------------------------------------------------
     # RUN FUZZY QUERY — leads with a warehouse number
@@ -156,13 +166,38 @@ def fuzzy_matching(file_classified_path: str, config_file_path: str) -> str:
     # ----------------------------------------------------------
     # COMPUTE FUZZY SIMILARITY SCORE
     # ----------------------------------------------------------
-    master_df["similarity_score"] = (
-        (master_df["combined_field_score"]
-         + 4 * master_df["full_address_score"]
-         + 3 * master_df["business_name_score"]) / 8
-    )
+    if master_df.empty:
+        df_fuzzy_result = pd.DataFrame(columns=[
+            "lead_id",
+            "pos_id",
+            "similarity_score",
+            "combined_field_score",
+            "full_address_score",
+            "business_name_score",
+            "account_number",
+            "fiscal_year",
+            "fiscal_period",
+            "week",
+            "warehouse_number",
+            "business_name",
+        ])
+    else:
+        for score_column in [
+            "combined_field_score",
+            "full_address_score",
+            "business_name_score",
+        ]:
+            master_df[score_column] = pd.to_numeric(
+                master_df[score_column], errors="coerce"
+            ).fillna(0)
 
-    df_fuzzy_result = master_df[master_df["similarity_score"] >= 80].copy()
+        master_df["similarity_score"] = (
+            (master_df["combined_field_score"]
+             + 4 * master_df["full_address_score"]
+             + 3 * master_df["business_name_score"]) / 8
+        )
+
+        df_fuzzy_result = master_df[master_df["similarity_score"] >= 80].copy()
 
     # ----------------------------------------------------------
     # KEEP FUZZY RESULT SLIM — only scoring + core match fields.
@@ -289,6 +324,7 @@ def fuzzy_matching(file_classified_path: str, config_file_path: str) -> str:
             text(f"""
                 SELECT
                     pos_id,
+                    transaction_count,
                     membership_number,
                     shop_type,
                     sales_reference_id,
@@ -317,6 +353,7 @@ def fuzzy_matching(file_classified_path: str, config_file_path: str) -> str:
 
         # Update customer detail cols only on fuzzy-overridden rows
         detail_cols = [
+            "transaction_count",
             "membership_number",
             "shop_type",
             "sales_reference_id",
@@ -402,11 +439,13 @@ def fuzzy_matching(file_classified_path: str, config_file_path: str) -> str:
         "similarity_score",
         "match_type",
         "primary_transaction",
+        "closed_existing_flag",
         "matched_by",
         "matching_comments",
 
         # POS dominant — transaction
         "account_number",
+        "transaction_count",
         "business_name_transaction",
         "membership_number",
         "warehouse_number",

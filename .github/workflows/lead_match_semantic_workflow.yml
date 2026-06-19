@@ -1,0 +1,163 @@
+name: Lead Match Semantic Workflow
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'spt'
+        type: choice
+        options:
+          - 'adt'
+          - 'qat'
+          - 'spt'
+          - 'prd'
+      warehouse:
+        description: 'Warehouse number, comma-separated warehouses, or blank for all'
+        required: false
+        default: '115'
+        type: string
+      wait_for_completion:
+        description: 'Wait for workflow execution to complete?'
+        required: true
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+
+jobs:
+  trigger:
+    name: "lead-match-${{ github.event.inputs.environment }}-${{ github.event.inputs.warehouse || 'all' }}"
+    runs-on: cw-gcp-us-west1-${{ inputs.environment == 'prd' && 'pd' || 'np' }}
+    environment: ${{ github.event.inputs.environment }}
+
+    permissions:
+      id-token: write
+      contents: read
+
+    env:
+      ENV_NAME: ${{ github.event.inputs.environment }}
+      WORKFLOW_NAME: lead_match_workflow
+      REGION: us-central1
+
+    steps:
+      - name: Checkout Codebase
+        uses: actions/checkout@v4
+
+      - name: Set environment project
+        run: |
+          if [[ "${ENV_NAME}" == "prd" ]]; then
+            echo "ENV=prd" >> "$GITHUB_ENV"
+            echo "PROJECT_ID=p-601-pd-bcleadsmgmt-prd" >> "$GITHUB_ENV"
+          else
+            echo "ENV=non-prd" >> "$GITHUB_ENV"
+            echo "PROJECT_ID=p-601-np-bcleadsmgmt-${ENV_NAME}" >> "$GITHUB_ENV"
+          fi
+
+      - name: Auth to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
+          service_account: ${{ github.event.inputs.environment == 'prd' && secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL_PRD || secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
+          create_credentials_file: true
+          export_environment_variables: true
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Build workflow payload
+        env:
+          RAW_WAREHOUSE: ${{ github.event.inputs.warehouse }}
+        run: |
+          set -euo pipefail
+
+          WAREHOUSE="$(printf '%s' "${RAW_WAREHOUSE}" | tr -d '[:space:]')"
+          if [[ -z "${WAREHOUSE}" || "${WAREHOUSE,,}" == "all" ]]; then
+            PAYLOAD="{}"
+            WAREHOUSE_LABEL="all"
+          else
+            if [[ ! "${WAREHOUSE}" =~ ^[0-9]+(,[0-9]+)*$ ]]; then
+              echo "Invalid warehouse input: ${WAREHOUSE}"
+              echo "Use a single number like 115, comma-separated numbers like 115,1663, or blank/all."
+              exit 1
+            fi
+
+            PAYLOAD="{\"warehouse\":\"${WAREHOUSE}\"}"
+            WAREHOUSE_LABEL="${WAREHOUSE}"
+          fi
+
+          echo "PAYLOAD=${PAYLOAD}" >> "$GITHUB_ENV"
+          echo "WAREHOUSE_LABEL=${WAREHOUSE_LABEL}" >> "$GITHUB_ENV"
+
+      - name: Trigger lead match workflow
+        run: |
+          set -euo pipefail
+          unset CLOUDSDK_CORE_PROJECT CLOUDSDK_PROJECT GCLOUD_PROJECT GCP_PROJECT GOOGLE_CLOUD_PROJECT
+          gcloud config set project "${PROJECT_ID}"
+
+          echo "Triggering workflow..."
+          echo "  Workflow : ${WORKFLOW_NAME}"
+          echo "  Env      : ${ENV_NAME}"
+          echo "  Project  : ${PROJECT_ID}"
+          echo "  Region   : ${REGION}"
+          echo "  Warehouse: ${WAREHOUSE_LABEL}"
+          echo "  Payload  : ${PAYLOAD}"
+
+          EXECUTION=$(gcloud workflows run "${WORKFLOW_NAME}" \
+            --location="${REGION}" \
+            --project="${PROJECT_ID}" \
+            --data="${PAYLOAD}" \
+            --format="value(name)")
+
+          echo "EXECUTION_NAME=${EXECUTION}" >> "$GITHUB_ENV"
+          echo "Execution started: ${EXECUTION}"
+
+      - name: Wait for completion
+        if: github.event.inputs.wait_for_completion == 'true'
+        run: |
+          set -euo pipefail
+
+          while true; do
+            STATE=$(gcloud workflows executions describe "${EXECUTION_NAME}" \
+              --project="${PROJECT_ID}" \
+              --location="${REGION}" \
+              --format="value(state)")
+
+            echo "Current state: ${STATE}"
+
+            case "${STATE}" in
+              SUCCEEDED)
+                echo "Workflow execution SUCCEEDED"
+                break
+                ;;
+              FAILED|CANCELLED)
+                echo "Workflow execution ended in state: ${STATE}"
+                gcloud workflows executions describe "${EXECUTION_NAME}" \
+                  --project="${PROJECT_ID}" \
+                  --location="${REGION}" \
+                  --format="value(error)"
+                exit 1
+                ;;
+              *)
+                sleep 15
+                ;;
+            esac
+          done
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "## Lead Match Semantic Workflow"
+            echo ""
+            echo "- **Environment:** \`${ENV_NAME}\`"
+            echo "- **Project:** \`${PROJECT_ID}\`"
+            echo "- **Workflow:** \`${WORKFLOW_NAME}\`"
+            echo "- **Region:** \`${REGION}\`"
+            echo "- **Warehouse:** \`${WAREHOUSE_LABEL:-unknown}\`"
+            echo "- **Payload:** \`${PAYLOAD:-unknown}\`"
+            echo "- **Execution:** \`${EXECUTION_NAME:-not-started}\`"
+            echo "- **Wait:** \`${{ github.event.inputs.wait_for_completion }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
