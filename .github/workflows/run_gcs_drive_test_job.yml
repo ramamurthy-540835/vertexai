@@ -57,6 +57,13 @@ jobs:
           echo "IMAGE=us-docker.pkg.dev/gcp-prj-images/gcp-gar-repo-mbrshp/gcs-drive-test:latest" >> $GITHUB_ENV
           echo "JOB_NAME=gcs-drive-test-job" >> $GITHUB_ENV
           echo "REGION=us-central1" >> $GITHUB_ENV
+          if [[ "$ENV" == "prd" ]]; then
+            echo "NETWORK=projects/gcp-prj-transit-hub/global/networks/gcp-vpc-pd-host" >> $GITHUB_ENV
+            echo "SUBNET=projects/gcp-prj-transit-hub/regions/us-central1/subnetworks/gcp-snt-pd-usc1-601-cloudrunjobs" >> $GITHUB_ENV
+          else
+            echo "NETWORK=projects/gcp-prj-transit-hub/global/networks/gcp-vpc-np-host" >> $GITHUB_ENV
+            echo "SUBNET=projects/gcp-prj-transit-hub/regions/us-central1/subnetworks/gcp-snt-np-usc1-601-cloudrunjobs-np" >> $GITHUB_ENV
+          fi
 
       - name: "Auth to GCP"
         id: auth
@@ -91,6 +98,9 @@ jobs:
               --region=${{ env.REGION }} \
               --project=${{ env.PROJECT_ID }} \
               --service-account=${{ env.SERVICE_ACCOUNT }} \
+              --network=${{ env.NETWORK }} \
+              --subnet=${{ env.SUBNET }} \
+              --vpc-egress=all-traffic \
               --set-env-vars="GCP_PROJECT_ID=${{ env.PROJECT_ID }},POS_BUCKET_NAME=${{ env.POS_BUCKET_NAME }},DRIVE_FOLDER_ID=${{ env.DRIVE_FOLDER_ID }},SERVICE_ACCOUNT=${{ env.SERVICE_ACCOUNT }}"
           else
             echo "Creating new job"
@@ -99,8 +109,8 @@ jobs:
               --region=${{ env.REGION }} \
               --project=${{ env.PROJECT_ID }} \
               --service-account=${{ env.SERVICE_ACCOUNT }} \
-              --network=gcp-vpc-np-host \
-              --subnet=gcp-snt-np-usc1-601-cloudrunjobs-np \
+              --network=${{ env.NETWORK }} \
+              --subnet=${{ env.SUBNET }} \
               --vpc-egress=all-traffic \
               --set-env-vars="GCP_PROJECT_ID=${{ env.PROJECT_ID }},POS_BUCKET_NAME=${{ env.POS_BUCKET_NAME }},DRIVE_FOLDER_ID=${{ env.DRIVE_FOLDER_ID }},SERVICE_ACCOUNT=${{ env.SERVICE_ACCOUNT }}"
           fi
