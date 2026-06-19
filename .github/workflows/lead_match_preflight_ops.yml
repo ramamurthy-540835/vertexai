@@ -19,15 +19,15 @@ on:
         default: '115'
         type: string
       include_cloud_sql:
-        description: 'Run read-only Cloud SQL health and warehouse count checks?'
+        description: 'Add Cloud SQL health/query checklist to the report?'
         required: true
-        default: 'true'
+        default: 'false'
         type: choice
         options:
           - 'true'
           - 'false'
       prepare_resources:
-        description: 'Create preflight GCS folders and match_decision_detail table if missing?'
+        description: 'Create preflight GCS folders if missing?'
         required: true
         default: 'true'
         type: choice
@@ -224,179 +224,135 @@ jobs:
             echo ""
           } >> "${REPORT_FILE}"
 
-      - name: Install psql
-        if: github.event.inputs.include_cloud_sql == 'true'
+      - name: Add semantic output contract
         run: |
           set -euo pipefail
-          if ! command -v psql >/dev/null 2>&1; then
-            sudo apt-get update
-            sudo apt-get install -y postgresql-client
-          fi
-
-      - name: Setup Cloud SQL Proxy
-        if: github.event.inputs.include_cloud_sql == 'true'
-        run: |
-          set -euo pipefail
-          if ! command -v cloud-sql-proxy >/dev/null 2>&1; then
-            wget -q https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/v2.8.0/cloud-sql-proxy.linux.amd64 -O cloud-sql-proxy
-            chmod +x cloud-sql-proxy
-          fi
-
-          ./cloud-sql-proxy "${PROJECT_ID}:us-central1:${INSTANCE_NAME}" \
-            --port 5432 \
-            --private-ip \
-            --auto-iam-authn &
-
-          sleep 10
-
-      - name: Prepare Cloud SQL audit table
-        if: github.event.inputs.include_cloud_sql == 'true' && github.event.inputs.prepare_resources == 'true'
-        run: |
-          set -euo pipefail
-
-          cat > "${RUNNER_TEMP}/lead_match_prepare.sql" <<SQL
-          CREATE TABLE IF NOT EXISTS ${SCHEMA_NAME}.match_decision_detail (
-            match_run_id varchar(100),
-            lead_id varchar(150),
-            pos_id varchar(150),
-            warehouse_number int,
-            match_type varchar(100),
-            final_score double precision,
-            combined_field_score double precision,
-            full_address_score double precision,
-            business_name_score double precision,
-            weight_formula varchar(100),
-            embedding_model varchar(100),
-            created_date timestamp DEFAULT current_timestamp
-          );
-          SQL
-
-          export PGPASSWORD="$(gcloud auth print-access-token)"
           {
-            echo "## Prepared Cloud SQL Resources"
+            echo "## Semantic Output Contract"
             echo ""
-            echo "### match_decision_detail"
-            echo '```text'
-            psql "host=127.0.0.1 port=5432 dbname=lead-mgmt-db user=gco-iam-svc-cicd-mbr-bc-np@gcp-prj-cicd-core.iam sslmode=disable" \
-              -v ON_ERROR_STOP=1 \
-              -f "${RUNNER_TEMP}/lead_match_prepare.sql"
-            echo '```'
+            echo "### GCS Folders"
+            echo ""
+            echo "- Exact-only classified output: \`gs://${BUCKET_NAME}/match/exact/final_match_result/\`"
+            echo "- Vertex/Fuzzy final output: \`gs://${BUCKET_NAME}/match/vertex/final_match_result/\`"
+            echo "- Update-stage compatibility output: \`gs://${BUCKET_NAME}/match/final_match_result/\`"
+            echo "- Vertex/Fuzzy archive: \`gs://${BUCKET_NAME}/archive/match/vertex/final_match_result/\`"
+            echo ""
+            echo "### File Naming"
+            echo ""
+            echo "- Vertex/Fuzzy output uses \`final_update_dataframe_<MATCH_ID>_<warehouse>_<YYYYMMDD_HHMMSS>.csv\`."
+            echo "- Timestamped names prevent collisions across reruns."
+            echo "- \`MATCH_ID\` is the preferred selector for update jobs; if it is absent, update jobs fall back to latest CSV."
+            echo ""
+            echo "### Match Decision Fields"
+            echo ""
+            echo "- Exact rows keep \`match_type = Exact\`."
+            echo "- Vertex-overridden rows use \`match_type = Fuzzy\`."
+            echo "- Final score formula: \`(combined_field_score + 4 * full_address_score + 3 * business_name_score) / 8\`."
+            echo "- Fuzzy candidates must have final \`similarity_score >= 80\` and must beat the primary exact score before they override the exact result."
             echo ""
           } >> "${REPORT_FILE}"
 
-      - name: Run Cloud SQL preflight queries
+      - name: Add Cloud SQL preflight checklist
         if: github.event.inputs.include_cloud_sql == 'true'
         run: |
           set -euo pipefail
-
-          cat > "${RUNNER_TEMP}/lead_match_preflight.sql" <<SQL
-          \\echo '## Cloud SQL Health'
-          \\echo ''
-          \\echo '### max_connections'
-          SHOW max_connections;
-
-          \\echo ''
-          \\echo '### active_connections'
-          SELECT count(*) AS active_connections
-          FROM pg_stat_activity;
-
-          \\echo ''
-          \\echo '### connections_by_user_state'
-          SELECT usename, application_name, state, count(*)
-          FROM pg_stat_activity
-          GROUP BY usename, application_name, state
-          ORDER BY count(*) DESC;
-
-          \\echo ''
-          \\echo '### active_queries'
-          SELECT pid, state, wait_event_type, wait_event, now() - query_start AS runtime, left(query, 500) AS query
-          FROM pg_stat_activity
-          WHERE state <> 'idle'
-          ORDER BY runtime DESC;
-
-          \\echo ''
-          \\echo '## Warehouse Readiness'
-          \\echo ''
-          \\echo '### lead_count'
-          SELECT count(*) AS lead_count
-          FROM ${SCHEMA_NAME}.lead
-          WHERE 1=1 ${WAREHOUSE_SQL_FILTER};
-
-          \\echo ''
-          \\echo '### transaction_count'
-          SELECT count(*) AS transaction_count
-          FROM ${SCHEMA_NAME}.transaction
-          WHERE 1=1 ${WAREHOUSE_SQL_FILTER};
-
-          \\echo ''
-          \\echo '### lead_embedding_count'
-          SELECT count(*) AS lead_embedding_count
-          FROM ${SCHEMA_NAME}.leads_embeddings
-          WHERE 1=1 ${WAREHOUSE_SQL_FILTER};
-
-          \\echo ''
-          \\echo '### pos_embedding_count'
-          SELECT count(*) AS pos_embedding_count
-          FROM ${SCHEMA_NAME}.pos_embeddings
-          WHERE 1=1 ${WAREHOUSE_SQL_FILTER};
-
-          \\echo ''
-          \\echo '### embedding_coverage'
-          SELECT
-            (SELECT count(*) FROM ${SCHEMA_NAME}.transaction WHERE 1=1 ${WAREHOUSE_SQL_FILTER}) AS pos_total,
-            (SELECT count(*) FROM ${SCHEMA_NAME}.pos_embeddings WHERE 1=1 ${WAREHOUSE_SQL_FILTER}) AS pos_embedded,
-            (SELECT count(*) FROM ${SCHEMA_NAME}.lead WHERE 1=1 ${WAREHOUSE_SQL_FILTER}) AS lead_total,
-            (SELECT count(*) FROM ${SCHEMA_NAME}.leads_embeddings WHERE 1=1 ${WAREHOUSE_SQL_FILTER}) AS lead_embedded;
-
-          \\echo ''
-          \\echo '### match_type_distribution'
-          SELECT COALESCE(match_type, 'NULL') AS match_type, count(*)
-          FROM ${SCHEMA_NAME}.transaction
-          WHERE 1=1 ${WAREHOUSE_SQL_FILTER}
-          GROUP BY COALESCE(match_type, 'NULL')
-          ORDER BY count(*) DESC;
-
-          \\echo ''
-          \\echo '### match_decision_detail_table'
-          SELECT column_name, data_type
-          FROM information_schema.columns
-          WHERE table_schema = '${SCHEMA_NAME}'
-            AND table_name = 'match_decision_detail'
-          ORDER BY ordinal_position;
-
-          \\echo ''
-          \\echo '### match_decision_detail_count'
-          SELECT count(*) AS match_decision_detail_rows
-          FROM ${SCHEMA_NAME}.match_decision_detail
-          WHERE 1=1 ${WAREHOUSE_SQL_FILTER};
-
-          \\echo ''
-          \\echo '### vertex_audit_columns'
-          SELECT column_name, data_type
-          FROM information_schema.columns
-          WHERE table_schema = '${SCHEMA_NAME}'
-            AND table_name = 'transaction'
-            AND column_name IN (
-              'match_type',
-              'match_score',
-              'matching_comments',
-              'primary_transaction',
-              'vertex_combined_score',
-              'vertex_address_score',
-              'vertex_name_score',
-              'vertex_weight_formula',
-              'vertex_model',
-              'match_run_id'
-            )
-          ORDER BY column_name;
-          SQL
-
-          export PGPASSWORD="$(gcloud auth print-access-token)"
           {
-            echo '```text'
-            psql "host=127.0.0.1 port=5432 dbname=lead-mgmt-db user=gco-iam-svc-cicd-mbr-bc-np@gcp-prj-cicd-core.iam sslmode=disable" \
-              -v ON_ERROR_STOP=1 \
-              -f "${RUNNER_TEMP}/lead_match_preflight.sql"
+            echo "## Cloud SQL Preflight Checklist"
+            echo ""
+            echo "- Live Cloud SQL queries are not executed from this GitHub runner."
+            echo "- The runner cannot rely on package installs or private Cloud SQL network reachability."
+            echo "- Run these queries from Cloud SQL Query Studio, an approved bastion, or a future Cloud Run diagnostic stage."
+            echo ""
+            echo "### Health SQL"
+            echo '```sql'
+            echo "SHOW max_connections;"
+            echo ""
+            echo "SELECT count(*) AS active_connections"
+            echo "FROM pg_stat_activity;"
+            echo ""
+            echo "SELECT usename, application_name, state, count(*)"
+            echo "FROM pg_stat_activity"
+            echo "GROUP BY usename, application_name, state"
+            echo "ORDER BY count(*) DESC;"
+            echo ""
+            echo "SELECT pid, state, wait_event_type, wait_event, now() - query_start AS runtime, left(query, 500) AS query"
+            echo "FROM pg_stat_activity"
+            echo "WHERE state <> 'idle'"
+            echo "ORDER BY runtime DESC;"
+            echo '```'
+            echo ""
+            echo "### Warehouse Readiness SQL"
+            echo '```sql'
+            echo "SELECT count(*) AS lead_count"
+            echo "FROM ${SCHEMA_NAME}.lead"
+            echo "WHERE 1=1 ${WAREHOUSE_SQL_FILTER};"
+            echo ""
+            echo "SELECT count(*) AS transaction_count"
+            echo "FROM ${SCHEMA_NAME}.transaction"
+            echo "WHERE 1=1 ${WAREHOUSE_SQL_FILTER};"
+            echo ""
+            echo "SELECT count(*) AS lead_embedding_count"
+            echo "FROM ${SCHEMA_NAME}.leads_embeddings"
+            echo "WHERE 1=1 ${WAREHOUSE_SQL_FILTER};"
+            echo ""
+            echo "SELECT count(*) AS pos_embedding_count"
+            echo "FROM ${SCHEMA_NAME}.pos_embeddings"
+            echo "WHERE 1=1 ${WAREHOUSE_SQL_FILTER};"
+            echo ""
+            echo "SELECT"
+            echo "  (SELECT count(*) FROM ${SCHEMA_NAME}.transaction WHERE 1=1 ${WAREHOUSE_SQL_FILTER}) AS pos_total,"
+            echo "  (SELECT count(*) FROM ${SCHEMA_NAME}.pos_embeddings WHERE 1=1 ${WAREHOUSE_SQL_FILTER}) AS pos_embedded,"
+            echo "  (SELECT count(*) FROM ${SCHEMA_NAME}.lead WHERE 1=1 ${WAREHOUSE_SQL_FILTER}) AS lead_total,"
+            echo "  (SELECT count(*) FROM ${SCHEMA_NAME}.leads_embeddings WHERE 1=1 ${WAREHOUSE_SQL_FILTER}) AS lead_embedded;"
+            echo ""
+            echo "SELECT COALESCE(match_type, 'NULL') AS match_type, count(*)"
+            echo "FROM ${SCHEMA_NAME}.transaction"
+            echo "WHERE 1=1 ${WAREHOUSE_SQL_FILTER}"
+            echo "GROUP BY COALESCE(match_type, 'NULL')"
+            echo "ORDER BY count(*) DESC;"
+            echo ""
+            echo "CREATE TABLE IF NOT EXISTS ${SCHEMA_NAME}.match_decision_detail ("
+            echo "  match_run_id varchar(100),"
+            echo "  lead_id varchar(150),"
+            echo "  pos_id varchar(150),"
+            echo "  warehouse_number int,"
+            echo "  match_type varchar(100),"
+            echo "  final_score double precision,"
+            echo "  combined_field_score double precision,"
+            echo "  full_address_score double precision,"
+            echo "  business_name_score double precision,"
+            echo "  weight_formula varchar(100),"
+            echo "  embedding_model varchar(100),"
+            echo "  created_date timestamp DEFAULT current_timestamp"
+            echo ");"
+            echo ""
+            echo "SELECT column_name, data_type"
+            echo "FROM information_schema.columns"
+            echo "WHERE table_schema = '${SCHEMA_NAME}'"
+            echo "  AND table_name = 'match_decision_detail'"
+            echo "ORDER BY ordinal_position;"
+            echo ""
+            echo "SELECT count(*) AS match_decision_detail_rows"
+            echo "FROM ${SCHEMA_NAME}.match_decision_detail"
+            echo "WHERE 1=1 ${WAREHOUSE_SQL_FILTER};"
+            echo ""
+            echo "SELECT column_name, data_type"
+            echo "FROM information_schema.columns"
+            echo "WHERE table_schema = '${SCHEMA_NAME}'"
+            echo "  AND table_name = 'transaction'"
+            echo "  AND column_name IN ("
+            echo "    'match_type',"
+            echo "    'match_score',"
+            echo "    'matching_comments',"
+            echo "    'primary_transaction',"
+            echo "    'vertex_combined_score',"
+            echo "    'vertex_address_score',"
+            echo "    'vertex_name_score',"
+            echo "    'vertex_weight_formula',"
+            echo "    'vertex_model',"
+            echo "    'match_run_id'"
+            echo "  )"
+            echo "ORDER BY column_name;"
             echo '```'
             echo ""
           } >> "${REPORT_FILE}"
@@ -408,11 +364,12 @@ jobs:
             echo "## Readiness Notes"
             echo ""
             echo "- This workflow is read-only except writing this preflight report."
-            echo "- If prepare_resources=true, it also creates GCS marker files and \`${SCHEMA_NAME}.match_decision_detail\` if missing."
+            echo "- If prepare_resources=true, it also creates GCS marker files."
             echo "- It does not execute \`lead_match_workflow\`."
             echo "- It does not execute \`lead-match-job\`."
             echo "- Exact vs Vertex/Fuzzy is tracked by \`transaction.match_type\`."
-            echo "- Vertex component scores should be written to \`${SCHEMA_NAME}.match_decision_detail\` by the semantic matching code."
+            echo "- \`${SCHEMA_NAME}.match_decision_detail\` is created by the fuzzy matching job when explainability rows are persisted."
+            echo "- The Cloud SQL checklist includes the optional manual DDL and validation queries."
             echo ""
             echo "Report GCS URI: \`${REPORT_URI}\`"
           } >> "${REPORT_FILE}"
