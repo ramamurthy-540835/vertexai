@@ -9,6 +9,12 @@ main:
           - job_name: lead-match-job
           - match_id: ${uuid.generate()}
           - warehouse: ${string(default(map.get(input, "warehouse"), ""))}
+          - exact_match_source_folder: match/exact/final_match_result
+          - exact_match_archive_folder: archive/match/exact/final_match_result
+          - vertex_match_source_folder: match/vertex/final_match_result
+          - vertex_match_archive_folder: archive/match/vertex/final_match_result
+          - final_match_source_folder: match/final_match_result
+          - final_match_archive_folder: archive/match/final_match_result
 
     # ── Ingestion (parallel) ──
     # These stages don't use match_id — no audit failure write needed,
@@ -33,6 +39,18 @@ main:
                                 env:
                                   - name: WAREHOUSE
                                     value: ${warehouse}
+                                  - name: SOURCE_FOLDER_OUTPUT_EXACT
+                                    value: ${exact_match_source_folder}
+                                  - name: DESTINATION_FOLDER_OUTPUT_EXACT
+                                    value: ${exact_match_archive_folder}
+                                  - name: SOURCE_FOLDER_OUTPUT_VERTEX
+                                    value: ${vertex_match_source_folder}
+                                  - name: DESTINATION_FOLDER_OUTPUT_VERTEX
+                                    value: ${vertex_match_archive_folder}
+                                  - name: SOURCE_FOLDER_OUTPUT
+                                    value: ${final_match_source_folder}
+                                  - name: DESTINATION_FOLDER_OUTPUT
+                                    value: ${final_match_archive_folder}
                           connector_params:
                             timeout: 72000
                             polling_policy:
@@ -57,6 +75,18 @@ main:
                                 env:
                                   - name: WAREHOUSE
                                     value: ${warehouse}
+                                  - name: SOURCE_FOLDER_OUTPUT_EXACT
+                                    value: ${exact_match_source_folder}
+                                  - name: DESTINATION_FOLDER_OUTPUT_EXACT
+                                    value: ${exact_match_archive_folder}
+                                  - name: SOURCE_FOLDER_OUTPUT_VERTEX
+                                    value: ${vertex_match_source_folder}
+                                  - name: DESTINATION_FOLDER_OUTPUT_VERTEX
+                                    value: ${vertex_match_archive_folder}
+                                  - name: SOURCE_FOLDER_OUTPUT
+                                    value: ${final_match_source_folder}
+                                  - name: DESTINATION_FOLDER_OUTPUT
+                                    value: ${final_match_archive_folder}
                           connector_params:
                             timeout: 72000
                             polling_policy:
@@ -107,6 +137,18 @@ main:
                                 env:
                                   - name: WAREHOUSE
                                     value: ${warehouse}
+                                  - name: SOURCE_FOLDER_OUTPUT_EXACT
+                                    value: ${exact_match_source_folder}
+                                  - name: DESTINATION_FOLDER_OUTPUT_EXACT
+                                    value: ${exact_match_archive_folder}
+                                  - name: SOURCE_FOLDER_OUTPUT_VERTEX
+                                    value: ${vertex_match_source_folder}
+                                  - name: DESTINATION_FOLDER_OUTPUT_VERTEX
+                                    value: ${vertex_match_archive_folder}
+                                  - name: SOURCE_FOLDER_OUTPUT
+                                    value: ${final_match_source_folder}
+                                  - name: DESTINATION_FOLDER_OUTPUT
+                                    value: ${final_match_archive_folder}
                           connector_params:
                             timeout: 72000
                             polling_policy:
@@ -131,6 +173,18 @@ main:
                                 env:
                                   - name: WAREHOUSE
                                     value: ${warehouse}
+                                  - name: SOURCE_FOLDER_OUTPUT_EXACT
+                                    value: ${exact_match_source_folder}
+                                  - name: DESTINATION_FOLDER_OUTPUT_EXACT
+                                    value: ${exact_match_archive_folder}
+                                  - name: SOURCE_FOLDER_OUTPUT_VERTEX
+                                    value: ${vertex_match_source_folder}
+                                  - name: DESTINATION_FOLDER_OUTPUT_VERTEX
+                                    value: ${vertex_match_archive_folder}
+                                  - name: SOURCE_FOLDER_OUTPUT
+                                    value: ${final_match_source_folder}
+                                  - name: DESTINATION_FOLDER_OUTPUT
+                                    value: ${final_match_archive_folder}
                           connector_params:
                             timeout: 72000
                             polling_policy:
@@ -178,6 +232,18 @@ main:
                       value: ${match_id}
                     - name: WAREHOUSE
                       value: ${warehouse}
+                    - name: SOURCE_FOLDER_OUTPUT_EXACT
+                      value: ${exact_match_source_folder}
+                    - name: DESTINATION_FOLDER_OUTPUT_EXACT
+                      value: ${exact_match_archive_folder}
+                    - name: SOURCE_FOLDER_OUTPUT_VERTEX
+                      value: ${vertex_match_source_folder}
+                    - name: DESTINATION_FOLDER_OUTPUT_VERTEX
+                      value: ${vertex_match_archive_folder}
+                    - name: SOURCE_FOLDER_OUTPUT
+                      value: ${final_match_source_folder}
+                    - name: DESTINATION_FOLDER_OUTPUT
+                      value: ${final_match_archive_folder}
             connector_params:
               timeout: 72000
               polling_policy:
@@ -225,6 +291,18 @@ main:
                       value: ${match_id}
                     - name: WAREHOUSE
                       value: ${warehouse}
+                    - name: SOURCE_FOLDER_OUTPUT_EXACT
+                      value: ${exact_match_source_folder}
+                    - name: DESTINATION_FOLDER_OUTPUT_EXACT
+                      value: ${exact_match_archive_folder}
+                    - name: SOURCE_FOLDER_OUTPUT_VERTEX
+                      value: ${vertex_match_source_folder}
+                    - name: DESTINATION_FOLDER_OUTPUT_VERTEX
+                      value: ${vertex_match_archive_folder}
+                    - name: SOURCE_FOLDER_OUTPUT
+                      value: ${final_match_source_folder}
+                    - name: DESTINATION_FOLDER_OUTPUT
+                      value: ${final_match_archive_folder}
             connector_params:
               timeout: 72000
               polling_policy:
@@ -275,6 +353,18 @@ main:
                                 env:
                                   - name: MATCH_ID
                                     value: ${match_id}
+                                  - name: SOURCE_FOLDER_OUTPUT_EXACT
+                                    value: ${exact_match_source_folder}
+                                  - name: DESTINATION_FOLDER_OUTPUT_EXACT
+                                    value: ${exact_match_archive_folder}
+                                  - name: SOURCE_FOLDER_OUTPUT_VERTEX
+                                    value: ${vertex_match_source_folder}
+                                  - name: DESTINATION_FOLDER_OUTPUT_VERTEX
+                                    value: ${vertex_match_archive_folder}
+                                  - name: SOURCE_FOLDER_OUTPUT
+                                    value: ${final_match_source_folder}
+                                  - name: DESTINATION_FOLDER_OUTPUT
+                                    value: ${final_match_archive_folder}
                           connector_params:
                             timeout: 72000
                             polling_policy:
@@ -299,6 +389,18 @@ main:
                                 env:
                                   - name: MATCH_ID
                                     value: ${match_id}
+                                  - name: SOURCE_FOLDER_OUTPUT_EXACT
+                                    value: ${exact_match_source_folder}
+                                  - name: DESTINATION_FOLDER_OUTPUT_EXACT
+                                    value: ${exact_match_archive_folder}
+                                  - name: SOURCE_FOLDER_OUTPUT_VERTEX
+                                    value: ${vertex_match_source_folder}
+                                  - name: DESTINATION_FOLDER_OUTPUT_VERTEX
+                                    value: ${vertex_match_archive_folder}
+                                  - name: SOURCE_FOLDER_OUTPUT
+                                    value: ${final_match_source_folder}
+                                  - name: DESTINATION_FOLDER_OUTPUT
+                                    value: ${final_match_archive_folder}
                           connector_params:
                             timeout: 72000
                             polling_policy:
@@ -344,6 +446,18 @@ main:
                   env:
                     - name: MATCH_ID
                       value: ${match_id}
+                    - name: SOURCE_FOLDER_OUTPUT_EXACT
+                      value: ${exact_match_source_folder}
+                    - name: DESTINATION_FOLDER_OUTPUT_EXACT
+                      value: ${exact_match_archive_folder}
+                    - name: SOURCE_FOLDER_OUTPUT_VERTEX
+                      value: ${vertex_match_source_folder}
+                    - name: DESTINATION_FOLDER_OUTPUT_VERTEX
+                      value: ${vertex_match_archive_folder}
+                    - name: SOURCE_FOLDER_OUTPUT
+                      value: ${final_match_source_folder}
+                    - name: DESTINATION_FOLDER_OUTPUT
+                      value: ${final_match_archive_folder}
             connector_params:
               timeout: 72000
               polling_policy:
@@ -370,6 +484,18 @@ main:
                             value: ${match_id}
                           - name: FAILURE_STAGE
                             value: "cleanup"
+                          - name: SOURCE_FOLDER_OUTPUT_EXACT
+                            value: ${exact_match_source_folder}
+                          - name: DESTINATION_FOLDER_OUTPUT_EXACT
+                            value: ${exact_match_archive_folder}
+                          - name: SOURCE_FOLDER_OUTPUT_VERTEX
+                            value: ${vertex_match_source_folder}
+                          - name: DESTINATION_FOLDER_OUTPUT_VERTEX
+                            value: ${vertex_match_archive_folder}
+                          - name: SOURCE_FOLDER_OUTPUT
+                            value: ${final_match_source_folder}
+                          - name: DESTINATION_FOLDER_OUTPUT
+                            value: ${final_match_archive_folder}
             - raise_cleanup_error:
                 raise: ${cleanup_error}
 

@@ -15,7 +15,7 @@ from costco.leadmgmt.config.Configuration import JobConfig
 from costco.leadmgmt.util.apputil import load_file_from_gcs
 from costco.leadmgmt.database.DBUtil import load_data_from_cloudsql
 from costco.leadmgmt.util.fiscal_year import get_costco_fiscal_info
-from costco.leadmgmt.util.warehouse_scope import apply_warehouse_filter
+from costco.leadmgmt.util.warehouse_scope import apply_warehouse_filter, parse_warehouse_scope
 
 
 # ============================================================
@@ -25,6 +25,7 @@ MODEL_NAME = "gemini-embedding-001"
 TASK_TYPE = "SEMANTIC_SIMILARITY"
 OUTPUT_DIMENSIONALITY = 768
 CHUNK_SIZE = 2000
+MAX_WORKERS = 5
 INTERNAL_BATCH_SIZE = 25
 
 
@@ -224,10 +225,15 @@ def insert_operation_transaction(engine, schema_name, table_name, data_frame):
     )
 
 
-def embedding_generation(file_pos: str, config_file_path: str, project_id: str,
-                         max_workers: int = 5,
-                         warehouse: str | None = None,
-                         job_name: str = "pos_embedding_job", run_id: str = None):
+def embedding_generation(
+    file_pos: str,
+    config_file_path: str,
+    project_id: str,
+    max_workers: int = MAX_WORKERS,
+    warehouse: str | None = None,
+    job_name: str = "pos_embedding_job",
+    run_id: str = None,
+):
 
     client = genai.Client(
         vertexai=True,
@@ -254,6 +260,14 @@ def embedding_generation(file_pos: str, config_file_path: str, project_id: str,
     query_pos_inserts_ids = apply_warehouse_filter(query_pos_inserts_ids, warehouse, "a.warehouse_number")
     pos_insert_id = load_data_from_cloudsql(query_input=query_pos_inserts_ids, engine=engine)
     transaction_df = load_file_from_gcs(file_pos)
+    warehouse_scope = parse_warehouse_scope(warehouse)
+    if warehouse_scope and "warehouse_number" in transaction_df.columns:
+        transaction_df["warehouse_number"] = pd.to_numeric(
+            transaction_df["warehouse_number"], errors="coerce"
+        ).astype("Int64")
+        transaction_df = transaction_df[
+            transaction_df["warehouse_number"].isin(warehouse_scope)
+        ].copy()
 
     # Preprocessing
     transaction_df.rename(columns={"COMBINED_FIELD": "combined_field", "FULL_ADDRESS": "full_address"}, inplace=True)
@@ -294,8 +308,10 @@ def embedding_generation(file_pos: str, config_file_path: str, project_id: str,
         mark_chunk_status(engine, schema_name, {**run_data, "status": "RUNNING"})
 
         try:
-            chunk_df = embed_chunk(client, chunk_df, max_workers)
-            chunk_df_final = chunk_df.dropna(subset=["combined_embedding"])
+            chunk_df = embed_chunk(client, chunk_df, int(max_workers))
+            chunk_df_final = chunk_df.dropna(
+                subset=["combined_embedding", "address_embedding", "name_embedding"]
+            )
 
             rows_inserted = len(chunk_df_final)
             rows_failed = len(chunk_df) - rows_inserted
@@ -314,9 +330,8 @@ def embedding_generation(file_pos: str, config_file_path: str, project_id: str,
 
                 # Filter only target columns
                 target_cols = [
-                    "pos_id", "account_number", "warehouse_number",
-                    "business_name", "business_address", "combined_field",
-                    "fiscal_year", "fiscal_period", "week",
+                    "pos_id", "account_number", "warehouse_number", "business_name", "business_address",
+                    "combined_field", "fiscal_year", "fiscal_period",
                     "combined_embedding", "address_embedding", "name_embedding", "load_date"
                 ]
                 chunk_df_final = chunk_df_final[

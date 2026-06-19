@@ -529,13 +529,6 @@ def load_and_preprocess_data_cloud_sql(
                 # ── Explicitly free chunk memory before fetching the next ──
                 del chunk_df
                 gc.collect()
-
-            if chunk_count == 0:
-                pd.DataFrame(columns=output_cols).to_csv(
-                    gcs_writer,
-                    index=False,
-                    header=True,
-                )
     finally:
         streaming_conn.close()
 

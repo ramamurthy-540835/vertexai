@@ -89,74 +89,6 @@ def get_confidence_level(similarity_score, match_configuration_df):
     return "No Match"
 
 
-def persist_match_decision_detail(engine, schema_name: str, detail_df: pd.DataFrame) -> None:
-    if detail_df.empty:
-        print("No fuzzy decision detail rows to persist")
-        return
-
-    try:
-        with engine.connect() as connection:
-            with connection.begin():
-                connection.execute(
-                    text(
-                        f"""
-                        CREATE TABLE IF NOT EXISTS {schema_name}.match_decision_detail (
-                            match_run_id varchar(100),
-                            lead_id varchar(150),
-                            pos_id varchar(150),
-                            warehouse_number int,
-                            match_type varchar(100),
-                            final_score double precision,
-                            combined_field_score double precision,
-                            full_address_score double precision,
-                            business_name_score double precision,
-                            weight_formula varchar(100),
-                            embedding_model varchar(100),
-                            created_date timestamp DEFAULT current_timestamp
-                        )
-                        """
-                    )
-                )
-
-        with engine.connect() as connection:
-            table_exists = connection.execute(
-                text(
-                    """
-                    SELECT EXISTS (
-                        SELECT 1
-                        FROM information_schema.tables
-                        WHERE table_schema = :schema_name
-                          AND table_name = 'match_decision_detail'
-                    )
-                    """
-                ),
-                {"schema_name": schema_name},
-            ).scalar()
-
-        if not table_exists:
-            print(
-                f"WARNING: {schema_name}.match_decision_detail does not exist; "
-                "run Lead Match Preflight Ops with prepare_resources=true"
-            )
-            return
-
-        detail_df.to_sql(
-            "match_decision_detail",
-            con=engine,
-            schema=schema_name,
-            if_exists="append",
-            index=False,
-            method="multi",
-            chunksize=5000,
-        )
-        print(f"Persisted {len(detail_df)} fuzzy decision detail row(s)")
-    except Exception as exc:
-        # Explainability must not block the business update path. The
-        # preflight workflow creates this table; if it is absent or lacks
-        # permissions, keep the final match output intact and surface the gap.
-        print(f"WARNING: could not persist match_decision_detail: {exc}")
-
-
 # ==============================================================
 # FUZZY MATCHING
 # ==============================================================
@@ -395,7 +327,6 @@ def fuzzy_matching(
             text(f"""
                 SELECT
                     pos_id,
-                    transaction_count,
                     membership_number,
                     shop_type,
                     sales_reference_id,
@@ -424,7 +355,6 @@ def fuzzy_matching(
 
         # Update customer detail cols only on fuzzy-overridden rows
         detail_cols = [
-            "transaction_count",
             "membership_number",
             "shop_type",
             "sales_reference_id",
@@ -486,51 +416,6 @@ def fuzzy_matching(
         build_fuzzy_matching_comment, axis=1
     )
 
-    match_id = os.environ.get("MATCH_ID", "").strip()
-    detail_cols = [
-        "lead_id",
-        "pos_id",
-        "warehouse_number",
-        "match_type",
-        "similarity_score",
-        "combined_field_score",
-        "full_address_score",
-        "business_name_score",
-    ]
-    detail_cols = [c for c in detail_cols if c in merged_df.columns]
-    decision_detail_df = merged_df.loc[
-        (merged_df["match_type"] == "Fuzzy") & merged_df["pos_id"].notna(),
-        detail_cols,
-    ].copy()
-    if not decision_detail_df.empty:
-        decision_detail_df.rename(
-            columns={"similarity_score": "final_score"},
-            inplace=True,
-        )
-        decision_detail_df["match_run_id"] = match_id
-        decision_detail_df["weight_formula"] = "(combined + 4 * address + 3 * name) / 8"
-        decision_detail_df["embedding_model"] = "gemini-embedding-001"
-        decision_detail_df = decision_detail_df[
-            [
-                "match_run_id",
-                "lead_id",
-                "pos_id",
-                "warehouse_number",
-                "match_type",
-                "final_score",
-                "combined_field_score",
-                "full_address_score",
-                "business_name_score",
-                "weight_formula",
-                "embedding_model",
-            ]
-        ]
-        persist_match_decision_detail(
-            engine,
-            db_config.schema_name,
-            decision_detail_df,
-        )
-
     # Score columns no longer needed after comments are built
     merged_df.drop(
         columns=["combined_field_score", "full_address_score", "business_name_score"],
@@ -555,13 +440,11 @@ def fuzzy_matching(
         "similarity_score",
         "match_type",
         "primary_transaction",
-        "closed_existing_flag",
         "matched_by",
         "matching_comments",
 
         # POS dominant — transaction
         "account_number",
-        "transaction_count",
         "business_name_transaction",
         "membership_number",
         "warehouse_number",
@@ -598,6 +481,7 @@ def fuzzy_matching(
     # WRITE TO GCS
     # ----------------------------------------------------------
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    match_id = os.environ.get("MATCH_ID", "").strip()
     warehouse_label = (warehouse or "all").replace(",", "-").strip() or "all"
     base_name = (
         f"final_update_dataframe_{match_id}_{warehouse_label}_{timestamp}"
