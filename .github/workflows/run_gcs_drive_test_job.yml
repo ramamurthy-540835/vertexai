@@ -17,7 +17,9 @@ on:
 jobs:
   run-test:
     name: "gcs-drive-test-${{ github.event.inputs.environment }}"
-    runs-on: cw-gcp-us-west1-${{ inputs.environment == 'prd' && 'pd' || 'np' }}
+    runs-on:
+      - self-hosted
+      - us-central1
     environment: ${{ github.event.inputs.environment }}
 
     permissions:
@@ -60,6 +62,7 @@ jobs:
         id: auth
         uses: google-github-actions/auth@v2
         with:
+          token_format: access_token
           create_credentials_file: true
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
           service_account: ${{ inputs.environment == 'prd' && secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL_PRD || secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
