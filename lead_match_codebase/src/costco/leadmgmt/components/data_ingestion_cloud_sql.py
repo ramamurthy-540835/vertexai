@@ -49,7 +49,7 @@ log = logging.getLogger(__name__)
 # Rows pulled from Cloud SQL per fetch. 50K balances per-row Python
 # overhead (favours larger chunks) against peak memory (favours smaller).
 # At 50K, peak per-chunk memory for POS-with-OMS stays under ~500 MB.
-CHUNK_SIZE = 50_000
+CHUNK_SIZE = 500_000
 
 # GCS resumable-upload chunk size. Forces the writer to flush to the
 # network every 5 MB instead of buffering all to_csv() output until the
