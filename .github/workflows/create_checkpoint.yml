@@ -25,7 +25,7 @@ on:
         description: 'Run ID (e.g. run-20260606-202446) — state saved as state/<run_id>.json'
         required: true
         type: string
-      manifest_path: 
+      manifest_path:
         description: 'PREFERRED: Manifest path (e.g. manifests/run-20260606-202446.json). If set, successful_files = manifest.files. Leave empty to use direct_paste below.'
         required: false
         default: ''

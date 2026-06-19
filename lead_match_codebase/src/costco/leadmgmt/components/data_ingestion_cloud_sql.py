@@ -41,7 +41,6 @@ from unidecode import unidecode
 from costco.leadmgmt.config.Configuration import JobConfig
 from costco.leadmgmt.util.apputil import process_and_archive_files
 from costco.leadmgmt.util.fiscal_year import get_costco_fiscal_info
-from costco.leadmgmt.util.warehouse_scope import apply_warehouse_filter
 
 log = logging.getLogger(__name__)
 
@@ -49,7 +48,7 @@ log = logging.getLogger(__name__)
 # Rows pulled from Cloud SQL per fetch. 50K balances per-row Python
 # overhead (favours larger chunks) against peak memory (favours smaller).
 # At 50K, peak per-chunk memory for POS-with-OMS stays under ~500 MB.
-CHUNK_SIZE = 500_000
+CHUNK_SIZE = 50_000
 
 # GCS resumable-upload chunk size. Forces the writer to flush to the
 # network every 5 MB instead of buffering all to_csv() output until the
@@ -389,11 +388,7 @@ def _get_required_columns(base_name: str, stage: str):
 # Main entry point
 # ──────────────────────────────────────────────────────────────────────
 
-def load_and_preprocess_data_cloud_sql(
-    base_name: str,
-    config_file_path: str,
-    warehouse: str | None = None,
-) -> str:
+def load_and_preprocess_data_cloud_sql(base_name: str, config_file_path: str) -> str:
     """
     Stream POS or leads data from Cloud SQL through pandas preprocessing
     to a single GCS CSV. Output preserves original column values and
@@ -431,12 +426,10 @@ def load_and_preprocess_data_cloud_sql(
     # ── Build query ──
     if base_name == "pos":
         query_input              = f'''{query_config.query_pos} = {fiscal_info["fiscal_year"]}'''
-        query_input              = apply_warehouse_filter(query_input, warehouse, "transaction.warehouse_number")
         source_folder_input      = storage_config.source_folder_input_pos
         destination_folder_input = storage_config.destination_folder_input_pos
     else:  # leads
         query_input              = f'''{query_config.query_leads} >= {fiscal_info["fiscal_year"] - 1}'''
-        query_input              = apply_warehouse_filter(query_input, warehouse, "lead.warehouse_number")
         source_folder_input      = storage_config.source_folder_input_leads
         destination_folder_input = storage_config.destination_folder_input_leads
 

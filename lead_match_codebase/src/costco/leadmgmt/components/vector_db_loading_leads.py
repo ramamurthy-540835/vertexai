@@ -17,14 +17,10 @@ from costco.leadmgmt.config.Configuration import JobConfig
 from costco.leadmgmt.util.apputil import load_file_from_gcs
 from costco.leadmgmt.database.DBUtil import load_data_from_cloudsql
 from costco.leadmgmt.util.fiscal_year import get_costco_fiscal_info
-from costco.leadmgmt.util.warehouse_scope import apply_warehouse_filter, parse_warehouse_scope
 
 # Get the base image from environment variables
 MAX_WORKERS = os.environ.get("MAX_WORKERS")
 PROJECT_ID = os.environ.get("PROJECT_ID")
-MODEL_NAME = "gemini-embedding-001"
-TASK_TYPE = "SEMANTIC_SIMILARITY"
-OUTPUT_DIMENSIONALITY = 768
 
 client = genai.Client(
     vertexai=True,
@@ -76,11 +72,10 @@ def batch_embedding(text_list, max_retries=5, base_delay=1.0, max_delay=60.0):
     for attempt in range(max_retries):
         try:
             response = client.models.embed_content(
-                model=MODEL_NAME,
+                model="text-embedding-005",
                 contents=text_list,
                 config=types.EmbedContentConfig(
-                    task_type=TASK_TYPE,
-                    output_dimensionality=OUTPUT_DIMENSIONALITY,
+                    task_type="SEMANTIC_SIMILARITY"
                 )
             )
             return [e.values for e in response.embeddings]
@@ -216,15 +211,7 @@ def insert_operation_leads(engine, table_name, schema_name, data_frame):
         raise
 
 
-def embedding_generation(
-    file_leads: str,
-    config_file_path: str,
-    project_id: str | None = None,
-    max_workers: int = 5,
-    warehouse: str | None = None,
-):
-    global MAX_WORKERS
-    MAX_WORKERS = int(max_workers)
+def embedding_generation(file_leads: str, config_file_path: str):
     # Initialization
     job_config = JobConfig(config_file_path)
     db_config = job_config.db_config
@@ -236,8 +223,6 @@ def embedding_generation(
     # query
     query_leads_insert_ids = f'''{query_config.query_leads_insert_ids} >= {fiscal_info["fiscal_year"] - 1}'''
     query_leads_update_ids = f'''{query_config.query_leads_update_ids} >= {fiscal_info["fiscal_year"] - 1}'''
-    query_leads_insert_ids = apply_warehouse_filter(query_leads_insert_ids, warehouse, "a.warehouse_number")
-    query_leads_update_ids = apply_warehouse_filter(query_leads_update_ids, warehouse, "a.warehouse_number")
 
     # database detail
     schema_name = db_config.schema_name
@@ -252,12 +237,6 @@ def embedding_generation(
         engine=engine)
 
     leads_df = load_file_from_gcs(file_leads)
-    warehouse_scope = parse_warehouse_scope(warehouse)
-    if warehouse_scope and "warehouse_number" in leads_df.columns:
-        leads_df["warehouse_number"] = pd.to_numeric(
-            leads_df["warehouse_number"], errors="coerce"
-        ).astype("Int64")
-        leads_df = leads_df[leads_df["warehouse_number"].isin(warehouse_scope)].copy()
 
     leads_update_id = load_data_from_cloudsql(
         query_input=query_leads_update_ids,
