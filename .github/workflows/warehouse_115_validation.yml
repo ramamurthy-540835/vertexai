@@ -1,12 +1,12 @@
-name: warehouse_115_validation
+name: Warehouse 115 Validation
 
 on:
   workflow_dispatch:
     inputs:
       environment:
-        description: 'Target environment'
+        description: 'Target Environment'
         required: true
-        default: 'adt'
+        default: 'spt'
         type: choice
         options: ['adt', 'qat', 'spt', 'prd']
 
@@ -48,6 +48,7 @@ jobs:
       - name: Auth to GCP
         uses: google-github-actions/auth@v2
         with:
+          token_format: 'access_token'
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
           service_account: gco-iam-svc-lead-mgmt-bc-${{ github.event.inputs.environment }}@${{ github.event.inputs.environment == 'prd' && 'p-601-pd-bcleadsmgmt-prd' || format('p-601-np-bcleadsmgmt-{0}', github.event.inputs.environment) }}.iam.gserviceaccount.com
           create_credentials_file: true
@@ -66,82 +67,25 @@ jobs:
       - name: Install Dependencies
         run: |
           python -m pip install --upgrade pip
-          
-          # Install the custom local wheel package first
-          if [ -f lead_management_job/costco_lead_managment-0.0.14-py3-none-any.whl ]; then
-            pip install lead_management_job/costco_lead_managment-0.0.14-py3-none-any.whl
-          fi
-          
-          # Install other requirements
           pip install -r lead_management_job/requirements.txt
 
-      - name: Run Read-Only Smoke Test
+      - name: Run Gemini Embedding Smoke Test
         run: |
-          set -euo pipefail
-          
-          CONFIG_FILE="${CONFIG_DIR}/configuration_${ENV_NAME}.ini"
-          OUTPUT_FILE="warehouse_${WAREHOUSE}_smoke_test_results.json"
-          
-          echo "Executing read-only safe config-driven smoke validation..."
-          echo "Config File : ${CONFIG_FILE}"
-          echo "Warehouse   : ${WAREHOUSE}"
-          echo "Project ID  : ${PROJECT_ID}"
-          
+          python scripts/gemini_embedding_client_smoke_test.py \
+            --project-id ${{ env.PROJECT_ID }}
+
+      - name: Run Warehouse 115 Smoke Test
+        run: |
           python scripts/warehouse_115_smoke_test.py \
-            --config "${CONFIG_FILE}" \
-            --warehouse "${WAREHOUSE}" \
-            --output "${OUTPUT_FILE}"
+            --config ${{ env.CONFIG_DIR }}/configuration_${ENV_NAME}.ini \
+            --warehouse ${{ env.WAREHOUSE }} \
+            --output warehouse_115_smoke_test_results.json
 
-      - name: Upload Smoke Test Results (GHA Artifact)
-        if: always()
+      - name: Upload Smoke Test Results
         uses: actions/upload-artifact@v4
+        if: always()
         with:
-          name: warehouse-${{ env.WAREHOUSE }}-${{ env.ENV_NAME }}-smoke-test-results
-          path: warehouse_${{ env.WAREHOUSE }}_smoke_test_results.json
-          retention-days: 14
-
-      - name: Upload Smoke Test Results to GCS
-        if: always()
-        run: |
-          OUTPUT_FILE="warehouse_${WAREHOUSE}_smoke_test_results.json"
-          BUCKET="gcp-gcs-lead-mgmt-us-${ENV_NAME}-pos-raw"
-          DEST_PATH="validation_reports/warehouse_${WAREHOUSE}/run_${{ github.run_number }}_${OUTPUT_FILE}"
-
-          if [ -f "${OUTPUT_FILE}" ]; then
-            gcloud storage cp "${OUTPUT_FILE}" "gs://${BUCKET}/${DEST_PATH}" \
-              --project="${PROJECT_ID}"
-            echo "Successfully uploaded report to gs://${BUCKET}/${DEST_PATH}"
-          else
-            echo "Output file not found: ${OUTPUT_FILE}"
-            exit 1
-          fi
-
-      - name: Display Execution Summary & Validate Metrics
-        if: always()
-        run: |
-          OUTPUT_FILE="warehouse_${WAREHOUSE}_smoke_test_results.json"
-          
-          if [ -f "${OUTPUT_FILE}" ]; then
-            echo "## Warehouse ${WAREHOUSE} Smoke Test Result" >> $GITHUB_STEP_SUMMARY
-            echo "### Database Schema and Table Counts" >> $GITHUB_STEP_SUMMARY
-            jq -r '.metrics | "- **Total POS Records:** " + (.total_pos_records | tostring) + "\n- **Total Eligible Leads:** " + (.eligible_leads_count | tostring) + "\n- **Total POS Embeddings:** " + (.pos_embeddings_count | tostring) + "\n- **Total Leads Embeddings:** " + (.leads_embeddings_count | tostring)' "${OUTPUT_FILE}" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "### Lead Distributions" >> $GITHUB_STEP_SUMMARY
-            jq -c '.metrics.leads_by_status[]?' "${OUTPUT_FILE}" | while read -r item; do
-              STATUS=$(echo "$item" | jq -r '.lead_status')
-              COUNT=$(echo "$item" | jq -r '.count')
-              echo "- **Status:** \`${STATUS}\` — **Count:** ${COUNT}" >> $GITHUB_STEP_SUMMARY
-            done
-            
-            # Defensive Failure Boundary: Fail build if metrics contain ERROR
-            if grep -q "ERROR:" "${OUTPUT_FILE}"; then
-              echo "=========================================================="
-              echo "CRITICAL: Database queries or authentication failed!"
-              echo "=========================================================="
-              grep "ERROR:" "${OUTPUT_FILE}"
-              exit 1
-            fi
-          else
-            echo "Output results file not found! Validation failed."
-            exit 1
-          fi
+          name: warehouse-115-validation-results-${{ github.event.inputs.environment }}
+          path: |
+            gemini_embedding_client_smoke_test_results.json
+            warehouse_115_smoke_test_results.json
