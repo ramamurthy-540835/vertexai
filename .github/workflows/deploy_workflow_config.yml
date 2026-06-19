@@ -20,7 +20,7 @@ on:
       - 'main'
     tags:
       - 'release-spt*'
-      - 'release-prd*'
+      - 'release-prd-phase2-*'
     paths:
       - 'dataflow_config/**'
       - 'dataflow/field_map.json'
@@ -47,7 +47,7 @@ jobs:
             TARGET="qat"
           elif [[ "${{ github.ref_type }}" == "tag" && "${{ github.ref_name }}" == release-spt* ]]; then
             TARGET="spt"
-          elif [[ "${{ github.ref_type }}" == "tag" && "${{ github.ref_name }}" == release-prd* ]]; then
+          elif [[ "${{ github.ref_type }}" == "tag" && "${{ github.ref_name }}" == release-prd-phase2-* ]]; then
             TARGET="prd"
           else
             exit 1
