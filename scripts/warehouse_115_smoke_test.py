@@ -253,7 +253,11 @@ def main():
                 port=int(os.environ.get("DB_PORT", "5432")),
                 database=os.environ["DB_NAME"],
             )
-            engine = sqlalchemy.create_engine(url, pool_pre_ping=True)
+            engine = sqlalchemy.create_engine(
+                url,
+                connect_args={"timeout": int(os.environ.get("DB_CONNECT_TIMEOUT", "10"))},
+                pool_pre_ping=True,
+            )
             print(f"\n[INFO] Using direct DB host: {os.environ['DB_HOST']}")
             print(f"[INFO] Target schema: {schema_name}")
 

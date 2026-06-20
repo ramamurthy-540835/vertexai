@@ -223,6 +223,7 @@ jobs:
       - name: Run Cloud SQL warehouse smoke test
         if: github.event.inputs.run_smoke_tests == 'true'
         continue-on-error: true
+        timeout-minutes: 3
         run: |
           set -euo pipefail
           if [[ -z "${DB_PASSWORD}" ]]; then
