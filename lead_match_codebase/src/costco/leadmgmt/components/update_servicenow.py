@@ -14,11 +14,18 @@ Includes:
     generation, per-batch POST request, failures)
   - OAuth token fetch retries with exponential backoff (handles
     ServiceNow test instance hibernation / transient timeouts)
+  - Cached, expiry-aware OAuth tokens: the token is fetched once, its
+    `expires_in` is honoured, and it is transparently refreshed before
+    expiry. This prevents the "works for N batches then 401" failure
+    where a single job runs longer than the token lifetime.
+  - Explicit 401 handling inside the batch retry loop: a 401 forces a
+    token refresh and retries instead of burning retries on a dead token.
 """
 
 import json
 import logging
 import time
+from datetime import datetime, timezone, timedelta
 
 import pandas as pd
 import requests
@@ -27,6 +34,22 @@ from google.cloud import storage
 
 from costco.leadmgmt.config.Configuration import JobConfig
 from costco.leadmgmt.util.apputil import load_file_from_gcs
+
+
+# ==============================================================
+# OAUTH TOKEN CACHE
+# ==============================================================
+# Module-level cache keyed by (token_url, client_id). Mirrors the
+# read-side implementation so the write-side now behaves identically:
+# the token is reused across batches and only re-fetched when it is
+# within EXPIRY_BUFFER_SECONDS of expiring.
+_token_cache = {}
+
+# Refresh the token this many seconds BEFORE its real expiry.
+# Must comfortably exceed the worst-case duration of a single batch POST
+# (read timeout is 120s below) plus retries, so a token can never expire
+# mid-request. 300s gives generous headroom against a typical 1800s token.
+EXPIRY_BUFFER_SECONDS = 300
 
 
 # ==============================================================
@@ -70,6 +93,7 @@ def _redact_for_logging(record: dict) -> dict:
             redacted[key] = value
     return redacted
 
+
 def _safe_columns(val):
     """Strip float suffix from phone numbers read as float64 by pandas."""
     if val in ("", None, "nan", float("nan")):
@@ -78,7 +102,8 @@ def _safe_columns(val):
         return str(int(float(val)))
     except (ValueError, TypeError):
         return str(val).strip()
-    
+
+
 # ==============================================================
 # GCS FILE PATH RESOLUTION
 # ==============================================================
@@ -109,28 +134,52 @@ def get_gcs_file_path(uri: str) -> str:
 
 
 # ==============================================================
-# OAUTH TOKEN (with retry + exponential backoff)
+# OAUTH TOKEN (cached, expiry-aware, with retry + backoff)
 # ==============================================================
 def get_oauth_token(
     token_url: str,
     client_id: str,
     client_secret: str,
     max_retries: int = 3,
+    force_refresh: bool = False,
 ) -> str:
     """
-    Fetch OAuth token from ServiceNow with retry logic.
+    Fetch (or reuse) an OAuth token from ServiceNow.
 
-    Retries on ConnectTimeout and ConnectionError only — these cover:
-      - ServiceNow test instance hibernation (needs time to wake up)
-      - Transient VPC connector blips
+    Caching:
+      The token is cached per (token_url, client_id). On each call, if a
+      cached token exists and is NOT within EXPIRY_BUFFER_SECONDS of its
+      real expiry (derived from the response's `expires_in`), the cached
+      token is returned immediately — no network call. Otherwise a fresh
+      token is fetched and cached.
 
-    HTTP errors (4xx/5xx) are NOT retried — they indicate a real
-    configuration problem (wrong credentials, bad URL, etc.).
+      Pass force_refresh=True to bypass the cache (used after a 401, in
+      case the token was revoked early or there's clock skew).
 
-    Backoff: 2s, 4s, 8s between attempts.
-    Connect timeout raised from 10s → 15s to give hibernating instances
-    more time to respond.
+    Retries:
+      Retries on ConnectTimeout and ConnectionError only — these cover:
+        - ServiceNow test instance hibernation (needs time to wake up)
+        - Transient VPC connector blips
+      HTTP errors (4xx/5xx) on the token endpoint are NOT retried — they
+      indicate a real configuration problem (wrong credentials, bad URL).
+
+      Backoff: 2s, 4s, 8s between attempts.
+      Connect timeout is 15s to give hibernating instances time to wake.
     """
+    cache_key = f"{token_url}:{client_id}"
+
+    # ── Return cached token if still valid ──
+    if not force_refresh and cache_key in _token_cache:
+        cached = _token_cache[cache_key]
+        if datetime.now(timezone.utc) < cached["expires_at"]:
+            logging.info("[ServiceNow] Using cached OAuth token")
+            return cached["access_token"]
+
+    logging.info(
+        "[ServiceNow] Fetching new OAuth token (force_refresh=%s)",
+        force_refresh,
+    )
+
     payload = {
         "grant_type": "client_credentials",
         "client_id": client_id,
@@ -156,6 +205,28 @@ def get_oauth_token(
             if not access_token:
                 raise Exception("OAuth token missing in token response")
 
+            # Honour the server-provided lifetime; fall back to 1800s.
+            expires_in = int(token_response.get("expires_in", 1800))
+
+            # Refresh EXPIRY_BUFFER_SECONDS before real expiry so a token
+            # can never die mid-request. Guard against absurdly short
+            # lifetimes by flooring the effective TTL at 30s.
+            effective_ttl = max(expires_in - EXPIRY_BUFFER_SECONDS, 30)
+            expires_at = datetime.now(timezone.utc) + timedelta(
+                seconds=effective_ttl
+            )
+
+            _token_cache[cache_key] = {
+                "access_token": access_token,
+                "expires_at": expires_at,
+            }
+
+            logging.info(
+                "[ServiceNow] New OAuth token cached "
+                "(expires_in=%ss, refresh after ~%ss)",
+                expires_in, effective_ttl,
+            )
+
             return access_token
 
         except (ConnectTimeout, ReqConnError) as e:
@@ -172,6 +243,12 @@ def get_oauth_token(
     raise type(last_exc)(
         f"ServiceNow OAuth token fetch failed after {max_retries} attempts"
     ) from last_exc
+
+
+def _invalidate_oauth_token(token_url: str, client_id: str) -> None:
+    """Drop the cached token so the next get_oauth_token() re-fetches."""
+    cache_key = f"{token_url}:{client_id}"
+    _token_cache.pop(cache_key, None)
 
 
 # ==============================================================
@@ -325,7 +402,9 @@ def _post_batches(
     url,
     max_retries,
     retry_delay,
-    access_token,
+    token_url,
+    client_id,
+    client_secret,
     label,
     sample_id_field,
     redact_samples=True,
@@ -333,13 +412,24 @@ def _post_batches(
     """
     Shared batch-posting loop used by both Match/Potential and CE flows.
 
+    Token handling:
+        Instead of a static pre-fetched token, this loop is given the
+        OAuth credentials and calls get_oauth_token() inside the per-attempt
+        retry block. Because get_oauth_token() is cached, this is free on
+        the common path (returns the cached token instantly) and only
+        triggers a network refresh when the token is near expiry. On a 401,
+        the cached token is invalidated and a fresh one is forced — so a
+        long-running job that crosses the token lifetime no longer dies.
+
     Args:
         data:             list of dict records to POST
         batch_size:       records per POST
         url:              target ServiceNow URL
         max_retries:      attempts per batch
         retry_delay:      seconds to sleep between retries
-        access_token:     OAuth bearer token
+        token_url:        OAuth token endpoint
+        client_id:        OAuth client id
+        client_secret:    OAuth client secret
         label:            short string for log lines (e.g. "Match", "CE")
         sample_id_field:  field name to surface in failure logs (e.g.
                           "u_gcp_id" for Match, "number" for CE)
@@ -348,12 +438,6 @@ def _post_batches(
     Returns:
         list[dict] of failed batches (empty if all succeeded).
     """
-    headers = {
-        "Content-Type":  "application/json",
-        "Accept":        "application/json",
-        "Authorization": f"Bearer {access_token}",
-    }
-
     batch_size  = int(batch_size)
     max_retries = int(max_retries)
     retry_delay = int(retry_delay)
@@ -398,6 +482,17 @@ def _post_batches(
 
         for attempt in range(1, max_retries + 1):
             try:
+                # Fetch (or reuse cached) token for THIS attempt. Cheap on
+                # the common path; refreshes transparently near expiry.
+                access_token = get_oauth_token(
+                    token_url, client_id, client_secret
+                )
+                headers = {
+                    "Content-Type":  "application/json",
+                    "Accept":        "application/json",
+                    "Authorization": f"Bearer {access_token}",
+                }
+
                 print(
                     f"[{label} Batch {batch_number}] Attempt "
                     f"{attempt}/{max_retries}: POST "
@@ -430,6 +525,21 @@ def _post_batches(
                     success = True
                     print(f"[{label} Batch {batch_number}] ✅ Success")
                     break
+
+                elif response.status_code == 401:
+                    # Token rejected (expired early, revoked, or clock skew).
+                    # Invalidate the cache and force a fresh token on retry
+                    # instead of re-sending the same dead token.
+                    last_error = (
+                        f"HTTP 401 - {response.text[:300]} "
+                        f"(invalidating token, will refresh on retry)"
+                    )
+                    print(
+                        f"[{label} Batch {batch_number}] ❌ Attempt "
+                        f"{attempt}: {last_error}"
+                    )
+                    _invalidate_oauth_token(token_url, client_id)
+
                 else:
                     last_error = (
                         f"HTTP {response.status_code} - {response.text[:300]}"
@@ -491,7 +601,9 @@ def process_batches(
     url,
     max_retries,
     retry_delay,
-    access_token,
+    token_url,
+    client_id,
+    client_secret,
 ):
     """
     Send Match/Potential records to ServiceNow.
@@ -506,7 +618,9 @@ def process_batches(
         url,
         max_retries,
         retry_delay,
-        access_token,
+        token_url,
+        client_id,
+        client_secret,
         label="Match",
         sample_id_field="u_gcp_id",
         redact_samples=True,
@@ -537,7 +651,9 @@ def process_ce_batches(
     url,
     max_retries,
     retry_delay,
-    access_token,
+    token_url,
+    client_id,
+    client_secret,
 ):
     """
     Send Closed-Existing lead status updates to ServiceNow.
@@ -553,7 +669,9 @@ def process_ce_batches(
         url,
         max_retries,
         retry_delay,
-        access_token,
+        token_url,
+        client_id,
+        client_secret,
         label="CE",
         sample_id_field="number",
         redact_samples=False,   # CE payload has no PII
@@ -602,8 +720,11 @@ def update_servicenow(config_file_path: str, file_path: str = ""):
     client_id                   = servicenow_config.snow_client_id
     client_secret               = servicenow_config.snow_client_secret
 
-    # ── Get access token ──
-    access_token = get_oauth_token(token_url, client_id, client_secret)
+    # ── Validate credentials up front (fail fast) ──
+    # Primes the cache and surfaces bad creds / unreachable token endpoint
+    # before we bother loading the dataframe. Subsequent calls inside the
+    # batch loop reuse this cached token until it nears expiry.
+    get_oauth_token(token_url, client_id, client_secret)
     print("Successfully obtained OAuth token")
 
     # ── Load final output from GCS ──
@@ -670,7 +791,9 @@ def update_servicenow(config_file_path: str, file_path: str = ""):
             url,
             MAX_RETRIES,
             RETRY_DELAY,
-            access_token,
+            token_url,
+            client_id,
+            client_secret,
         )
 
     # ──────────────────────────────────────────────────────────
@@ -688,7 +811,9 @@ def update_servicenow(config_file_path: str, file_path: str = ""):
             update_closed_existing_url,
             MAX_RETRIES,
             RETRY_DELAY,
-            access_token,
+            token_url,
+            client_id,
+            client_secret,
         )
 
     print("\nServiceNow update completed")
