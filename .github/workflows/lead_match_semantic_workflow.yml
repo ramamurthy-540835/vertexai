@@ -8,6 +8,11 @@ on:
         required: false
         default: "115"
         type: string
+      bucket:
+        description: "GCS bucket used for lead-match reports"
+        required: false
+        default: "lead-match-ctoteam"
+        type: string
       wait_for_completion:
         description: "Wait for workflow execution to complete?"
         required: true
@@ -30,6 +35,7 @@ jobs:
       PROJECT_ID: ctoteam
       WORKFLOW_NAME: lead_match_workflow
       REGION: us-central1
+      BUCKET_NAME: ${{ github.event.inputs.bucket }}
 
     steps:
       - name: Checkout
@@ -63,8 +69,26 @@ jobs:
             PAYLOAD="{\"project\":\"${PROJECT_ID}\",\"region\":\"${REGION}\",\"warehouse\":\"${WAREHOUSE}\"}"
             WAREHOUSE_LABEL="${WAREHOUSE}"
           fi
+          HANDOFF_PREFIX="preflight/lead_match/${PROJECT_ID}/${WAREHOUSE_LABEL}"
+          READY_URI="gs://${BUCKET_NAME}/${HANDOFF_PREFIX}/READY"
+          REPORT_URI="gs://${BUCKET_NAME}/${HANDOFF_PREFIX}/report.md"
+          RESULT_URI="gs://${BUCKET_NAME}/${HANDOFF_PREFIX}/result.json"
           echo "PAYLOAD=${PAYLOAD}" >> "$GITHUB_ENV"
           echo "WAREHOUSE_LABEL=${WAREHOUSE_LABEL}" >> "$GITHUB_ENV"
+          echo "HANDOFF_PREFIX=${HANDOFF_PREFIX}" >> "$GITHUB_ENV"
+          echo "READY_URI=${READY_URI}" >> "$GITHUB_ENV"
+          echo "REPORT_URI=${REPORT_URI}" >> "$GITHUB_ENV"
+          echo "RESULT_URI=${RESULT_URI}" >> "$GITHUB_ENV"
+
+      - name: Check readiness marker
+        run: |
+          set -euo pipefail
+          if ! gsutil stat "${READY_URI}" >/dev/null 2>&1; then
+            echo "Missing READY marker at ${READY_URI}"
+            echo "Run Lead Match Preflight first."
+            exit 1
+          fi
+          echo "READY marker found at ${READY_URI}"
 
       - name: Trigger lead match workflow
         run: |
@@ -114,7 +138,11 @@ jobs:
             echo "- Project: \`${PROJECT_ID}\`"
             echo "- Workflow: \`${WORKFLOW_NAME}\`"
             echo "- Region: \`${REGION}\`"
+            echo "- Bucket: \`${BUCKET_NAME}\`"
             echo "- Warehouse: \`${WAREHOUSE_LABEL:-unknown}\`"
+            echo "- READY URI: \`${READY_URI:-unknown}\`"
+            echo "- Report URI: \`${REPORT_URI:-unknown}\`"
+            echo "- Result URI: \`${RESULT_URI:-unknown}\`"
             echo "- Payload: \`${PAYLOAD:-unknown}\`"
             echo "- Execution: \`${EXECUTION_NAME:-not-started}\`"
             echo "- Wait: \`${{ github.event.inputs.wait_for_completion }}\`"

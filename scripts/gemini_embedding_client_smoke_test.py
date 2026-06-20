@@ -57,7 +57,7 @@ def main() -> int:
         )
         response = client.models.embed_content(
             model=args.model,
-            contents="Warehouse 115 validation smoke test",
+            contents="Lead-to-POS validation smoke test",
         )
         embeddings = getattr(response, "embeddings", None) or []
         first_embedding = embeddings[0] if embeddings else None

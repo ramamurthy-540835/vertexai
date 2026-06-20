@@ -1,0 +1,127 @@
+{
+  "schema_version": "2.0",
+  "business_context": {
+    "entity": "lead_to_pos_match",
+    "intent": "Attribute POS transactions to BD-tracked business leads using business identity, warehouse territory, and fiscal ordering.",
+    "warehouse_note": "Warehouse values are runtime scope only. No warehouse number is a business rule."
+  },
+  "environment": {
+    "project_id": "ctoteam",
+    "schema": "leadmgmt",
+    "region": "us-central1",
+    "configurable_by_env": true
+  },
+  "warehouse_scope": {
+    "env_var": "WAREHOUSE_SCOPE",
+    "fallback_env_var": "WAREHOUSE",
+    "default": "ALL",
+    "supported_values": ["ALL", "single warehouse", "comma-separated warehouses"]
+  },
+  "blocking_rules": {
+    "same_warehouse": true,
+    "new_match_fiscal_rule": "lead.fiscal_year < pos.fiscal_year OR same fiscal year and lead.fiscal_period <= pos.fiscal_period",
+    "closed_existing_rule": "A strong match before the lead fiscal period is Closed - Existing and is not credited as a new conversion.",
+    "six_month_window": false
+  },
+  "matching_markers": {
+    "semantic_identity_core": ["business_name", "full_address"],
+    "full_address_fields": ["address_line_one", "city", "state", "zip_code"],
+    "deterministic_confirmers": ["email", "phone"],
+    "do_not_embed": [
+      "first_name",
+      "last_name",
+      "membership_number",
+      "order_amount",
+      "account_number"
+    ],
+    "email_phone_note": "Agreement can boost confidence. Disagreement should not strongly penalize because POS email can be member-personal."
+  },
+  "embeddings": {
+    "model": "gemini-embedding-001",
+    "task_type": "SEMANTIC_SIMILARITY",
+    "output_dimensionality": 768,
+    "l2_normalize": true,
+    "skip_empty_text": true,
+    "never_write_zero_vectors": true,
+    "fields": {
+      "combined_field": {
+        "source": ["business_name", "full_address"],
+        "role": "recall_gate"
+      },
+      "full_address": {
+        "source": ["address_line_one", "city", "state", "zip_code"],
+        "role": "precision_score",
+        "weight": 4
+      },
+      "business_name": {
+        "source": ["business_name"],
+        "role": "precision_score",
+        "weight": 3
+      }
+    }
+  },
+  "candidate_retrieval": {
+    "method": "pgvector_hnsw",
+    "distance_metric": "cosine",
+    "recall_gate_field": "combined_field",
+    "recall_gate_min_similarity": 65,
+    "nearest_neighbor_limit": 20
+  },
+  "scoring": {
+    "precision_score_formula": "(4 * full_address_score + 3 * business_name_score) / 7",
+    "deterministic_boosts": {
+      "email_exact_match": 5,
+      "phone_exact_match": 5,
+      "cap": 100
+    }
+  },
+  "confidence_bands": {
+    "qualify_min_score": 78,
+    "bands": [
+      { "name": "High", "state": "Closed - Match", "min_score": 92, "max_score": 100 },
+      { "name": "Medium", "state": "Potential", "min_score": 85, "max_score": 91.999 },
+      { "name": "Review", "state": "Potential", "min_score": 78, "max_score": 84.999 },
+      { "name": "No Match", "state": "No Match", "min_score": 0, "max_score": 77.999 }
+    ],
+    "calibration_status": "starting_prior_needs_labeled_set"
+  },
+  "resolution": {
+    "lead_to_pos": "one_to_many",
+    "pos_to_lead": "one_to_one",
+    "pos_winner": "highest_final_score",
+    "ambiguity_delta": 3,
+    "ambiguity_state": "Potential",
+    "ambiguity_match_type": "Manual Review",
+    "primary_transaction": {
+      "definition": "Earliest qualifying transaction per lead by fiscal year, period, then week.",
+      "qualifying_min_score": 78
+    }
+  },
+  "override_policy": {
+    "exact_qualified_min_score": 80,
+    "exact_is_authoritative": true,
+    "semantic_role": "recall_add_on_for_exact_misses",
+    "compare_exact_points_to_semantic_score": false
+  },
+  "lifecycle_states": ["New", "Potential", "Closed - Match", "Closed - Existing", "No Match"],
+  "normalization": {
+    "state": "uppercase_2_letter",
+    "zip_code": "first_5_digits",
+    "phone": "digits_only",
+    "business_name": "trim_collapse_whitespace_uppercase_for_compare",
+    "address": "trim_collapse_whitespace_standardize_common_abbreviations",
+    "empty_embedding_text": "skip"
+  },
+  "output_contract": {
+    "required_columns": [
+      "lead_id",
+      "pos_id",
+      "match_result",
+      "similarity_score",
+      "match_type",
+      "primary_transaction",
+      "matching_comments"
+    ],
+    "optional_columns": ["closed_existing_flag", "manual_review_reason"]
+  }
+}

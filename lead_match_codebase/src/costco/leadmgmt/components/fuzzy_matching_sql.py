@@ -6,7 +6,10 @@ from costco.leadmgmt.config.Configuration import JobConfig
 from costco.leadmgmt.util.apputil import load_file_from_gcs, process_and_archive_files
 from costco.leadmgmt.util.fiscal_year import get_costco_fiscal_info
 
-HIGH_CONFIDENCE_RESULTS = {"Complete", "Match"}
+SEMANTIC_QUALIFY_MIN_SCORE = 78
+EXACT_QUALIFY_MIN_SCORE = 80
+AMBIGUITY_DELTA = 3
+HIGH_CONFIDENCE_RESULTS = {"Complete", "Match", "Closed - Match"}
 
 
 # ==============================================================
@@ -82,9 +85,12 @@ def execute_select_query(engine, query, params=None):
 
 def get_confidence_level(similarity_score, match_configuration_df):
     if pd.notna(similarity_score):
-        for _, row in match_configuration_df.iterrows():
-            if row["min_score"] <= similarity_score <= row["max_score"]:
-                return row["match_result"]
+        if similarity_score >= 92:
+            return "Closed - Match"
+        if similarity_score >= 85:
+            return "Potential"
+        if similarity_score >= SEMANTIC_QUALIFY_MIN_SCORE:
+            return "Potential"
         return "No Match"
     return "No Match"
 
@@ -130,6 +136,15 @@ def fuzzy_matching(file_classified_path: str, config_file_path: str) -> str:
         .astype("Int64")
     )
     classified_df["pos_id"] = classified_df["pos_id"].astype(str)
+    classified_df["similarity_score"] = pd.to_numeric(
+        classified_df.get("similarity_score", 0), errors="coerce"
+    ).fillna(0.0)
+    exact_qualified_leads = set(
+        classified_df.loc[
+            classified_df["similarity_score"] >= EXACT_QUALIFY_MIN_SCORE,
+            "lead_id",
+        ].dropna().astype(str)
+    )
 
     # ----------------------------------------------------------
     # RUN FUZZY QUERY — leads with a warehouse number
@@ -198,20 +213,35 @@ def fuzzy_matching(file_classified_path: str, config_file_path: str) -> str:
         # COMPUTE FUZZY SIMILARITY SCORE
         # ----------------------------------------------------------
         master_df["similarity_score"] = (
-            (master_df["combined_field_score"]
-             + 4 * master_df["full_address_score"]
-             + 3 * master_df["business_name_score"]) / 8
+            (4 * master_df["full_address_score"]
+             + 3 * master_df["business_name_score"]) / 7
         )
 
-        df_fuzzy_result = master_df[master_df["similarity_score"] >= 80].copy()
+        df_fuzzy_result = master_df[
+            master_df["similarity_score"] >= SEMANTIC_QUALIFY_MIN_SCORE
+        ].copy()
+        df_fuzzy_result = df_fuzzy_result[
+            ~df_fuzzy_result["lead_id"].astype(str).isin(exact_qualified_leads)
+        ]
 
-        # Enforce one-to-one matching before merging onto exact output:
-        # highest-scoring lead wins each POS, then each lead keeps only its best POS.
+        # Enforce POS-to-lead one-to-one. A lead may keep multiple POS rows.
+        # Near-tie POS rows stay assigned to the strongest candidate but are routed to review.
         df_fuzzy_result = (
             df_fuzzy_result
-            .sort_values("similarity_score", ascending=False)
+            .sort_values(["pos_id", "similarity_score"], ascending=[True, False])
+        )
+        df_fuzzy_result["next_pos_score"] = (
+            df_fuzzy_result.groupby("pos_id")["similarity_score"].shift(-1)
+        )
+        df_fuzzy_result["manual_review_reason"] = None
+        ambiguous_mask = (
+            df_fuzzy_result["next_pos_score"].notna()
+            & ((df_fuzzy_result["similarity_score"] - df_fuzzy_result["next_pos_score"]) <= AMBIGUITY_DELTA)
+        )
+        df_fuzzy_result.loc[ambiguous_mask, "manual_review_reason"] = "ambiguous_pos_candidate"
+        df_fuzzy_result = (
+            df_fuzzy_result
             .drop_duplicates(subset=["pos_id"], keep="first")
-            .drop_duplicates(subset=["lead_id"], keep="first")
         )
 
     # ----------------------------------------------------------
@@ -233,6 +263,7 @@ def fuzzy_matching(file_classified_path: str, config_file_path: str) -> str:
         "week",
         "warehouse_number",
         "business_name",
+        "manual_review_reason",
     ]].copy()
 
     # ----------------------------------------------------------
@@ -257,11 +288,13 @@ def fuzzy_matching(file_classified_path: str, config_file_path: str) -> str:
         merged_df["similarity_score_fuzzy"], errors="coerce"
     )
 
-    # Rows where fuzzy found a better match than exact
+    # Exact qualified rows stand. Semantic only recovers exact misses.
+    exact_qualified_mask = merged_df["similarity_score_primary"] >= EXACT_QUALIFY_MIN_SCORE
     update_mask = (
-        (merged_df["similarity_score_primary"] < merged_df["similarity_score_fuzzy"])
+        ~exact_qualified_mask
         & pd.notna(merged_df["pos_id_fuzzy"])
         & pd.notna(merged_df["similarity_score_fuzzy"])
+        & (merged_df["similarity_score_fuzzy"] >= SEMANTIC_QUALIFY_MIN_SCORE)
     )
     merged_df["_fuzzy_update"] = update_mask
 
@@ -280,6 +313,10 @@ def fuzzy_matching(file_classified_path: str, config_file_path: str) -> str:
     merged_df.loc[update_mask, "pos_id_primary"]            = merged_df.loc[update_mask, "pos_id_fuzzy"]
     merged_df.loc[update_mask, "similarity_score_primary"]  = merged_df.loc[update_mask, "similarity_score_fuzzy"]
     merged_df.loc[update_mask, "match_type"]                = "Fuzzy"
+    if "manual_review_reason" in merged_df.columns:
+        review_mask = update_mask & merged_df["manual_review_reason"].notna()
+        merged_df.loc[review_mask, "match_type"] = "Manual Review"
+        merged_df.loc[review_mask, "match_result"] = "Potential"
     merged_df.loc[update_mask, "account_number_primary"]    = pd.to_numeric(merged_df.loc[update_mask, "account_number_fuzzy"], errors="coerce")
     merged_df.loc[update_mask, "fiscal_year_transaction"]   = pd.to_numeric(merged_df.loc[update_mask, "fiscal_year"], errors="coerce")
     merged_df.loc[update_mask, "fiscal_period_transaction"] = pd.to_numeric(merged_df.loc[update_mask, "fiscal_period"], errors="coerce")
@@ -404,9 +441,9 @@ def fuzzy_matching(file_classified_path: str, config_file_path: str) -> str:
     match_configuration_df = execute_select_query(
         engine, text(query_match_configuration)
     )
-    merged_df["match_result"] = merged_df["similarity_score"].apply(
-        lambda x: get_confidence_level(x, match_configuration_df)
-    )
+    merged_df.loc[update_mask, "match_result"] = merged_df.loc[
+        update_mask, "similarity_score"
+    ].apply(lambda x: get_confidence_level(x, match_configuration_df))
 
     # ----------------------------------------------------------
     # PRIMARY TRANSACTION LOGIC

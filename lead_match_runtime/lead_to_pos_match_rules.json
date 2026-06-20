@@ -1,0 +1,30 @@
+{
+  "schema_version": "2.0",
+  "canonical_config": "config/lead_pos_business_rules.json",
+  "summary": {
+    "test_warehouse_is_business_logic": false,
+    "warehouse_rule": "lead.warehouse_number = pos.warehouse_number",
+    "warehouse_scope": "Runtime input only: WAREHOUSE_SCOPE=ALL, one warehouse, or comma-separated warehouses.",
+    "schema_source": "DB_SCHEMA env var or config/lead_pos_business_rules.json.",
+    "six_month_rule": false,
+    "exact_match_policy": "Exact qualified matches are authoritative.",
+    "semantic_policy": "Semantic matching is a recall add-on for exact misses only.",
+    "semantic_embedding_identity": ["business_name", "full_address"],
+    "do_not_embed": [
+      "first_name",
+      "last_name",
+      "membership_number",
+      "order_amount",
+      "account_number"
+    ],
+    "semantic_precision_score": "(4 * full_address_score + 3 * business_name_score) / 7",
+    "confidence_bands": {
+      "High": "92-100",
+      "Medium": "85-91",
+      "Review": "78-84",
+      "No Match": "0-77"
+    },
+    "pos_resolution": "One POS transaction can belong to at most one lead; near ties within 3 points go to manual review.",
+    "lead_resolution": "One lead can match many POS transactions over time; earliest qualifying transaction is primary."
+  }
+}

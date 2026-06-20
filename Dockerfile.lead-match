@@ -7,5 +7,6 @@ COPY lead_match_runtime/requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r /app/requirements.txt
 
 COPY lead_match_runtime /app/lead_match_runtime
+COPY config /app/config
 
 ENTRYPOINT ["python", "-m", "lead_match_runtime.job_runner"]

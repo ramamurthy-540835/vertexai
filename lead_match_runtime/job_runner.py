@@ -9,23 +9,79 @@ import pg8000.dbapi
 from google import genai
 from google.genai import types
 
+from lead_match_runtime.business_rules import (
+    build_embedding_text,
+    get_project_id,
+    get_schema,
+    get_warehouse_scope,
+    load_business_rules,
+)
 
-EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "gemini-embedding-001")
-EMBEDDING_DIMENSION = int(os.environ.get("EMBEDDING_DIMENSION", "768"))
+
+BUSINESS_RULES = load_business_rules()
+EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", BUSINESS_RULES["embeddings"]["model"])
+EMBEDDING_DIMENSION = int(
+    os.environ.get("EMBEDDING_DIMENSION", BUSINESS_RULES["embeddings"]["output_dimensionality"])
+)
 DEFAULT_FISCAL_YEAR = int(os.environ.get("DEFAULT_FISCAL_YEAR", "2026"))
 DEFAULT_FISCAL_PERIOD = int(os.environ.get("DEFAULT_FISCAL_PERIOD", "10"))
 DEFAULT_BATCH_SIZE = int(os.environ.get("EMBEDDING_BATCH_SIZE", "25"))
+
+EXPECTED_PROJECT = os.environ.get("EXPECTED_PROJECT_ID", BUSINESS_RULES["environment"]["project_id"])
+EXPECTED_CLOUDSQL_CONNECTION_NAME = "ctoteam:us-central1:lead-mgmt-db"
+
+
+def _require_env(name, expected):
+    actual = os.environ.get(name)
+    if actual != expected:
+        raise RuntimeError(
+            f"Refusing to start: env {name}={actual!r}, expected {expected!r}"
+        )
+
+
+def assert_isolated_runtime():
+    project = os.environ.get("GOOGLE_CLOUD_PROJECT")
+    if project != EXPECTED_PROJECT:
+        raise RuntimeError(
+            f"Refusing to start: GOOGLE_CLOUD_PROJECT={project!r}, "
+            f"expected {EXPECTED_PROJECT!r}"
+        )
+    conn = os.environ.get("CLOUDSQL_CONNECTION_NAME")
+    if conn and conn not in (EXPECTED_CLOUDSQL_CONNECTION_NAME, "ctoteam:us-central1"):
+        raise RuntimeError(
+            f"Refusing to start: CLOUDSQL_CONNECTION_NAME={conn!r}, "
+            f"expected {EXPECTED_CLOUDSQL_CONNECTION_NAME!r} or 'ctoteam:us-central1'"
+        )
+    _require_env("ALLOW_CLIENT_GCP", "false")
+    _require_env("ALLOW_PRODUCTION", "false")
 
 
 def db_config():
     missing = [
         name
-        for name in ("DB_HOST", "DB_NAME", "DB_USER", "DB_PASSWORD")
+        for name in ("DB_NAME", "DB_USER", "DB_PASSWORD")
         if not os.environ.get(name)
     ]
     if missing:
         raise RuntimeError(f"Missing required DB env vars: {', '.join(missing)}")
 
+    conn_name = os.environ.get("CLOUDSQL_CONNECTION_NAME")
+    if conn_name:
+        socket_dir = os.environ.get("CLOUDSQL_SOCKET_DIR", "/cloudsql")
+        return {
+            "unix_sock": f"{socket_dir}/{conn_name}/.s.PGSQL.5432",
+            "database": os.environ["DB_NAME"],
+            "user": os.environ["DB_USER"],
+            "password": os.environ["DB_PASSWORD"],
+        }
+
+    if os.environ.get("ALLOW_LOCAL_DB", "false").lower() != "true":
+        raise RuntimeError(
+            "CLOUDSQL_CONNECTION_NAME is not set and ALLOW_LOCAL_DB is not 'true'; "
+            "refusing to fall back to DB_HOST/DB_PORT."
+        )
+    if not os.environ.get("DB_HOST"):
+        raise RuntimeError("Missing DB_HOST for local DB connection")
     return {
         "host": os.environ["DB_HOST"],
         "port": int(os.environ.get("DB_PORT", "5432")),
@@ -36,15 +92,34 @@ def db_config():
 
 
 def connect():
+    assert_isolated_runtime()
     return pg8000.dbapi.connect(**db_config())
 
 
 def schema_name():
-    return os.environ.get("DB_SCHEMA", "leadmgmt")
+    return get_schema(BUSINESS_RULES)
+
+
+def warehouse_scope():
+    return get_warehouse_scope(BUSINESS_RULES)
+
+
+def warehouse_sql_filter(alias, params):
+    scope = warehouse_scope()
+    if scope.is_all:
+        return ""
+    placeholders = ", ".join(["%s"] * len(scope.values))
+    params.extend(scope.values)
+    return f"AND {alias}.warehouse_number IN ({placeholders})"
+
+
+def warehouse_scope_label():
+    scope = warehouse_scope()
+    return "ALL" if scope.is_all else ",".join(str(value) for value in scope.values)
 
 
 def vertex_client():
-    project = os.environ.get("VERTEX_PROJECT_ID") or os.environ.get("GOOGLE_CLOUD_PROJECT")
+    project = os.environ.get("VERTEX_PROJECT_ID") or get_project_id(BUSINESS_RULES)
     location = os.environ.get("VERTEX_LOCATION", "us-central1")
     if not project:
         raise RuntimeError("Missing VERTEX_PROJECT_ID or GOOGLE_CLOUD_PROJECT")
@@ -99,6 +174,9 @@ def execute_many_values(cursor, insert_prefix, rows, fields_per_row, chunk_size=
 
 def lead_source_rows(cursor):
     schema = schema_name()
+    params = [DEFAULT_FISCAL_YEAR, DEFAULT_FISCAL_PERIOD]
+    warehouse_clause = warehouse_sql_filter("l", params)
+
     cursor.execute(
         f"""
         SELECT
@@ -107,22 +185,28 @@ def lead_source_rows(cursor):
             COALESCE(l.fiscal_year, %s) AS fiscal_year,
             COALESCE(l.fiscal_period, %s) AS fiscal_period,
             COALESCE(a.business_name, '') AS business_name,
-            CONCAT_WS(' ', a.address_line_one, a.address_line_two, a.city, a.state, a.zip_code) AS full_address,
-            CONCAT_WS(' ', a.business_name, a.address_line_one, a.address_line_two, a.city, a.state, a.zip_code) AS combined_field
+            COALESCE(a.address_line_one, '') AS address_line_one,
+            COALESCE(a.city, '') AS city,
+            COALESCE(a.state, '') AS state,
+            COALESCE(a.zip_code, '') AS zip_code
         FROM "{schema}"."lead" l
         JOIN "{schema}"."account" a ON a.account_id = l.account_id
         WHERE NOT EXISTS (
             SELECT 1 FROM "{schema}"."leads_embeddings" e WHERE e.lead_id = l.lead_id
         )
+          {warehouse_clause}
         ORDER BY l.lead_id;
         """,
-        (DEFAULT_FISCAL_YEAR, DEFAULT_FISCAL_PERIOD),
+        params,
     )
     return cursor.fetchall()
 
 
 def pos_source_rows(cursor):
     schema = schema_name()
+    params = []
+    warehouse_clause = warehouse_sql_filter("t", params)
+
     cursor.execute(
         f"""
         SELECT
@@ -133,14 +217,18 @@ def pos_source_rows(cursor):
             t.fiscal_period,
             t.week,
             COALESCE(t.business_name, '') AS business_name,
-            CONCAT_WS(' ', t.address_line_one, t.address_line_two, t.city, t.state, t.zip_code) AS full_address,
-            CONCAT_WS(' ', t.business_name, t.address_line_one, t.address_line_two, t.city, t.state, t.zip_code) AS combined_field
+            COALESCE(t.address_line_one, '') AS address_line_one,
+            COALESCE(t.city, '') AS city,
+            COALESCE(t.state, '') AS state,
+            COALESCE(t.zip_code, '') AS zip_code
         FROM "{schema}"."transaction" t
         WHERE NOT EXISTS (
             SELECT 1 FROM "{schema}"."pos_embeddings" e WHERE e.pos_id = t.pos_id
         )
+          {warehouse_clause}
         ORDER BY t.pos_id;
-        """
+        """,
+        params,
     )
     return cursor.fetchall()
 
@@ -150,20 +238,34 @@ def generate_lead_embeddings():
     conn = connect()
     cursor = conn.cursor()
     rows = lead_source_rows(cursor)
+    print(f"Warehouse scope: {warehouse_scope_label()}")
     print(f"Lead rows needing embeddings: {len(rows)}")
 
     insert_rows = []
     now = datetime.now(UTC)
     for batch in chunks(rows, DEFAULT_BATCH_SIZE):
-        combined_vectors = embed_texts(client, [row[6] for row in batch])
-        address_vectors = embed_texts(client, [row[5] for row in batch])
-        name_vectors = embed_texts(client, [row[4] for row in batch])
-        for row, combined, address, name in zip(batch, combined_vectors, address_vectors, name_vectors):
+        records = [
+            {
+                "business_name": row[4],
+                "address_line_one": row[5],
+                "city": row[6],
+                "state": row[7],
+                "zip_code": row[8],
+            }
+            for row in batch
+        ]
+        combined_texts = [build_embedding_text(record, "combined_field") for record in records]
+        address_texts = [build_embedding_text(record, "full_address") for record in records]
+        name_texts = [build_embedding_text(record, "business_name") for record in records]
+        combined_vectors = embed_texts(client, combined_texts)
+        address_vectors = embed_texts(client, address_texts)
+        name_vectors = embed_texts(client, name_texts)
+        for row, record, combined, address, name in zip(batch, records, combined_vectors, address_vectors, name_vectors):
             insert_rows.append((
                 row[0],
-                row[6],
-                row[4],
-                row[5],
+                build_embedding_text(record, "combined_field"),
+                build_embedding_text(record, "business_name"),
+                build_embedding_text(record, "full_address"),
                 combined,
                 address,
                 name,
@@ -196,21 +298,35 @@ def generate_pos_embeddings():
     conn = connect()
     cursor = conn.cursor()
     rows = pos_source_rows(cursor)
+    print(f"Warehouse scope: {warehouse_scope_label()}")
     print(f"POS rows needing embeddings: {len(rows)}")
 
     insert_rows = []
     now = datetime.now(UTC)
     for batch in chunks(rows, DEFAULT_BATCH_SIZE):
-        combined_vectors = embed_texts(client, [row[8] for row in batch])
-        address_vectors = embed_texts(client, [row[7] for row in batch])
-        name_vectors = embed_texts(client, [row[6] for row in batch])
-        for row, combined, address, name in zip(batch, combined_vectors, address_vectors, name_vectors):
+        records = [
+            {
+                "business_name": row[6],
+                "address_line_one": row[7],
+                "city": row[8],
+                "state": row[9],
+                "zip_code": row[10],
+            }
+            for row in batch
+        ]
+        combined_texts = [build_embedding_text(record, "combined_field") for record in records]
+        address_texts = [build_embedding_text(record, "full_address") for record in records]
+        name_texts = [build_embedding_text(record, "business_name") for record in records]
+        combined_vectors = embed_texts(client, combined_texts)
+        address_vectors = embed_texts(client, address_texts)
+        name_vectors = embed_texts(client, name_texts)
+        for row, record, combined, address, name in zip(batch, records, combined_vectors, address_vectors, name_vectors):
             insert_rows.append((
                 row[0],
                 row[1],
-                row[8],
-                row[6],
-                row[7],
+                build_embedding_text(record, "combined_field"),
+                build_embedding_text(record, "business_name"),
+                build_embedding_text(record, "full_address"),
                 combined,
                 address,
                 name,
@@ -245,6 +361,22 @@ def run_fuzzy_match():
     schema = schema_name()
     run_id = os.environ.get("MATCH_RUN_ID") or f"workflow-{uuid.uuid4().hex[:12]}"
     limit = int(os.environ.get("MATCH_LEAD_LIMIT", "1000000"))
+    params = []
+    warehouse_clause = warehouse_sql_filter("leads_embeddings", params).replace("leads_embeddings.", "")
+    rules = BUSINESS_RULES
+    recall_gate = float(rules["candidate_retrieval"]["recall_gate_min_similarity"])
+    qualify_min = float(rules["confidence_bands"]["qualify_min_score"])
+    ambiguity_delta = float(rules["resolution"]["ambiguity_delta"])
+    nearest_neighbor_limit = int(rules["candidate_retrieval"]["nearest_neighbor_limit"])
+    params.extend([
+        limit,
+        recall_gate,
+        nearest_neighbor_limit,
+        qualify_min,
+        ambiguity_delta,
+        run_id,
+        EMBEDDING_MODEL,
+    ])
 
     cursor.execute(
         f"""
@@ -252,6 +384,7 @@ def run_fuzzy_match():
             SELECT *
             FROM "{schema}"."leads_embeddings"
             WHERE combined_embedding IS NOT NULL
+              {warehouse_clause}
             ORDER BY lead_id
             LIMIT %s
         ),
@@ -260,6 +393,11 @@ def run_fuzzy_match():
                 l.lead_id,
                 s.pos_id,
                 l.warehouse_number,
+                l.fiscal_year AS lead_fiscal_year,
+                l.fiscal_period AS lead_fiscal_period,
+                s.fiscal_year AS pos_fiscal_year,
+                s.fiscal_period AS pos_fiscal_period,
+                s.week AS pos_week,
                 (1 - (s.combined_embedding <=> l.combined_embedding)) * 100 AS combined_field_score,
                 (1 - (s.address_embedding <=> l.address_embedding)) * 100 AS full_address_score,
                 (1 - COALESCE(NULLIF(s.name_embedding <=> l.name_embedding, 'NaN'::float), 1)) * 100 AS business_name_score
@@ -268,13 +406,10 @@ def run_fuzzy_match():
                 SELECT *
                 FROM "{schema}"."pos_embeddings" s
                 WHERE s.combined_embedding IS NOT NULL
-                  AND (l.warehouse_number IS NULL OR s.warehouse_number = l.warehouse_number)
-                  AND (
-                      s.fiscal_year > l.fiscal_year
-                      OR (s.fiscal_year = l.fiscal_year AND s.fiscal_period >= l.fiscal_period)
-                  )
+                  AND s.warehouse_number = l.warehouse_number
+                  AND (1 - (s.combined_embedding <=> l.combined_embedding)) * 100 >= %s
                 ORDER BY s.combined_embedding <=> l.combined_embedding
-                LIMIT 20
+                LIMIT %s
             ) s
         ),
         scored AS (
@@ -282,21 +417,42 @@ def run_fuzzy_match():
                 lead_id,
                 pos_id,
                 warehouse_number,
+                pos_fiscal_year,
+                pos_fiscal_period,
+                pos_week,
                 combined_field_score,
                 full_address_score,
                 business_name_score,
                 (
-                    combined_field_score
-                    + 4 * full_address_score
+                    4 * full_address_score
                     + 3 * business_name_score
-                ) / 8 AS final_score
+                ) / 7 AS final_score,
+                CASE
+                    WHEN (
+                        pos_fiscal_year > lead_fiscal_year
+                        OR (pos_fiscal_year = lead_fiscal_year AND pos_fiscal_period >= lead_fiscal_period)
+                    )
+                    THEN 'Closed - Match'
+                    ELSE 'Closed - Existing'
+                END AS lifecycle_state
             FROM candidates
         ),
         ranked AS (
-            SELECT *,
-                   ROW_NUMBER() OVER (PARTITION BY lead_id ORDER BY final_score DESC) AS rank
+            SELECT *
             FROM scored
             WHERE final_score >= %s
+        ),
+        best_unique_pos AS (
+            SELECT *,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY pos_id
+                       ORDER BY final_score DESC, lead_id
+                   ) AS pos_rank,
+                   LEAD(final_score) OVER (
+                       PARTITION BY pos_id
+                       ORDER BY final_score DESC, lead_id
+                   ) AS next_pos_score
+            FROM ranked
         )
         INSERT INTO "{schema}"."match_decision_detail" (
             match_run_id, lead_id, pos_id, warehouse_number, match_type, final_score,
@@ -308,7 +464,12 @@ def run_fuzzy_match():
             lead_id,
             pos_id,
             warehouse_number,
-            'Fuzzy',
+            CASE
+                WHEN next_pos_score IS NOT NULL
+                 AND final_score - next_pos_score <= %s
+                THEN 'Manual Review'
+                ELSE 'Fuzzy'
+            END,
             final_score,
             combined_field_score,
             full_address_score,
@@ -316,15 +477,16 @@ def run_fuzzy_match():
             '(combined + 4*address + 3*name)/8',
             %s,
             CURRENT_TIMESTAMP
-        FROM ranked
-        WHERE rank = 1
+        FROM best_unique_pos
+        WHERE pos_rank = 1
         ON CONFLICT (match_run_id, lead_id, pos_id) DO NOTHING;
         """,
-        (limit, float(os.environ.get("MATCH_MIN_SCORE", "80")), run_id, EMBEDDING_MODEL),
+        params,
     )
     inserted = cursor.rowcount
     conn.commit()
     conn.close()
+    print(f"Warehouse scope: {warehouse_scope_label()}")
     print(f"Match run: {run_id}")
     print(f"Inserted match decision rows: {inserted}")
 
@@ -352,12 +514,16 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "task",
-        choices=("summary", "lead-embeddings", "pos-embeddings", "fuzzy-match"),
+        choices=("summary", "smoke", "lead-embeddings", "pos-embeddings", "fuzzy-match"),
     )
-    args = parser.parse_args()
+    args, remaining = parser.parse_known_args()
 
     if args.task == "summary":
         print_summary()
+    elif args.task == "smoke":
+        from lead_match_runtime.smoke_test import main as smoke_main
+        sys.argv = [sys.argv[0]] + remaining
+        smoke_main()
     elif args.task == "lead-embeddings":
         generate_lead_embeddings()
     elif args.task == "pos-embeddings":
