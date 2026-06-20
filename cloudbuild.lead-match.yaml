@@ -1,0 +1,15 @@
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -f
+      - Dockerfile.lead-match
+      - -t
+      - us-central1-docker.pkg.dev/$PROJECT_ID/cloud-run-repo/lead-match-runtime:$SHORT_SHA
+      - -t
+      - us-central1-docker.pkg.dev/$PROJECT_ID/cloud-run-repo/lead-match-runtime:latest
+      - .
+
+images:
+  - us-central1-docker.pkg.dev/$PROJECT_ID/cloud-run-repo/lead-match-runtime:$SHORT_SHA
+  - us-central1-docker.pkg.dev/$PROJECT_ID/cloud-run-repo/lead-match-runtime:latest

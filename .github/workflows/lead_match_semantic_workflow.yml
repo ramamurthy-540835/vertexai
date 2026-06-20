@@ -1,0 +1,121 @@
+name: Lead Match Semantic Workflow
+
+on:
+  workflow_dispatch:
+    inputs:
+      warehouse:
+        description: "Warehouse number, comma-separated warehouses, or blank for all"
+        required: false
+        default: "115"
+        type: string
+      wait_for_completion:
+        description: "Wait for workflow execution to complete?"
+        required: true
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
+
+jobs:
+  trigger:
+    name: "ctoteam-lead-match-${{ github.event.inputs.warehouse || 'all' }}"
+    runs-on: ubuntu-latest
+
+    permissions:
+      id-token: write
+      contents: read
+
+    env:
+      PROJECT_ID: ctoteam
+      WORKFLOW_NAME: lead_match_workflow
+      REGION: us-central1
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Auth to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
+          service_account: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
+          create_credentials_file: true
+          export_environment_variables: true
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Build workflow payload
+        env:
+          RAW_WAREHOUSE: ${{ github.event.inputs.warehouse }}
+        run: |
+          set -euo pipefail
+          WAREHOUSE="$(printf '%s' "${RAW_WAREHOUSE}" | tr -d '[:space:]')"
+          if [[ -z "${WAREHOUSE}" || "${WAREHOUSE,,}" == "all" ]]; then
+            PAYLOAD="{\"project\":\"${PROJECT_ID}\",\"region\":\"${REGION}\"}"
+            WAREHOUSE_LABEL="all"
+          else
+            if [[ ! "${WAREHOUSE}" =~ ^[0-9]+(,[0-9]+)*$ ]]; then
+              echo "Invalid warehouse input: ${WAREHOUSE}"
+              exit 1
+            fi
+            PAYLOAD="{\"project\":\"${PROJECT_ID}\",\"region\":\"${REGION}\",\"warehouse\":\"${WAREHOUSE}\"}"
+            WAREHOUSE_LABEL="${WAREHOUSE}"
+          fi
+          echo "PAYLOAD=${PAYLOAD}" >> "$GITHUB_ENV"
+          echo "WAREHOUSE_LABEL=${WAREHOUSE_LABEL}" >> "$GITHUB_ENV"
+
+      - name: Trigger lead match workflow
+        run: |
+          set -euo pipefail
+          gcloud config set project "${PROJECT_ID}"
+          EXECUTION=$(gcloud workflows run "${WORKFLOW_NAME}" \
+            --location="${REGION}" \
+            --project="${PROJECT_ID}" \
+            --data="${PAYLOAD}" \
+            --format="value(name)")
+          echo "EXECUTION_NAME=${EXECUTION}" >> "$GITHUB_ENV"
+          echo "Execution started: ${EXECUTION}"
+
+      - name: Wait for completion
+        if: github.event.inputs.wait_for_completion == 'true'
+        run: |
+          set -euo pipefail
+          while true; do
+            STATE=$(gcloud workflows executions describe "${EXECUTION_NAME}" \
+              --project="${PROJECT_ID}" \
+              --location="${REGION}" \
+              --format="value(state)")
+            echo "Current state: ${STATE}"
+            case "${STATE}" in
+              SUCCEEDED)
+                break
+                ;;
+              FAILED|CANCELLED)
+                gcloud workflows executions describe "${EXECUTION_NAME}" \
+                  --project="${PROJECT_ID}" \
+                  --location="${REGION}" \
+                  --format="value(error)"
+                exit 1
+                ;;
+              *)
+                sleep 15
+                ;;
+            esac
+          done
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "## Lead Match Semantic Workflow"
+            echo ""
+            echo "- Project: \`${PROJECT_ID}\`"
+            echo "- Workflow: \`${WORKFLOW_NAME}\`"
+            echo "- Region: \`${REGION}\`"
+            echo "- Warehouse: \`${WAREHOUSE_LABEL:-unknown}\`"
+            echo "- Payload: \`${PAYLOAD:-unknown}\`"
+            echo "- Execution: \`${EXECUTION_NAME:-not-started}\`"
+            echo "- Wait: \`${{ github.event.inputs.wait_for_completion }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"

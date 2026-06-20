@@ -1,0 +1,280 @@
+name: Lead Match Preflight Ops
+
+on:
+  workflow_dispatch:
+    inputs:
+      warehouse:
+        description: "Warehouse number, comma-separated warehouses, blank, or all"
+        required: false
+        default: "115"
+        type: string
+      bucket:
+        description: "GCS bucket used for lead-match reports"
+        required: false
+        default: "lead-match-ctoteam"
+        type: string
+      prepare_resources:
+        description: "Create preflight GCS folders if missing?"
+        required: true
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
+      run_smoke_tests:
+        description: "Run Vertex AI and Cloud SQL smoke-test scripts?"
+        required: true
+        default: "false"
+        type: choice
+        options:
+          - "true"
+          - "false"
+
+jobs:
+  preflight:
+    name: "ctoteam-preflight-${{ github.event.inputs.warehouse || 'all' }}"
+    runs-on: ubuntu-latest
+
+    permissions:
+      id-token: write
+      contents: read
+
+    env:
+      PROJECT_ID: ctoteam
+      REGION: us-central1
+      SCHEMA_NAME: leadmgmt
+      INSTANCE_NAME: lead-mgmt-db
+      WORKFLOW_NAME: lead_match_workflow
+      LEAD_JOB: lead-match-lead-embeddings
+      POS_JOB: lead-match-pos-embeddings
+      MATCH_JOB: lead-match-fuzzy-match
+      BUCKET_NAME: ${{ github.event.inputs.bucket }}
+      DB_HOST: 35.188.0.193
+      DB_PORT: "5432"
+      DB_NAME: postgres
+      DB_SCHEMA: leadmgmt
+      DB_USER: postgres
+      DB_PASSWORD: ${{ secrets.LEAD_MATCH_DB_PASSWORD }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Auth to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
+          service_account: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
+          create_credentials_file: true
+          export_environment_variables: true
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Set up Python
+        if: github.event.inputs.run_smoke_tests == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install smoke-test dependencies
+        if: github.event.inputs.run_smoke_tests == 'true'
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install \
+            google-genai \
+            google-auth \
+            cloud-sql-python-connector[pg8000] \
+            sqlalchemy \
+            pandas
+
+      - name: Resolve inputs
+        env:
+          RAW_WAREHOUSE: ${{ github.event.inputs.warehouse }}
+        run: |
+          set -euo pipefail
+          WAREHOUSE="$(printf '%s' "${RAW_WAREHOUSE}" | tr -d '[:space:]')"
+          if [[ -z "${WAREHOUSE}" || "${WAREHOUSE,,}" == "all" ]]; then
+            WAREHOUSE=""
+            WAREHOUSE_LABEL="all"
+            WAREHOUSE_SQL_FILTER=""
+          else
+            if [[ ! "${WAREHOUSE}" =~ ^[0-9]+(,[0-9]+)*$ ]]; then
+              echo "Invalid warehouse input: ${WAREHOUSE}"
+              exit 1
+            fi
+            WAREHOUSE_LABEL="${WAREHOUSE}"
+            WAREHOUSE_SQL_FILTER="AND warehouse_number IN (${WAREHOUSE})"
+          fi
+
+          REPORT_TS="$(date -u +%Y%m%d_%H%M%S)"
+          REPORT_OBJECT="preflight/lead_match/ctoteam/${WAREHOUSE_LABEL}/lead_match_preflight_${REPORT_TS}.md"
+          {
+            echo "WAREHOUSE=${WAREHOUSE}"
+            echo "WAREHOUSE_LABEL=${WAREHOUSE_LABEL}"
+            echo "WAREHOUSE_SQL_FILTER=${WAREHOUSE_SQL_FILTER}"
+            echo "REPORT_FILE=${RUNNER_TEMP}/lead_match_preflight_report.md"
+            echo "REPORT_URI=gs://${BUCKET_NAME}/${REPORT_OBJECT}"
+          } >> "$GITHUB_ENV"
+
+      - name: Initialize report
+        run: |
+          set -euo pipefail
+          {
+            echo "# Lead Match Preflight"
+            echo ""
+            echo "- Project: \`${PROJECT_ID}\`"
+            echo "- Region: \`${REGION}\`"
+            echo "- Cloud SQL instance: \`${INSTANCE_NAME}\`"
+            echo "- Schema: \`${SCHEMA_NAME}\`"
+            echo "- Workflow: \`${WORKFLOW_NAME}\`"
+            echo "- Cloud Run Jobs: \`${LEAD_JOB}\`, \`${POS_JOB}\`, \`${MATCH_JOB}\`"
+            echo "- Warehouse: \`${WAREHOUSE_LABEL}\`"
+            echo "- Smoke tests: \`${{ github.event.inputs.run_smoke_tests }}\`"
+            echo "- Generated UTC: \`$(date -u +%Y-%m-%dT%H:%M:%SZ)\`"
+            echo ""
+          } > "${REPORT_FILE}"
+
+      - name: Prepare GCS folders
+        if: github.event.inputs.prepare_resources == 'true'
+        run: |
+          set -euo pipefail
+          gcloud config set project "${PROJECT_ID}"
+          if ! gsutil ls -b "gs://${BUCKET_NAME}" >/dev/null 2>&1; then
+            gsutil mb -p "${PROJECT_ID}" -l "${REGION}" "gs://${BUCKET_NAME}"
+          fi
+          MARKER_FILE="${RUNNER_TEMP}/.keep"
+          printf 'created by lead_match_preflight_ops at %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "${MARKER_FILE}"
+          for folder in \
+            "preflight/lead_match/ctoteam/${WAREHOUSE_LABEL}/" \
+            "match/vertex/final_match_result/" \
+            "archive/match/vertex/final_match_result/"; do
+            gsutil cp "${MARKER_FILE}" "gs://${BUCKET_NAME}/${folder}.keep" >/dev/null
+          done
+
+      - name: Inspect resources
+        run: |
+          set -euo pipefail
+          gcloud config set project "${PROJECT_ID}"
+          {
+            echo "## Enabled Services"
+            echo ""
+            echo "Required services for this workflow:"
+            echo ""
+            echo "- \`aiplatform.googleapis.com\`"
+            echo "- \`artifactregistry.googleapis.com\`"
+            echo "- \`cloudbuild.googleapis.com\`"
+            echo "- \`run.googleapis.com\`"
+            echo "- \`secretmanager.googleapis.com\`"
+            echo "- \`sqladmin.googleapis.com\`"
+            echo "- \`storage.googleapis.com\`"
+            echo "- \`workflows.googleapis.com\`"
+            echo ""
+            echo '```text'
+            gcloud services list --enabled \
+              --filter='config.name:(run.googleapis.com OR sqladmin.googleapis.com OR aiplatform.googleapis.com OR workflows.googleapis.com OR cloudbuild.googleapis.com OR artifactregistry.googleapis.com OR secretmanager.googleapis.com OR storage.googleapis.com)' \
+              --format='value(config.name)' || true
+            echo '```'
+            echo ""
+            echo "## Cloud SQL"
+            echo '```text'
+            gcloud sql instances describe "${INSTANCE_NAME}" \
+              --format='table(name,databaseVersion,region,settings.tier,state)' || true
+            echo '```'
+            echo ""
+            echo "## Cloud Run Jobs"
+            echo '```text'
+            gcloud run jobs list --region="${REGION}" \
+              --format='table(metadata.name,status.conditions[0].type,status.conditions[0].status)' || true
+            echo '```'
+            echo ""
+            echo "## Workflow"
+            echo '```text'
+            gcloud workflows describe "${WORKFLOW_NAME}" --location="${REGION}" || true
+            echo '```'
+            echo ""
+            echo "## GCS"
+            echo '```text'
+            gsutil ls -l "gs://${BUCKET_NAME}/preflight/lead_match/ctoteam/${WAREHOUSE_LABEL}/" || true
+            echo '```'
+            echo ""
+          } >> "${REPORT_FILE}"
+
+      - name: Run Vertex AI embedding smoke test
+        if: github.event.inputs.run_smoke_tests == 'true'
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          python scripts/gemini_embedding_client_smoke_test.py \
+            --project-id "${PROJECT_ID}" \
+            --location "${REGION}" \
+            --model "gemini-embedding-001" \
+            --output "${RUNNER_TEMP}/gemini_embedding_client_smoke_test_results.json"
+
+          {
+            echo "## Vertex AI Embedding Smoke Test"
+            echo '```json'
+            cat "${RUNNER_TEMP}/gemini_embedding_client_smoke_test_results.json"
+            echo '```'
+            echo ""
+          } >> "${REPORT_FILE}"
+
+      - name: Run Cloud SQL warehouse smoke test
+        if: github.event.inputs.run_smoke_tests == 'true'
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          if [[ -z "${DB_PASSWORD}" ]]; then
+            {
+              echo "## Cloud SQL Warehouse Smoke Test"
+              echo ""
+              echo "Skipped: GitHub secret \`LEAD_MATCH_DB_PASSWORD\` is not configured."
+              echo ""
+            } >> "${REPORT_FILE}"
+            exit 0
+          fi
+          if [[ "${WAREHOUSE_LABEL}" == "all" ]]; then
+            {
+              echo "## Cloud SQL Warehouse Smoke Test"
+              echo ""
+              echo "Skipped: warehouse smoke test requires one numeric warehouse, but input was \`all\`."
+              echo ""
+            } >> "${REPORT_FILE}"
+            exit 0
+          fi
+
+          python scripts/warehouse_115_smoke_test.py \
+            --warehouse "${WAREHOUSE_LABEL}" \
+            --output "${RUNNER_TEMP}/warehouse_smoke_test_results.json"
+
+          {
+            echo "## Cloud SQL Warehouse Smoke Test"
+            echo '```json'
+            cat "${RUNNER_TEMP}/warehouse_smoke_test_results.json"
+            echo '```'
+            echo ""
+          } >> "${REPORT_FILE}"
+
+      - name: Add SQL checklist
+        run: |
+          set -euo pipefail
+          {
+            echo "## Manual Cloud SQL Readiness SQL"
+            echo '```sql'
+            echo "SELECT count(*) FROM ${SCHEMA_NAME}.lead WHERE 1=1 ${WAREHOUSE_SQL_FILTER};"
+            echo "SELECT count(*) FROM ${SCHEMA_NAME}.transaction WHERE 1=1 ${WAREHOUSE_SQL_FILTER};"
+            echo "SELECT count(*) FROM ${SCHEMA_NAME}.leads_embeddings WHERE 1=1 ${WAREHOUSE_SQL_FILTER};"
+            echo "SELECT count(*) FROM ${SCHEMA_NAME}.pos_embeddings WHERE 1=1 ${WAREHOUSE_SQL_FILTER};"
+            echo "SELECT count(*) FROM ${SCHEMA_NAME}.match_decision_detail;"
+            echo '```'
+          } >> "${REPORT_FILE}"
+
+      - name: Upload report
+        if: always()
+        run: |
+          set -euo pipefail
+          if gsutil ls -b "gs://${BUCKET_NAME}" >/dev/null 2>&1; then
+            gsutil cp "${REPORT_FILE}" "${REPORT_URI}"
+          fi
+          cat "${REPORT_FILE}" >> "$GITHUB_STEP_SUMMARY"
