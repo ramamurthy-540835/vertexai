@@ -381,8 +381,8 @@ def run_fuzzy_match():
         recall_gate,
         nearest_neighbor_limit,
         qualify_min,
-        ambiguity_delta,
         run_id,
+        ambiguity_delta,
         EMBEDDING_MODEL,
     ])
 
