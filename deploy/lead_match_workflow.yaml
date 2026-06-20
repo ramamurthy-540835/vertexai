@@ -119,7 +119,7 @@ waitForRunJobExecution:
         result: execution
     - check:
         switch:
-          - condition: ${map.get(execution, "completionTime") != null}
+          - condition: ${len(default(map.get(execution, "conditions"), [])) > 0 and execution.conditions[0].type == "Completed"}
             next: validate
     - sleep:
         call: sys.sleep
@@ -128,7 +128,7 @@ waitForRunJobExecution:
         next: poll
     - validate:
         switch:
-          - condition: ${default(map.get(execution, "succeededCount"), 0) > 0}
+          - condition: ${execution.conditions[0].status == "True"}
             return: ${execution}
     - fail:
         raise: '${"Cloud Run Job execution failed: " + executionName}'
