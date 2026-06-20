@@ -71,4 +71,4 @@ waitForRunJobExecution:
           - condition: ${execution.succeededCount > 0}
             return: ${execution}
     - fail:
-        raise: ${"Cloud Run Job execution failed: " + executionName}
+        raise: '${"Cloud Run Job execution failed: " + executionName}'
