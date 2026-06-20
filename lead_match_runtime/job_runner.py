@@ -241,9 +241,10 @@ def generate_lead_embeddings():
     print(f"Warehouse scope: {warehouse_scope_label()}")
     print(f"Lead rows needing embeddings: {len(rows)}")
 
-    insert_rows = []
+    inserted = 0
     now = datetime.now(UTC)
-    for batch in chunks(rows, DEFAULT_BATCH_SIZE):
+    total_batches = (len(rows) + DEFAULT_BATCH_SIZE - 1) // DEFAULT_BATCH_SIZE
+    for batch_number, batch in enumerate(chunks(rows, DEFAULT_BATCH_SIZE), start=1):
         records = [
             {
                 "business_name": row[4],
@@ -260,6 +261,7 @@ def generate_lead_embeddings():
         combined_vectors = embed_texts(client, combined_texts)
         address_vectors = embed_texts(client, address_texts)
         name_vectors = embed_texts(client, name_texts)
+        insert_rows = []
         for row, record, combined, address, name in zip(batch, records, combined_vectors, address_vectors, name_vectors):
             insert_rows.append((
                 row[0],
@@ -274,23 +276,25 @@ def generate_lead_embeddings():
                 row[2],
                 row[3],
             ))
-
-    schema = schema_name()
-    execute_many_values(
-        cursor,
-        f"""
-        INSERT INTO "{schema}"."leads_embeddings" (
-            lead_id, combined_field, business_name, business_address,
-            combined_embedding, address_embedding, name_embedding, updated_date,
-            warehouse_number, fiscal_year, fiscal_period
+        schema = schema_name()
+        execute_many_values(
+            cursor,
+            f"""
+            INSERT INTO "{schema}"."leads_embeddings" (
+                lead_id, combined_field, business_name, business_address,
+                combined_embedding, address_embedding, name_embedding, updated_date,
+                warehouse_number, fiscal_year, fiscal_period
+            )
+            """,
+            insert_rows,
+            11,
         )
-        """,
-        insert_rows,
-        11,
-    )
-    conn.commit()
+        conn.commit()
+        inserted += len(insert_rows)
+        if batch_number == 1 or batch_number % 10 == 0 or batch_number == total_batches:
+            print(f"Inserted lead embedding batches: {batch_number}/{total_batches}; rows={inserted}")
     conn.close()
-    print(f"Inserted lead embeddings: {len(insert_rows)}")
+    print(f"Inserted lead embeddings: {inserted}")
 
 
 def generate_pos_embeddings():
@@ -301,9 +305,10 @@ def generate_pos_embeddings():
     print(f"Warehouse scope: {warehouse_scope_label()}")
     print(f"POS rows needing embeddings: {len(rows)}")
 
-    insert_rows = []
+    inserted = 0
     now = datetime.now(UTC)
-    for batch in chunks(rows, DEFAULT_BATCH_SIZE):
+    total_batches = (len(rows) + DEFAULT_BATCH_SIZE - 1) // DEFAULT_BATCH_SIZE
+    for batch_number, batch in enumerate(chunks(rows, DEFAULT_BATCH_SIZE), start=1):
         records = [
             {
                 "business_name": row[6],
@@ -320,6 +325,7 @@ def generate_pos_embeddings():
         combined_vectors = embed_texts(client, combined_texts)
         address_vectors = embed_texts(client, address_texts)
         name_vectors = embed_texts(client, name_texts)
+        insert_rows = []
         for row, record, combined, address, name in zip(batch, records, combined_vectors, address_vectors, name_vectors):
             insert_rows.append((
                 row[0],
@@ -336,23 +342,25 @@ def generate_pos_embeddings():
                 row[4],
                 row[5],
             ))
-
-    schema = schema_name()
-    execute_many_values(
-        cursor,
-        f"""
-        INSERT INTO "{schema}"."pos_embeddings" (
-            pos_id, account_number, combined_field, business_name, business_address,
-            combined_embedding, address_embedding, name_embedding, load_date,
-            warehouse_number, fiscal_year, fiscal_period, week
+        schema = schema_name()
+        execute_many_values(
+            cursor,
+            f"""
+            INSERT INTO "{schema}"."pos_embeddings" (
+                pos_id, account_number, combined_field, business_name, business_address,
+                combined_embedding, address_embedding, name_embedding, load_date,
+                warehouse_number, fiscal_year, fiscal_period, week
+            )
+            """,
+            insert_rows,
+            13,
         )
-        """,
-        insert_rows,
-        13,
-    )
-    conn.commit()
+        conn.commit()
+        inserted += len(insert_rows)
+        if batch_number == 1 or batch_number % 10 == 0 or batch_number == total_batches:
+            print(f"Inserted POS embedding batches: {batch_number}/{total_batches}; rows={inserted}")
     conn.close()
-    print(f"Inserted POS embeddings: {len(insert_rows)}")
+    print(f"Inserted POS embeddings: {inserted}")
 
 
 def run_fuzzy_match():
