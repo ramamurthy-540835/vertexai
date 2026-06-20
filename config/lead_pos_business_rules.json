@@ -1,5 +1,6 @@
 {
   "schema_version": "2.0",
+  "canonical_source": "lead_match_runtime/lead_to_pos_match_rules.json",
   "business_context": {
     "entity": "lead_to_pos_match",
     "intent": "Attribute POS transactions to BD-tracked business leads using business identity, warehouse territory, and fiscal ordering.",

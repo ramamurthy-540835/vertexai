@@ -1,15 +1,66 @@
 import pandas as pd
 from sqlalchemy import text, bindparam
 from datetime import datetime
+import json
+import os
 
 from costco.leadmgmt.config.Configuration import JobConfig
 from costco.leadmgmt.util.apputil import load_file_from_gcs, process_and_archive_files
 from costco.leadmgmt.util.fiscal_year import get_costco_fiscal_info
 
-SEMANTIC_QUALIFY_MIN_SCORE = 78
-EXACT_QUALIFY_MIN_SCORE = 80
-AMBIGUITY_DELTA = 3
-HIGH_CONFIDENCE_RESULTS = {"Complete", "Match", "Closed - Match"}
+
+# ==============================================================
+# RULE SET LOADER (SOURCE OF TRUTH)
+# ==============================================================
+def load_business_rules() -> dict:
+    """
+    Loads matching business rules from lead_match_runtime/lead_to_pos_match_rules.json
+    with standard fallback.
+    """
+    env_path = os.environ.get("LEAD_POS_RULES_PATH")
+    this_dir = os.path.dirname(os.path.abspath(__file__))
+    repo_root = os.path.normpath(os.path.join(this_dir, "../../../../../"))
+    paths = [
+        env_path,
+        os.path.join(repo_root, "lead_match_runtime/lead_to_pos_match_rules.json"),
+        os.path.join(os.getcwd(), "lead_match_runtime/lead_to_pos_match_rules.json"),
+    ]
+
+    for path in paths:
+        if not path:
+            continue
+        norm_path = os.path.normpath(path)
+        if os.path.exists(norm_path):
+            try:
+                with open(norm_path, "r") as f:
+                    print(f"[INFO] Loaded business rules from {norm_path}")
+                    return json.load(f)
+            except Exception as e:
+                print(f"[WARN] Failed to parse rules from {norm_path}: {e}")
+
+    print("[WARN] Using minimal default business rules (fallback)")
+    return {
+        "confidence_bands": {
+            "qualify_min_score": 78,
+            "bands": [
+                {"name": "High", "state": "Closed - Match", "min_score": 92, "max_score": 100},
+                {"name": "Medium", "state": "Potential", "min_score": 85, "max_score": 91.999},
+                {"name": "Review", "state": "Potential", "min_score": 78, "max_score": 84.999},
+                {"name": "No Match", "state": "No Match", "min_score": 0, "max_score": 77.999}
+            ]
+        },
+        "exact_match_engine": {
+            "minimum_score": 80
+        },
+        "resolution": {
+            "ambiguity_delta": 3,
+            "ambiguity_match_type": "Manual Review"
+        },
+        "override_policy": {
+            "exact_qualified_min_score": 80,
+            "semantic_match_type": "Fuzzy"
+        }
+    }
 
 
 # ==============================================================
@@ -29,22 +80,27 @@ def build_fuzzy_matching_comment(row: pd.Series) -> str:
     name_score       = round(float(row.get("business_name_score", 0) or 0), 2)
 
     # Exact rows — preserve the comment written by primary_match
-    if match_type == "Exact":
+    if match_type in ["Exact", "Deterministic"]:
         return row.get("matching_comments", "")
 
     parts = []
 
     # -- Result classification --------------------------------
-    if result in HIGH_CONFIDENCE_RESULTS:
+    if result in ["Closed - Match", "Complete", "Match"]:
         parts.append(
             f"Fuzzy match — complete confidence "
             f"(similarity score: {similarity_score})."
         )
-    elif result == "Potential":
+    elif result in ["Potential", "Review"]:
         parts.append(
             f"Fuzzy match — potential confidence "
             f"(similarity score: {similarity_score}); "
             f"Marketer review recommended."
+        )
+    elif result == "Closed - Existing":
+        parts.append(
+            f"Fuzzy match — pre-existing transacting business "
+            f"(similarity score: {similarity_score})."
         )
     else:
         parts.append(
@@ -83,30 +139,148 @@ def execute_select_query(engine, query, params=None):
     return df
 
 
-def get_confidence_level(similarity_score, match_configuration_df):
-    if pd.notna(similarity_score):
-        if similarity_score >= 92:
-            return "Closed - Match"
-        if similarity_score >= 85:
-            return "Potential"
-        if similarity_score >= SEMANTIC_QUALIFY_MIN_SCORE:
-            return "Potential"
-        return "No Match"
-    return "No Match"
+def classify_row_match(row: pd.Series, rules: dict) -> pd.Series:
+    """
+    Processes a lead-to-POS candidate pair to apply the dynamic
+    confidence bands and Costco fiscal year/period/week attribution rules.
+    """
+    score = row.get("similarity_score")
+    if pd.isna(score) or score is None:
+        score = 0.0
+    score = float(score)
+
+    match_type = row.get("match_type", "")
+
+    # 1. Resolve qualification thresholds
+    qualify_min_score = rules.get("confidence_bands", {}).get("qualify_min_score", 78)
+    exact_min_score = rules.get("exact_match_engine", {}).get("minimum_score", 80)
+
+    is_exact = (match_type in ["Exact", "Deterministic"])
+    min_score = exact_min_score if is_exact else qualify_min_score
+
+    if score < min_score:
+        row["match_result"] = "No Match"
+        row["confidence_band"] = "No Match"
+        row["closed_existing_flag"] = False
+        return row
+
+    # 2. Map score to confidence band
+    bands = rules.get("confidence_bands", {}).get("bands", [])
+    band_name = "No Match"
+    band_state = "No Match"
+    for b in bands:
+        if b.get("min_score", 0) <= score <= b.get("max_score", 100):
+            band_name = b.get("name") or b.get("result", "No Match")
+            band_state = b.get("state", band_name)
+            break
+
+    if band_name == "No Match" and score >= qualify_min_score:
+        if score >= 92:
+            band_name = "High"
+            band_state = "Closed - Match"
+        elif score >= 85:
+            band_name = "Medium"
+            band_state = "Potential"
+        else:
+            band_name = "Review"
+            band_state = "Potential"
+
+    # 3. Retrieve Lead Fiscal values
+    l_yr = row.get("fiscal_year_primary")
+    if pd.isna(l_yr) or l_yr is None:
+        l_yr = row.get("fiscal_year_lead")
+    if pd.isna(l_yr) or l_yr is None:
+        l_yr = row.get("fiscal_year")
+
+    l_per = row.get("fiscal_period_primary")
+    if pd.isna(l_per) or l_per is None:
+        l_per = row.get("fiscal_period_lead")
+    if pd.isna(l_per) or l_per is None:
+        l_per = row.get("fiscal_period")
+
+    l_wk = row.get("week_primary")
+    if pd.isna(l_wk) or l_wk is None:
+        l_wk = row.get("week_lead")
+    if pd.isna(l_wk) or l_wk is None:
+        l_wk = row.get("week")
+
+    # 4. Retrieve POS Transaction Fiscal values
+    t_yr = row.get("fiscal_year_transaction")
+    if pd.isna(t_yr) or t_yr is None:
+        t_yr = row.get("fiscal_year_fuzzy")
+    if pd.isna(t_yr) or t_yr is None:
+        t_yr = row.get("fiscal_year")
+
+    t_per = row.get("fiscal_period_transaction")
+    if pd.isna(t_per) or t_per is None:
+        t_per = row.get("fiscal_period_fuzzy")
+    if pd.isna(t_per) or t_per is None:
+        t_per = row.get("fiscal_period")
+
+    t_wk = row.get("week_fuzzy")
+    if pd.isna(t_wk) or t_wk is None:
+        t_wk = row.get("week")
+
+    # Convert safely to integer values
+    try:
+        l_yr = int(float(l_yr)) if pd.notna(l_yr) else 0
+        l_per = int(float(l_per)) if pd.notna(l_per) else 0
+        l_wk = int(float(l_wk)) if pd.notna(l_wk) else 1
+    except Exception:
+        l_yr, l_per, l_wk = 0, 0, 1
+
+    try:
+        t_yr = int(float(t_yr)) if pd.notna(t_yr) else 0
+        t_per = int(float(t_per)) if pd.notna(t_per) else 0
+        t_wk = int(float(t_wk)) if pd.notna(t_wk) else 1
+    except Exception:
+        t_yr, t_per, t_wk = 0, 0, 1
+
+    # 5. Check if POS transaction predates the lead: fiscal_year -> fiscal_period -> week
+    is_predating = False
+    if t_yr < l_yr:
+        is_predating = True
+    elif t_yr == l_yr:
+        if t_per < l_per:
+            is_predating = True
+        elif t_per == l_per:
+            if t_wk < l_wk:
+                is_predating = True
+
+    # 6. Set results based on fiscal ordering
+    if is_predating:
+        row["match_result"] = "Closed - Existing"
+        row["confidence_band"] = band_name
+        row["closed_existing_flag"] = True
+    else:
+        row["closed_existing_flag"] = False
+        row["match_result"] = band_state
+        row["confidence_band"] = band_name
+
+    return row
 
 
-def is_high_confidence(match_result):
-    return match_result in HIGH_CONFIDENCE_RESULTS
+def is_qualifying_match(match_result):
+    return match_result in ["Closed - Match", "Closed - Existing", "Potential"]
 
 
 # ==============================================================
-# FUZZY MATCHING
+# FUZZY MATCHING MAIN PIPELINE
 # ==============================================================
 def fuzzy_matching(file_classified_path: str, config_file_path: str) -> str:
 
     # ----------------------------------------------------------
-    # INITIALIZATION
+    # INITIALIZATION & RULES LOADING
     # ----------------------------------------------------------
+    rules = load_business_rules()
+    qualify_min_score = rules.get("confidence_bands", {}).get("qualify_min_score", 78)
+    exact_min_score = rules.get("override_policy", {}).get(
+        "exact_qualified_min_score",
+        rules.get("exact_match_engine", {}).get("minimum_score", 80),
+    )
+    ambiguity_delta = rules.get("resolution", {}).get("ambiguity_delta", 3)
+    match_type_semantic = rules.get("override_policy", {}).get("semantic_match_type", "Fuzzy")
+
     job_config     = JobConfig(config_file_path)
     db_config      = job_config.db_config
     storage_config = job_config.storage_config
@@ -118,17 +292,11 @@ def fuzzy_matching(file_classified_path: str, config_file_path: str) -> str:
     destination_folder        = storage_config.destination_folder_output
 
     query_fuzzy_wh            = query_config.query_fuzzy_wh
-    query_fuzzy_null_wh       = query_config.query_fuzzy_null_wh
-    query_match_configuration = query_config.query_match_configuration
-
     engine      = db_config.get_engine()
     fiscal_info = get_costco_fiscal_info()
 
     # ----------------------------------------------------------
     # LOAD EXACT MATCH OUTPUT
-    # classified_df already has all POS columns from primary_match.
-    # Fuzzy will only override values in place — no new columns
-    # are added from the fuzzy side except scores (for comments).
     # ----------------------------------------------------------
     classified_df = load_file_from_gcs(file_classified_path)
     classified_df["warehouse_number"] = (
@@ -139,9 +307,10 @@ def fuzzy_matching(file_classified_path: str, config_file_path: str) -> str:
     classified_df["similarity_score"] = pd.to_numeric(
         classified_df.get("similarity_score", 0), errors="coerce"
     ).fillna(0.0)
+
     exact_qualified_leads = set(
         classified_df.loc[
-            classified_df["similarity_score"] >= EXACT_QUALIFY_MIN_SCORE,
+            classified_df["similarity_score"] >= exact_min_score,
             "lead_id",
         ].dropna().astype(str)
     )
@@ -174,30 +343,8 @@ def fuzzy_matching(file_classified_path: str, config_file_path: str) -> str:
         df_batch  = execute_select_query(engine, query, params)
         master_df = pd.concat([master_df, df_batch], ignore_index=True)
 
-    # ----------------------------------------------------------
-    # RUN FUZZY QUERY — leads without a warehouse number
-    # ----------------------------------------------------------
-    empty_wh_leads = (
-        classified_df[classified_df["warehouse_number"].isna()]["lead_id"]
-        .drop_duplicates()
-        .tolist()
-    )
-
-    for i in range(0, len(empty_wh_leads), batch_size):
-        leads_id_batch = empty_wh_leads[i : i + batch_size]
-        if not leads_id_batch:
-            continue
-
-        params = {
-            "fiscal_year_sales": fiscal_info["fiscal_year"],
-            "leads_id_batch":    leads_id_batch,
-        }
-
-        query = text(query_fuzzy_null_wh).bindparams(
-            bindparam("leads_id_batch", expanding=True)
-        )
-        df_batch = execute_select_query(engine, query, params)
-        master_df = pd.concat([master_df, df_batch], ignore_index=True)
+    # Leads without a warehouse are intentionally not sent through semantic matching.
+    # Same-warehouse blocking is mandatory before scoring: lead.warehouse_number = pos.warehouse_number.
 
     if master_df.empty:
         df_fuzzy_result = pd.DataFrame(
@@ -205,27 +352,27 @@ def fuzzy_matching(file_classified_path: str, config_file_path: str) -> str:
                 "lead_id", "pos_id", "similarity_score", "combined_field_score",
                 "full_address_score", "business_name_score", "account_number",
                 "fiscal_year", "fiscal_period", "week", "warehouse_number",
-                "business_name",
+                "business_name", "manual_review_reason",
             ]
         )
     else:
         # ----------------------------------------------------------
-        # COMPUTE FUZZY SIMILARITY SCORE
+        # COMPUTE FUZZY SIMILARITY SCORE (PRECISION SCORE FORMULA)
         # ----------------------------------------------------------
+        # (4 * full_address_score + 3 * business_name_score) / 7
         master_df["similarity_score"] = (
             (4 * master_df["full_address_score"]
              + 3 * master_df["business_name_score"]) / 7
         )
 
         df_fuzzy_result = master_df[
-            master_df["similarity_score"] >= SEMANTIC_QUALIFY_MIN_SCORE
+            master_df["similarity_score"] >= qualify_min_score
         ].copy()
         df_fuzzy_result = df_fuzzy_result[
             ~df_fuzzy_result["lead_id"].astype(str).isin(exact_qualified_leads)
         ]
 
-        # Enforce POS-to-lead one-to-one. A lead may keep multiple POS rows.
-        # Near-tie POS rows stay assigned to the strongest candidate but are routed to review.
+        # POS-to-lead one-to-one assignment and near-tie manual review routing
         df_fuzzy_result = (
             df_fuzzy_result
             .sort_values(["pos_id", "similarity_score"], ascending=[True, False])
@@ -236,7 +383,7 @@ def fuzzy_matching(file_classified_path: str, config_file_path: str) -> str:
         df_fuzzy_result["manual_review_reason"] = None
         ambiguous_mask = (
             df_fuzzy_result["next_pos_score"].notna()
-            & ((df_fuzzy_result["similarity_score"] - df_fuzzy_result["next_pos_score"]) <= AMBIGUITY_DELTA)
+            & ((df_fuzzy_result["similarity_score"] - df_fuzzy_result["next_pos_score"]) <= ambiguity_delta)
         )
         df_fuzzy_result.loc[ambiguous_mask, "manual_review_reason"] = "ambiguous_pos_candidate"
         df_fuzzy_result = (
@@ -245,10 +392,7 @@ def fuzzy_matching(file_classified_path: str, config_file_path: str) -> str:
         )
 
     # ----------------------------------------------------------
-    # KEEP FUZZY RESULT SLIM — only scoring + core match fields.
-    # classified_df already carries all POS customer detail cols.
-    # Customer details for fuzzy-updated rows are fetched separately
-    # after the mask is applied (see below) to avoid duplicate cols.
+    # KEEP FUZZY RESULT SLIM
     # ----------------------------------------------------------
     df_fuzzy_result = df_fuzzy_result[[
         "lead_id",
@@ -268,9 +412,6 @@ def fuzzy_matching(file_classified_path: str, config_file_path: str) -> str:
 
     # ----------------------------------------------------------
     # MERGE FUZZY RESULTS ONTO EXACT MATCH OUTPUT
-    # Only slim fuzzy cols come in — no customer detail duplication.
-    # After this merge, score cols will be suffixed:
-    #   combined_field_score_primary, combined_field_score_fuzzy etc.
     # ----------------------------------------------------------
     merged_df = pd.merge(
         classified_df,
@@ -288,35 +429,34 @@ def fuzzy_matching(file_classified_path: str, config_file_path: str) -> str:
         merged_df["similarity_score_fuzzy"], errors="coerce"
     )
 
-    # Exact qualified rows stand. Semantic only recovers exact misses.
-    exact_qualified_mask = merged_df["similarity_score_primary"] >= EXACT_QUALIFY_MIN_SCORE
+    # Exact qualified rows stand authoritative. Semantic only recovers misses.
+    exact_qualified_mask = merged_df["similarity_score_primary"] >= exact_min_score
     update_mask = (
         ~exact_qualified_mask
         & pd.notna(merged_df["pos_id_fuzzy"])
         & pd.notna(merged_df["similarity_score_fuzzy"])
-        & (merged_df["similarity_score_fuzzy"] >= SEMANTIC_QUALIFY_MIN_SCORE)
+        & (merged_df["similarity_score_fuzzy"] >= qualify_min_score)
     )
     merged_df["_fuzzy_update"] = update_mask
 
     print("=== COLUMNS AFTER MERGE ===")
     print(merged_df.columns.tolist())
-
-    print("\n=== DTYPES AFTER MERGE ===")
-    print(merged_df.dtypes)
-
-    print("\n=== update_mask count ===")
-    print(f"Rows to update: {update_mask.sum()}")
+    print(f"Rows to update with semantic match: {update_mask.sum()}")
 
     # ----------------------------------------------------------
     # UPDATE CORE MATCH FIELDS WHERE FUZZY BEATS EXACT
     # ----------------------------------------------------------
     merged_df.loc[update_mask, "pos_id_primary"]            = merged_df.loc[update_mask, "pos_id_fuzzy"]
     merged_df.loc[update_mask, "similarity_score_primary"]  = merged_df.loc[update_mask, "similarity_score_fuzzy"]
-    merged_df.loc[update_mask, "match_type"]                = "Fuzzy"
+    merged_df.loc[update_mask, "match_type"]                = match_type_semantic
+
     if "manual_review_reason" in merged_df.columns:
         review_mask = update_mask & merged_df["manual_review_reason"].notna()
-        merged_df.loc[review_mask, "match_type"] = "Manual Review"
+        merged_df.loc[review_mask, "match_type"] = rules.get("resolution", {}).get(
+            "ambiguity_match_type", "Manual Review"
+        )
         merged_df.loc[review_mask, "match_result"] = "Potential"
+
     merged_df.loc[update_mask, "account_number_primary"]    = pd.to_numeric(merged_df.loc[update_mask, "account_number_fuzzy"], errors="coerce")
     merged_df.loc[update_mask, "fiscal_year_transaction"]   = pd.to_numeric(merged_df.loc[update_mask, "fiscal_year"], errors="coerce")
     merged_df.loc[update_mask, "fiscal_period_transaction"] = pd.to_numeric(merged_df.loc[update_mask, "fiscal_period"], errors="coerce")
@@ -326,9 +466,6 @@ def fuzzy_matching(file_classified_path: str, config_file_path: str) -> str:
 
     # ----------------------------------------------------------
     # FIX SCORE COLUMNS FOR COMMENT BUILDER
-    # After the merge, score cols exist as _fuzzy suffixed float64
-    # columns. Rename them to plain names and clear non-fuzzy rows.
-    # This avoids creating new columns with dtype conflicts.
     # ----------------------------------------------------------
     rename_scores = {
         "combined_field_score_fuzzy": "combined_field_score",
@@ -337,7 +474,7 @@ def fuzzy_matching(file_classified_path: str, config_file_path: str) -> str:
     }
     merged_df.rename(columns=rename_scores, inplace=True)
 
-    # Drop the _primary score cols — not needed
+    # Drop the _primary score cols
     merged_df.drop(
         columns=[
             "combined_field_score_primary",
@@ -354,7 +491,7 @@ def fuzzy_matching(file_classified_path: str, config_file_path: str) -> str:
             merged_df.loc[~update_mask, score_col] = None
 
     # ----------------------------------------------------------
-    # DROP ALL REMAINING _fuzzy COLUMNS + NORMALISE _primary NAMES
+    # DROP REMAINING _fuzzy COLUMNS + NORMALISE NAMES
     # ----------------------------------------------------------
     fuzzy_cols = [c for c in merged_df.columns if c.endswith("_fuzzy")]
     merged_df.drop(
@@ -366,9 +503,7 @@ def fuzzy_matching(file_classified_path: str, config_file_path: str) -> str:
     update_mask = merged_df["_fuzzy_update"].fillna(False)
 
     # ----------------------------------------------------------
-    # FETCH CUSTOMER DETAIL FIELDS FOR FUZZY-UPDATED ROWS ONLY
-    # Now that pos_id is normalised, join transaction table just
-    # for the rows that were overridden by fuzzy — no duplicates.
+    # FETCH CUSTOMER DETAIL FIELDS FOR FUZZY-UPDATED ROWS
     # ----------------------------------------------------------
     fuzzy_updated_pos_ids = (
         merged_df.loc[update_mask, "pos_id"]
@@ -404,13 +539,11 @@ def fuzzy_matching(file_classified_path: str, config_file_path: str) -> str:
             {"pos_id_list": fuzzy_updated_pos_ids},
         )
 
-        # Merge pos_details with _new suffix to avoid collision
         merged_df = merged_df.merge(
             pos_details, on="pos_id", how="left", suffixes=("", "_new")
         )
         update_mask = merged_df["_fuzzy_update"].fillna(False)
 
-        # Update customer detail cols only on fuzzy-overridden rows
         detail_cols = [
             "membership_number",
             "shop_type",
@@ -435,43 +568,38 @@ def fuzzy_matching(file_classified_path: str, config_file_path: str) -> str:
                 merged_df.drop(columns=[new_col], inplace=True)
 
     # ----------------------------------------------------------
-    # RE-APPLY MATCH RESULT FROM CONFIG TABLE
-    # Covers both exact rows passed through and fuzzy-updated rows
+    # RE-APPLY MATCH RESULT (CONFIDENCE BANDS & FISCAL ATTRIBUTION)
+    # Applied to all rows (exact passed through + fuzzy-updated)
+    # to enforce correct same-warehouse, fiscal window attribution.
     # ----------------------------------------------------------
-    match_configuration_df = execute_select_query(
-        engine, text(query_match_configuration)
-    )
-    merged_df.loc[update_mask, "match_result"] = merged_df.loc[
-        update_mask, "similarity_score"
-    ].apply(lambda x: get_confidence_level(x, match_configuration_df))
+    print("[INFO] Classifying all matches against fiscal attribution rules...")
+    merged_df = merged_df.apply(lambda row: classify_row_match(row, rules), axis=1)
 
     # ----------------------------------------------------------
     # PRIMARY TRANSACTION LOGIC
-    # Earliest Complete transaction per lead is flagged primary
     # ----------------------------------------------------------
+    # Earliest qualifying transaction per lead is flagged primary.
+    # Sorted by: lead_id, fiscal_year_transaction, fiscal_period_transaction, week.
     merged_df = merged_df.sort_values(
         by=["lead_id", "fiscal_year_transaction", "fiscal_period_transaction", "week"],
         ascending=True,
     )
     merged_df["primary_transaction"] = False
-    merged_df["rank"] = merged_df.groupby("lead_id").cumcount() + 1
 
-    high_conf_mask = merged_df["match_result"].apply(is_high_confidence)
-    merged_df.loc[high_conf_mask, "primary_transaction"] = (
-        merged_df[high_conf_mask].groupby("lead_id").cumcount() == 0
-    )
-    merged_df.drop(columns=["rank"], inplace=True)
+    qualifying_mask = merged_df["match_result"].apply(is_qualifying_match)
+    if qualifying_mask.any():
+        merged_df.loc[qualifying_mask, "primary_transaction"] = (
+            merged_df[qualifying_mask].groupby("lead_id").cumcount() == 0
+        )
 
     # ----------------------------------------------------------
     # MATCHING COMMENTS
-    # Fuzzy rows get a descriptive comment with component scores.
-    # Exact rows keep the comment written by primary_match.
     # ----------------------------------------------------------
     merged_df["matching_comments"] = merged_df.apply(
         build_fuzzy_matching_comment, axis=1
     )
 
-    # Score columns no longer needed after comments are built
+    # Drop intermediate scores
     merged_df.drop(
         columns=["combined_field_score", "full_address_score", "business_name_score"],
         inplace=True,
@@ -479,7 +607,7 @@ def fuzzy_matching(file_classified_path: str, config_file_path: str) -> str:
     )
 
     # ----------------------------------------------------------
-    # HANDLE No Match rows
+    # HANDLE NO MATCH ROWS
     # ----------------------------------------------------------
     no_match_mask = merged_df["match_result"] == "No Match"
     merged_df.loc[no_match_mask, "pos_id"] = ""
@@ -504,11 +632,12 @@ def fuzzy_matching(file_classified_path: str, config_file_path: str) -> str:
     for col in no_match_detail_cols:
         if col in merged_df.columns:
             merged_df.loc[no_match_mask, col] = None
+
     merged_df["account_number"] = merged_df["account_number"].fillna(0)
     merged_df.drop(columns=["_fuzzy_update"], inplace=True, errors="ignore")
 
     # ----------------------------------------------------------
-    # FINAL OUTPUT SCHEMA — identical to what ServiceNow expects
+    # FINAL OUTPUT SCHEMA
     # ----------------------------------------------------------
     output_cols = [
         # Matching
@@ -520,6 +649,8 @@ def fuzzy_matching(file_classified_path: str, config_file_path: str) -> str:
         "primary_transaction",
         "matched_by",
         "matching_comments",
+        "confidence_band",
+        "closed_existing_flag",
 
         # POS dominant — transaction
         "account_number",
@@ -570,5 +701,5 @@ def fuzzy_matching(file_classified_path: str, config_file_path: str) -> str:
         base_name,
     )
 
-    print(f"Fuzzy match output written to: {uri}")
+    print(f"Fuzzy match output successfully written to: {uri}")
     return uri

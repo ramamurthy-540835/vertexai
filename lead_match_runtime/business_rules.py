@@ -6,9 +6,7 @@ from pathlib import Path
 from typing import Any
 
 
-DEFAULT_RULES_PATH = (
-    Path(__file__).resolve().parents[1] / "config" / "lead_pos_business_rules.json"
-)
+DEFAULT_RULES_PATH = Path(__file__).with_name("lead_to_pos_match_rules.json")
 
 
 @dataclass(frozen=True)
