@@ -274,7 +274,7 @@ jobs:
           set +e
           EXECUTION_NAME="$(gcloud run jobs execute "${SMOKE_JOB}" \
             --region="${REGION}" \
-            --update-env-vars="WAREHOUSE=${WAREHOUSE_LABEL}" \
+            --update-env-vars="WAREHOUSE=${WAREHOUSE_LABEL},WAREHOUSE_SCOPE=${WAREHOUSE_LABEL}" \
             --wait \
             --format='value(metadata.name)')"
           EXECUTION_RC=$?

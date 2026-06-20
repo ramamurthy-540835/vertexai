@@ -20,6 +20,8 @@ main:
                 - env:
                     - name: WAREHOUSE
                       value: ${warehouse}
+                    - name: WAREHOUSE_SCOPE
+                      value: ${warehouse}
         result: leadExecution
 
     - waitLeadEmbeddings:
@@ -37,6 +39,8 @@ main:
                 - env:
                     - name: WAREHOUSE
                       value: ${warehouse}
+                    - name: WAREHOUSE_SCOPE
+                      value: ${warehouse}
         result: posExecution
 
     - waitPosEmbeddings:
@@ -53,6 +57,8 @@ main:
               containerOverrides:
                 - env:
                     - name: WAREHOUSE
+                      value: ${warehouse}
+                    - name: WAREHOUSE_SCOPE
                       value: ${warehouse}
         result: matchExecution
 

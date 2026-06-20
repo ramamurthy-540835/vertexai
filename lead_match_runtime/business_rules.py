@@ -34,9 +34,11 @@ def get_project_id(config: dict[str, Any]) -> str:
 
 def get_warehouse_scope(config: dict[str, Any]) -> WarehouseScope:
     scope_cfg = config["warehouse_scope"]
+    # WAREHOUSE is the per-run override used by Cloud Workflows and preflight
+    # smoke checks. It must win over a Cloud Run Job default like WAREHOUSE_SCOPE=ALL.
     raw = (
-        os.environ.get(scope_cfg["env_var"])
-        or os.environ.get(scope_cfg["fallback_env_var"])
+        os.environ.get(scope_cfg["fallback_env_var"])
+        or os.environ.get(scope_cfg["env_var"])
         or scope_cfg["default"]
     )
     raw = raw.strip()
