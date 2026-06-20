@@ -474,7 +474,7 @@ def run_fuzzy_match():
             combined_field_score,
             full_address_score,
             business_name_score,
-            '(combined + 4*address + 3*name)/8',
+            '(4*address + 3*name)/7',
             %s,
             CURRENT_TIMESTAMP
         FROM best_unique_pos
@@ -514,7 +514,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "task",
-        choices=("summary", "smoke", "lead-embeddings", "pos-embeddings", "fuzzy-match"),
+        choices=("summary", "smoke", "lead-embeddings", "pos-embeddings", "fuzzy-match", "report"),
     )
     args, remaining = parser.parse_known_args()
 
@@ -530,6 +530,9 @@ def main():
         generate_pos_embeddings()
     elif args.task == "fuzzy-match":
         run_fuzzy_match()
+    elif args.task == "report":
+        from lead_match_runtime.report import run_report
+        run_report()
     else:
         raise AssertionError(args.task)
 

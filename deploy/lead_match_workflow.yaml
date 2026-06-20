@@ -9,6 +9,9 @@ main:
           - leadJob: ${default(map.get(args, "leadJob"), "lead-match-lead-embeddings")}
           - posJob: ${default(map.get(args, "posJob"), "lead-match-pos-embeddings")}
           - matchJob: ${default(map.get(args, "matchJob"), "lead-match-fuzzy-match")}
+          - reportJob: ${default(map.get(args, "reportJob"), "lead-match-report")}
+          - matchRunId: ${default(map.get(args, "matchRunId"), "")}
+          - reportBucket: ${default(map.get(args, "reportBucket"), "lead-match-ctoteam")}
 
     - runLeadEmbeddings:
         call: googleapis.run.v2.projects.locations.jobs.run
@@ -22,6 +25,8 @@ main:
                       value: ${warehouse}
                     - name: WAREHOUSE_SCOPE
                       value: ${warehouse}
+                    - name: MATCH_RUN_ID
+                      value: ${matchRunId}
         result: leadExecution
 
     - waitLeadEmbeddings:
@@ -41,6 +46,8 @@ main:
                       value: ${warehouse}
                     - name: WAREHOUSE_SCOPE
                       value: ${warehouse}
+                    - name: MATCH_RUN_ID
+                      value: ${matchRunId}
         result: posExecution
 
     - waitPosEmbeddings:
@@ -60,6 +67,8 @@ main:
                       value: ${warehouse}
                     - name: WAREHOUSE_SCOPE
                       value: ${warehouse}
+                    - name: MATCH_RUN_ID
+                      value: ${matchRunId}
         result: matchExecution
 
     - waitFuzzyMatch:
@@ -67,13 +76,38 @@ main:
         args:
           executionName: ${matchExecution.name}
 
+    - runReport:
+        call: googleapis.run.v2.projects.locations.jobs.run
+        args:
+          name: ${"projects/" + project + "/locations/" + region + "/jobs/" + reportJob}
+          body:
+            overrides:
+              containerOverrides:
+                - env:
+                    - name: WAREHOUSE
+                      value: ${warehouse}
+                    - name: WAREHOUSE_SCOPE
+                      value: ${warehouse}
+                    - name: MATCH_RUN_ID
+                      value: ${matchRunId}
+                    - name: REPORT_BUCKET
+                      value: ${reportBucket}
+        result: reportExecution
+
+    - waitReport:
+        call: waitForRunJobExecution
+        args:
+          executionName: ${reportExecution.name}
+
     - done:
         return:
           status: "success"
           warehouse: ${warehouse}
+          matchRunId: ${matchRunId}
           leadExecution: ${leadExecution.name}
           posExecution: ${posExecution.name}
           matchExecution: ${matchExecution.name}
+          reportExecution: ${reportExecution.name}
 
 waitForRunJobExecution:
   params: [executionName]
