@@ -1,0 +1,166 @@
+name: cleanup_resources
+
+# ─────────────────────────────────────────────────────────────
+# Manual, targeted cleanup of a SINGLE resource in a SINGLE
+# environment. Pick the environment, the resource type, and the
+# resource name. Requires typing DELETE to confirm.
+#
+# Handles the NP/PRD boundary: prd uses the pd project prefix,
+# the pd runner, and the PRD service account.
+# ─────────────────────────────────────────────────────────────
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        type: choice
+        options:
+          - adt
+          - qat
+          - spt
+          - prd
+      resource_type:
+        description: 'What to delete'
+        required: true
+        type: choice
+        options:
+          - scheduler_job      # Cloud Scheduler job
+          - cloud_run_job      # Cloud Run job
+          - cloud_run_service  # Cloud Run service
+      resource_name:
+        description: 'Exact name of the job/service to delete'
+        required: true
+        type: string
+      region:
+        description: 'Region where the resource lives'
+        required: true
+        default: 'us-central1'
+        type: string
+      confirm:
+        description: 'Type DELETE to confirm (required)'
+        required: true
+        type: string
+
+jobs:
+  cleanup:
+    name: "Delete ${{ inputs.resource_type }} in ${{ inputs.environment }}"
+    # PRD runs on the pd runner; everything else on np.
+    runs-on: ${{ inputs.environment == 'prd' && 'cw-gcp-us-west1-pd' || 'cw-gcp-us-west1-np' }}
+
+    permissions:
+      id-token: write
+      contents: read
+
+    env:
+      RESOURCE_NAME: ${{ inputs.resource_name }}
+      REGION:        ${{ inputs.region }}
+
+    steps:
+      - name: Validate confirmation
+        run: |
+          if [[ "${{ inputs.confirm }}" != "DELETE" ]]; then
+            echo "❌ Confirmation failed — you must type DELETE exactly to proceed."
+            exit 1
+          fi
+          echo "✅ Confirmation accepted."
+
+      # Resolve project id from environment, honoring the NP/PRD prefix split.
+      - name: Resolve target project
+        run: |
+          ENV="${{ inputs.environment }}"
+          if [[ "$ENV" == "prd" ]]; then
+            echo "PROJECT_ID=p-601-pd-bcleadsmgmt-prd" >> $GITHUB_ENV
+          else
+            echo "PROJECT_ID=p-601-np-bcleadsmgmt-${ENV}" >> $GITHUB_ENV
+          fi
+
+      - name: Auth to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
+          # PRD uses the dedicated PRD service account; NP envs use the NP one.
+          service_account: ${{ inputs.environment == 'prd' && secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL_PRD || secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Delete resource
+        id: delete
+        run: |
+          set +e
+          unset CLOUDSDK_CORE_PROJECT CLOUDSDK_PROJECT GCLOUD_PROJECT GCP_PROJECT GOOGLE_CLOUD_PROJECT
+
+          TYPE="${{ inputs.resource_type }}"
+          echo "─── ${TYPE}: ${RESOURCE_NAME} in ${PROJECT_ID} (${REGION}) ───"
+
+          case "$TYPE" in
+            scheduler_job)
+              if gcloud scheduler jobs describe "${RESOURCE_NAME}" \
+                   --location="${REGION}" --project="${PROJECT_ID}" >/dev/null 2>&1; then
+                gcloud scheduler jobs delete "${RESOURCE_NAME}" \
+                  --location="${REGION}" --project="${PROJECT_ID}" --quiet
+                RC=$?
+              else
+                echo "ℹ️  Scheduler job not found (already deleted or never existed)."
+                echo "result=not_found" >> $GITHUB_OUTPUT; exit 0
+              fi
+              ;;
+
+            cloud_run_job)
+              if gcloud run jobs describe "${RESOURCE_NAME}" \
+                   --region="${REGION}" --project="${PROJECT_ID}" >/dev/null 2>&1; then
+                gcloud run jobs delete "${RESOURCE_NAME}" \
+                  --region="${REGION}" --project="${PROJECT_ID}" --quiet
+                RC=$?
+              else
+                echo "ℹ️  Cloud Run job not found (already deleted or never existed)."
+                echo "result=not_found" >> $GITHUB_OUTPUT; exit 0
+              fi
+              ;;
+
+            cloud_run_service)
+              SERVICE_URL=$(gcloud run services describe "${RESOURCE_NAME}" \
+                --region="${REGION}" --project="${PROJECT_ID}" \
+                --format="value(status.url)" 2>/dev/null)
+              if [[ -z "$SERVICE_URL" ]]; then
+                echo "ℹ️  Cloud Run service not found (already deleted or never existed)."
+                echo "result=not_found" >> $GITHUB_OUTPUT; exit 0
+              fi
+              echo "Found at: ${SERVICE_URL}"
+              echo "url=${SERVICE_URL}" >> $GITHUB_OUTPUT
+              gcloud run services delete "${RESOURCE_NAME}" \
+                --region="${REGION}" --project="${PROJECT_ID}" --quiet
+              RC=$?
+              ;;
+
+            *)
+              echo "❌ Unknown resource_type: ${TYPE}"; exit 1
+              ;;
+          esac
+
+          if [[ "${RC:-1}" -eq 0 ]]; then
+            echo "✅ Deleted ${TYPE} '${RESOURCE_NAME}' from ${PROJECT_ID}"
+            echo "result=deleted" >> $GITHUB_OUTPUT
+          else
+            echo "❌ Failed to delete ${TYPE} '${RESOURCE_NAME}' (permission or dependency issue)"
+            echo "result=failed" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "## Cleanup — ${{ inputs.environment }}"
+            echo ""
+            echo "**Project:** \`${PROJECT_ID}\`"
+            echo "**Region:** \`${REGION}\`"
+            echo "**Resource type:** \`${{ inputs.resource_type }}\`"
+            echo "**Resource name:** \`${RESOURCE_NAME}\`"
+            echo "**Result:** \`${{ steps.delete.outputs.result || 'error/aborted' }}\`"
+            if [[ -n "${{ steps.delete.outputs.url }}" ]]; then
+              echo "**Was deployed at:** \`${{ steps.delete.outputs.url }}\`"
+            fi
+          } >> $GITHUB_STEP_SUMMARY

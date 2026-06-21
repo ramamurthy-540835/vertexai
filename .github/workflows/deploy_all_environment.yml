@@ -1,5 +1,4 @@
 name: deploy_all_environments
-
 # One entry point for promotion. A push to main (QAT) or a release tag
 # (SPT / PRD) fires this once, and it fans out to every child deploy workflow.
 # You never run the children individually.
@@ -17,6 +16,14 @@ on:
       # image, so neither source code nor workflow edits belong here.
       - lead_management_job/**
 
+# This orchestrator itself never checks out code or calls GCP — it only fans
+# out to child workflow_call workflows, each of which declares its own
+# permissions (id-token: write, contents: read, packages: write) for what it
+# actually does. contents: read here is the minimum needed to dispatch/read
+# the calling ref.
+permissions:
+  contents: read
+
 jobs:
   deploy-lead-match-job:
     name: Deploy Lead Matching Job
@@ -28,7 +35,6 @@ jobs:
       GCP_WORKLOAD_IDENTITY_PROVIDER_ID: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
       GCP_WORKLOAD_IDENTITY_SA_EMAIL: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
       GCP_WORKLOAD_IDENTITY_SA_EMAIL_PRD: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL_PRD }}
-
   deploy-snow-sync-job:
     name: Deploy Snow Sync Job
     uses: ./.github/workflows/snow_sync_job_deployment.yml
