@@ -1,4 +1,4 @@
-name: Lead Match Preflight Ops
+name: lead_match_preflight_ops.yml
 
 on:
   workflow_dispatch:
@@ -346,28 +346,28 @@ jobs:
           fi
 
           python - <<'PY'
-import json
-import os
-from pathlib import Path
+          import json
+          import os
+          from pathlib import Path
 
-result = {
-    "project": os.environ["PROJECT_ID"],
-    "warehouse": os.environ.get("WAREHOUSE_LABEL", ""),
-    "status": os.environ.get("OVERALL_STATUS", "FAIL"),
-    "ready": os.environ.get("READY", "false").lower() == "true",
-    "required_checks": {
-        "workflow_yaml": os.environ.get("WORKFLOW_YAML_STATUS", "FAIL"),
-        "vertex_path": os.environ.get("VERTEX_PATH_STATUS", "FAIL"),
-        "cloud_sql_smoke": os.environ.get("CLOUD_SQL_SMOKE_STATUS", "SKIPPED"),
-    },
-    "optional_checks": {
-        "cloud_sql_smoke": os.environ.get("CLOUD_SQL_SMOKE_STATUS", "SKIPPED"),
-    },
-    "report_uri": os.environ["REPORT_URI"],
-    "ready_uri": os.environ["READY_URI"],
-}
-Path(os.environ["RESULT_FILE"]).write_text(json.dumps(result, indent=2) + "\n")
-PY
+          result = {
+              "project": os.environ["PROJECT_ID"],
+              "warehouse": os.environ.get("WAREHOUSE_LABEL", ""),
+              "status": os.environ.get("OVERALL_STATUS", "FAIL"),
+              "ready": os.environ.get("READY", "false").lower() == "true",
+              "required_checks": {
+                  "workflow_yaml": os.environ.get("WORKFLOW_YAML_STATUS", "FAIL"),
+                  "vertex_path": os.environ.get("VERTEX_PATH_STATUS", "FAIL"),
+                  "cloud_sql_smoke": os.environ.get("CLOUD_SQL_SMOKE_STATUS", "SKIPPED"),
+              },
+              "optional_checks": {
+                  "cloud_sql_smoke": os.environ.get("CLOUD_SQL_SMOKE_STATUS", "SKIPPED"),
+              },
+              "report_uri": os.environ["REPORT_URI"],
+              "ready_uri": os.environ["READY_URI"],
+          }
+          Path(os.environ["RESULT_FILE"]).write_text(json.dumps(result, indent=2) + "\n")
+          PY
 
           {
             echo "## Readiness Contract"
