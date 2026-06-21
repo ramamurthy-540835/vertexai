@@ -1,39 +1,9 @@
-import { searchMatches, latestSummary, type SearchParams } from "@/lib/reports";
+import { searchMatches, latestSummary } from "@/lib/reports";
 import { queryTemplates } from "@/lib/query_templates";
+import { buildTalkAnswer, planTalkQuestion } from "@/lib/talk";
 import { TalkWithDataForm } from "./form";
 
 export const dynamic = "force-dynamic";
-
-function parseQuestion(
-  question: string,
-): Pick<SearchParams, "minScore" | "matchType" | "manualReview"> {
-  const q = question.toLowerCase();
-  const filters: Pick<SearchParams, "minScore" | "matchType" | "manualReview"> = {};
-
-  if (q.includes("exact")) filters.matchType = "Exact";
-  else if (q.includes("fuzzy")) filters.matchType = "Fuzzy";
-
-  if (q.includes("manual") || q.includes("review")) filters.manualReview = true;
-
-  if (q.includes("high-confidence") || q.includes("high confidence")) filters.minScore = 95;
-
-  if (!filters.matchType && !filters.manualReview && filters.minScore === undefined) {
-    filters.minScore = 95;
-  }
-
-  return filters;
-}
-
-function describeIntent(
-  filters: Pick<SearchParams, "minScore" | "matchType" | "manualReview">,
-): string {
-  const parts: string[] = [];
-  if (filters.matchType) parts.push(`${filters.matchType.toLowerCase()} matches`);
-  if (filters.manualReview) parts.push("manual-review matches");
-  if (filters.minScore) parts.push(`high-confidence matches (score >= ${filters.minScore})`);
-  if (parts.length === 0) parts.push("high-confidence matches (score >= 95)");
-  return parts.join(" and ");
-}
 
 export default async function TalkWithDataPage({
   searchParams,
@@ -45,19 +15,25 @@ export default async function TalkWithDataPage({
   const question = params.question;
   const rawLimit = params.limit ? Number(params.limit) : 25;
   const limit = Math.min(Math.max(Number.isFinite(rawLimit) ? rawLimit : 25, 1), 500);
+  const activeQuestion = question || "Show exact and high-confidence matches";
+  const plan = planTalkQuestion(activeQuestion);
 
-  const filters = question ? parseQuestion(question) : { minScore: 95 as const };
-  const intent = describeIntent(filters);
-
-  const result = await searchMatches({ warehouse, ...filters, limit });
+  const result = await searchMatches({ warehouse, ...plan.filters, limit });
   const summary = await latestSummary(warehouse);
-  const fuzzy = result.rows.filter((row) => row.match_type === "Fuzzy").length;
-  const manual = result.rows.filter((row) => row.match_type === "Manual Review").length;
+  const allRows =
+    plan.intent === "unmatched-leads"
+      ? (await searchMatches({ warehouse, limit: 10000 })).rows
+      : undefined;
 
-  const defaultAnswer =
-    `For warehouse ${warehouse}, the latest report has ${result.total || 0} rows matching ` +
-    `${intent}. Showing ${result.rows.length} rows: ${fuzzy} fuzzy and ${manual} manual-review. ` +
-    `Use Search for exact row filtering and Download CSV for ServiceNow handoff.`;
+  const defaultAnswer = buildTalkAnswer({
+    warehouse,
+    runId: result.run?.runId || summary?.match_run_id,
+    plan,
+    rows: result.rows,
+    total: result.total || 0,
+    summary,
+    allRows,
+  });
 
   return (
     <section className="talk-page">
@@ -95,7 +71,7 @@ export default async function TalkWithDataPage({
 
       <TalkWithDataForm
         warehouse={warehouse}
-        question={question || "Show exact and high-confidence matches"}
+        question={activeQuestion}
         defaultAnswer={defaultAnswer}
         templates={queryTemplates}
       />

@@ -20,13 +20,13 @@ export function TalkWithDataForm({
   const [source, setSource] = useState<string>("report-data");
   const [loading, setLoading] = useState(false);
 
-  async function askGemini(wh: string, q: string) {
+  async function askGemini(wh: string, q: string, filterHint?: string) {
     setLoading(true);
     try {
       const res = await fetch("/api/ask", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ warehouse: wh, question: q }),
+        body: JSON.stringify({ warehouse: wh, question: q, filter_hint: filterHint }),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
@@ -47,7 +47,7 @@ export function TalkWithDataForm({
 
   function handleChip(template: QueryTemplate) {
     setQuestion(template.question);
-    askGemini(warehouse, template.question);
+    askGemini(warehouse, template.question, template.filterHint);
   }
 
   return (

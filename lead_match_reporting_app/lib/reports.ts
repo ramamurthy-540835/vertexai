@@ -24,6 +24,10 @@ export type SearchParams = {
   matchType?: string;
   lifecycleState?: string;
   minScore?: number;
+  maxScore?: number;
+  primaryOnly?: boolean;
+  sortBy?: "score" | "amount";
+  sortDirection?: "asc" | "desc";
   limit?: number;
   manualReview?: boolean;
 };
@@ -138,7 +142,7 @@ export async function searchMatches(params: SearchParams) {
   }
 
   const rows = await readMatches(run.project, run.warehouse, run.runId);
-  const limit = Math.min(Math.max(params.limit || 100, 1), 1000);
+  const limit = Math.min(Math.max(params.limit || 100, 1), 10000);
   const filtered = rows.filter((row) => {
     if (params.leadId && !row.lead_id?.includes(params.leadId)) return false;
     if (params.posId && !row.pos_id?.includes(params.posId)) return false;
@@ -146,10 +150,27 @@ export async function searchMatches(params: SearchParams) {
     if (params.manualReview && row.match_type !== "Manual Review") return false;
     if (params.lifecycleState && row.lifecycle_state !== params.lifecycleState) return false;
     if (params.minScore && Number(row.final_score || 0) < params.minScore) return false;
+    if (params.maxScore && Number(row.final_score || 0) >= params.maxScore) return false;
+    if (params.primaryOnly && row.primary_transaction !== "True") return false;
     return true;
   });
 
-  return { run, rows: filtered.slice(0, limit), total: filtered.length };
+  const sorted = params.sortBy
+    ? [...filtered].sort((left, right) => {
+        const direction = params.sortDirection === "asc" ? 1 : -1;
+        const leftValue =
+          params.sortBy === "amount"
+            ? Number(left.order_amount || left.transaction_amount || 0)
+            : Number(left.final_score || 0);
+        const rightValue =
+          params.sortBy === "amount"
+            ? Number(right.order_amount || right.transaction_amount || 0)
+            : Number(right.final_score || 0);
+        return (leftValue - rightValue) * direction;
+      })
+    : filtered;
+
+  return { run, rows: sorted.slice(0, limit), total: filtered.length };
 }
 
 export async function downloadReport(

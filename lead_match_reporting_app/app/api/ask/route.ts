@@ -1,6 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireApiAuth } from "@/lib/auth";
-import { searchMatches } from "@/lib/reports";
+import { latestSummary, searchMatches } from "@/lib/reports";
+import {
+  buildTalkAnswer,
+  buildTalkDigest,
+  geminiContradictsDigest,
+  planTalkQuestion,
+  shouldReturnReportAnswer,
+} from "@/lib/talk";
 import { VertexAI } from "@google-cloud/vertexai";
 
 const SYSTEM_INSTRUCTION =
@@ -8,8 +15,9 @@ const SYSTEM_INSTRUCTION =
   "were matched to point-of-sale transactions for a given Costco warehouse. Use ONLY the match " +
   "rows provided in context. Costco terms: a 'Primary Transaction' is the POS row a lead was " +
   "matched to; 'high-confidence' = final_score >= 95; 'exact' = deterministic match; " +
-  "'fuzzy'/'manual-review' = needs human verification. Never invent leads, transactions, or " +
-  "scores. If the provided rows do not answer the question, say the data does not contain it " +
+  "'manual-review' means match_type is Manual Review; 'fuzzy below threshold' means match_type " +
+  "is Fuzzy and final_score < 95. Trust the computed digest totals over individual row samples. " +
+  "Never invent leads, transactions, or scores. If the provided digest and rows do not answer the question, say the data does not contain it " +
   "and suggest using Search or Download CSV for ServiceNow handoff. " +
   'Respond with JSON: {"answer": "<your answer>", "matchCountReferenced": <number>}';
 
@@ -75,15 +83,43 @@ export async function POST(request: NextRequest) {
   const body = await request.json();
   const warehouse = body.warehouse ? String(body.warehouse) : "115";
   const question = body.question ? String(body.question) : "Summarize latest matches";
+  const filterHint = body.filter_hint ? String(body.filter_hint) : undefined;
+  const plan = planTalkQuestion(question, filterHint);
 
   const result = await searchMatches({
     warehouse,
-    minScore: body.min_score ? Number(body.min_score) : undefined,
-    limit: 200,
+    ...plan.filters,
+    minScore: body.min_score ? Number(body.min_score) : plan.filters.minScore,
+    limit: plan.limit,
   });
+  const summary = await latestSummary(warehouse);
 
   if (!result.run) {
     return NextResponse.json({ error: "No report found" }, { status: 404 });
+  }
+
+  const allRows =
+    plan.intent === "unmatched-leads"
+      ? (await searchMatches({ warehouse, limit: 10000 })).rows
+      : undefined;
+  const groundedAnswer = buildTalkAnswer({
+    warehouse,
+    runId: result.run.runId || summary?.match_run_id,
+    plan,
+    rows: result.rows,
+    total: result.total || 0,
+    summary,
+    allRows,
+  });
+
+  if (shouldReturnReportAnswer(plan)) {
+    return NextResponse.json({
+      question,
+      run: result.run,
+      answer: groundedAnswer,
+      usedRows: result.rows.length,
+      source: "report-data",
+    });
   }
 
   if (!geminiEnabled()) {
@@ -97,14 +133,24 @@ export async function POST(request: NextRequest) {
       systemInstruction: SYSTEM_INSTRUCTION,
     });
 
-    const rowContext = JSON.stringify(result.rows.slice(0, 200));
+    const digest = buildTalkDigest({
+      warehouse,
+      runId: result.run.runId || summary?.match_run_id,
+      plan,
+      rows: result.rows,
+      total: result.total || 0,
+      summary,
+      allRows,
+    });
     const response = await model.generateContent({
       contents: [
         {
           role: "user",
           parts: [
             {
-              text: `Match rows for warehouse ${warehouse} (${result.total || 0} total, showing ${result.rows.length}):\n${rowContext}\n\nQuestion: ${question}`,
+              text:
+                `Computed answer from report data:\n${groundedAnswer}\n\n` +
+                `Computed digest:\n${JSON.stringify(digest)}\n\nQuestion: ${question}`,
             },
           ],
         },
@@ -113,11 +159,12 @@ export async function POST(request: NextRequest) {
 
     const text = response.response.candidates?.[0]?.content?.parts?.[0]?.text || "";
     const parsed = parseGeminiResponse(text);
+    const answer = parsed.answer || groundedAnswer;
 
     return NextResponse.json({
       question,
       run: result.run,
-      answer: parsed.answer || "No answer generated.",
+      answer: geminiContradictsDigest(answer, plan, result.total || 0) ? groundedAnswer : answer,
       usedRows: parsed.matchCountReferenced || result.rows.length,
       source: "gemini",
     });
