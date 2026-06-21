@@ -19,7 +19,7 @@ function getVertexAI() {
   if (!vertexAI) {
     vertexAI = new VertexAI({
       project: process.env.GOOGLE_CLOUD_PROJECT || process.env.VERTEX_PROJECT_ID || "ctoteam",
-      location: process.env.VERTEX_LOCATION || "us-central1",
+      location: process.env.VERTEX_LOCATION || "global",
     });
   }
   return vertexAI;
