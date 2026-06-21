@@ -89,12 +89,10 @@ export async function POST(request: NextRequest) {
   try {
     const ai = getVertexAI();
     const model = ai.getGenerativeModel({
-      model: process.env.GEMINI_MODEL || "gemini-3.5-flash",
-      systemInstruction: { role: "system", parts: [{ text: SYSTEM_INSTRUCTION }] },
+      model: process.env.GEMINI_MODEL || "gemini-2.5-flash",
+      systemInstruction: SYSTEM_INSTRUCTION,
       generationConfig: {
         responseMimeType: "application/json",
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        ...(({ thinkingConfig: { thinkingBudget: 1024 } }) as any),
       },
     });
 
@@ -122,13 +120,14 @@ export async function POST(request: NextRequest) {
       usedRows: parsed.matchCountReferenced || result.rows.length,
       source: "gemini",
     });
-  } catch {
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
     return reportFallback(
       question,
       result.run,
       result.rows,
       result.total || 0,
-      "Gemini unavailable, showing report data",
+      `Gemini error: ${detail}`,
     );
   }
 }

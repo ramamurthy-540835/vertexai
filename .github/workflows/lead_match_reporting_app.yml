@@ -44,7 +44,7 @@ jobs:
       SERVICE_NAME: ${{ github.event.inputs.service_name || 'lead-match-reporting-app' }}
       REPORT_PREFIX: reports/lead_match
       VERTEX_LOCATION: us-central1
-      GEMINI_MODEL: gemini-3.5-flash
+      GEMINI_MODEL: gemini-2.5-flash
       REPORTING_API_TOKEN: ${{ secrets.REPORTING_API_TOKEN }}
 
     steps:
