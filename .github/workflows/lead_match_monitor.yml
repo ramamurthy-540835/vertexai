@@ -80,7 +80,7 @@ jobs:
           gh run list \
             --workflow=lead_match_semantic_workflow.yml \
             --limit=20 \
-            --json databaseId,status,conclusion,startedAt,updatedAt,headBranch,displayTitle,name \
+            --json databaseId,status,conclusion,startedAt,updatedAt,headBranch,displayTitle,name,url \
             > "${RUNNER_TEMP}/gh_runs_raw.json"
           # Extract warehouse from displayTitle (e.g. "Lead Match Semantic Workflow")
           # and name which contains the job name like "ctoteam-lead-match-529"
@@ -92,13 +92,21 @@ jobs:
           for run in runs:
               warehouse = ""
               current_step = ""
+              current_step_number = None
+              completed_step_count = 0
+              total_step_count = 0
+              failed_step = ""
+              last_completed_step = ""
+              job_name = ""
+              job_status = ""
+              job_conclusion = ""
               # Try to get warehouse from the run's display title or name
               title = run.get("displayTitle", "") + " " + run.get("name", "")
               m = re.search(r"lead-match-(\S+)", title)
               if m:
                   warehouse = m.group(1)
-              # For in-progress runs, get step detail via gh run view
-              if run["status"] == "in_progress":
+              # Get job/step detail for active and recently failed runs.
+              if run["status"] in {"in_progress", "queued", "completed"}:
                   try:
                       out = subprocess.run(
                           ["gh", "run", "view", str(run["databaseId"]),
@@ -108,20 +116,41 @@ jobs:
                       view = json.loads(out)
                       for job in view.get("jobs", []):
                           jname = job.get("name", "")
+                          if not job_name:
+                              job_name = jname
+                              job_status = job.get("status", "")
+                              job_conclusion = job.get("conclusion", "") or ""
                           jm = re.search(r"lead-match-(.+)$", jname)
                           if jm:
                               warehouse = jm.group(1)
-                          for step in job.get("steps", []):
+                          steps = job.get("steps", [])
+                          total_step_count += len(steps)
+                          for step in steps:
+                              if step.get("status") == "completed":
+                                  completed_step_count += 1
+                                  last_completed_step = step.get("name", "") or last_completed_step
+                              if step.get("conclusion") in {"failure", "cancelled", "timed_out"}:
+                                  failed_step = step.get("name", "") or failed_step
                               if step.get("status") == "in_progress":
                                   current_step = step.get("name", "")
+                                  current_step_number = step.get("number")
                   except Exception:
                       pass
               run["warehouse"] = warehouse
               run["currentStep"] = current_step
+              run["currentStepNumber"] = current_step_number
+              run["completedStepCount"] = completed_step_count
+              run["totalStepCount"] = total_step_count
+              run["failedStep"] = failed_step
+              run["lastCompletedStep"] = last_completed_step
+              run["jobName"] = job_name
+              run["jobStatus"] = job_status
+              run["jobConclusion"] = job_conclusion
           with open(f"{temp}/gh_runs.json", "w") as f:
               json.dump(runs, f, indent=2)
           for r in runs:
-              print(f"{r['databaseId']} {r['status']} {r.get('conclusion') or '-'} wh={r['warehouse']} step={r['currentStep']}")
+              progress = f"{r.get('completedStepCount', 0)}/{r.get('totalStepCount', 0)}"
+              print(f"{r['databaseId']} {r['status']} {r.get('conclusion') or '-'} wh={r['warehouse']} step={r['currentStep']} progress={progress}")
           PY
 
       - name: Collect GCP workflow executions
@@ -298,6 +327,26 @@ jobs:
 
           temp = os.environ["RUNNER_TEMP"]
 
+          def parse_ts(value):
+              if not value:
+                  return None
+              try:
+                  return datetime.fromisoformat(value.replace("Z", "+00:00"))
+              except ValueError:
+                  return None
+
+          def human_seconds(seconds):
+              if seconds is None:
+                  return ""
+              seconds = int(seconds)
+              hours, remainder = divmod(seconds, 3600)
+              minutes, secs = divmod(remainder, 60)
+              if hours:
+                  return f"{hours}h {minutes}m {secs}s"
+              if minutes:
+                  return f"{minutes}m {secs}s"
+              return f"{secs}s"
+
           with open(f"{temp}/gh_runs.json") as f:
               gh_runs = json.load(f)
 
@@ -310,23 +359,49 @@ jobs:
           wh_filter = os.environ.get("WAREHOUSE_FILTER", "").strip()
 
           gcp_executions = []
+          now_dt = datetime.now(timezone.utc)
           for ex in gcp_execs_raw:
               argument = {}
               try:
                   argument = json.loads(ex.get("argument", "{}"))
               except (json.JSONDecodeError, TypeError):
                   pass
+              start = parse_ts(ex.get("startTime", ""))
+              end = parse_ts(ex.get("endTime", ""))
+              elapsed_seconds = None
+              if start:
+                  elapsed_seconds = int(((end or now_dt) - start).total_seconds())
+              current_steps = ex.get("status", {}).get("currentSteps", []) or []
+              current = current_steps[0] if current_steps else {}
+              report_prefix = argument.get("reportPrefix", "")
+              report_bucket = argument.get("reportBucket", os.environ["BUCKET_NAME"])
+              report_uri_prefix = (
+                  f"gs://{report_bucket}/{report_prefix}" if report_prefix else ""
+              )
+              execution_name = ex.get("name", "")
               entry = {
-                  "name": ex.get("name", ""),
+                  "name": execution_name,
+                  "executionId": execution_name.split("/")[-1] if execution_name else "",
                   "state": ex.get("state", "UNKNOWN"),
                   "startTime": ex.get("startTime", ""),
                   "endTime": ex.get("endTime", ""),
                   "duration": ex.get("duration", ""),
+                  "elapsedSeconds": elapsed_seconds,
+                  "elapsedHuman": human_seconds(elapsed_seconds),
                   "warehouse": argument.get("warehouse", "unknown"),
                   "matchRunId": argument.get("matchRunId", ""),
-                  "reportPrefix": argument.get("reportPrefix", ""),
+                  "reportBucket": report_bucket,
+                  "reportPrefix": report_prefix,
+                  "reportUriPrefix": report_uri_prefix,
+                  "reportUris": {
+                      "summary": f"{report_uri_prefix}/summary.json" if report_uri_prefix else "",
+                      "matches": f"{report_uri_prefix}/matches.csv" if report_uri_prefix else "",
+                      "report": f"{report_uri_prefix}/report.md" if report_uri_prefix else "",
+                  },
                   "error": ex.get("error"),
-                  "currentSteps": ex.get("status", {}).get("currentSteps", []),
+                  "currentSteps": current_steps,
+                  "currentStep": current.get("step", ""),
+                  "currentRoutine": current.get("routine", ""),
               }
               if wh_filter:
                   filter_set = {w.strip() for w in wh_filter.split(",")}
@@ -335,6 +410,7 @@ jobs:
               gcp_executions.append(entry)
 
           cloud_run_jobs = {}
+          latest_cloud_run_jobs = {}
           for job_name in [
               "lead-match-lead-embeddings",
               "lead-match-pos-embeddings",
@@ -345,19 +421,73 @@ jobs:
               if os.path.exists(path):
                   with open(path) as f:
                       raw = json.load(f)
-                  cloud_run_jobs[job_name] = [
-                      {
-                          "name": j.get("name", ""),
-                          "createTime": j.get("createTime", ""),
-                          "completionTime": j.get("completionTime", ""),
-                          "succeededCount": j.get("succeededCount", 0),
-                          "failedCount": j.get("failedCount", 0),
-                          "runningCount": j.get("runningCount", 0),
-                      }
-                      for j in raw[:10]
-                  ]
+                  parsed = []
+                  for j in raw[:10]:
+                      metadata = j.get("metadata", {})
+                      status = j.get("status", {})
+                      spec = j.get("spec", {})
+                      conditions = status.get("conditions", []) or j.get("conditions", [])
+                      terminal_condition = next(
+                          (
+                              c
+                              for c in conditions
+                              if c.get("type") in {"Completed", "Ready", "Succeeded"}
+                          ),
+                          {},
+                      )
+                      name = (
+                          j.get("name")
+                          or metadata.get("name")
+                          or j.get("metadataName")
+                          or ""
+                      )
+                      start_time = (
+                          j.get("startTime")
+                          or status.get("startTime")
+                          or j.get("createTime")
+                          or metadata.get("creationTimestamp")
+                          or ""
+                      )
+                      completion_time = (
+                          j.get("completionTime")
+                          or status.get("completionTime")
+                          or ""
+                      )
+                      succeeded = int(j.get("succeededCount") or status.get("succeededCount") or 0)
+                      failed = int(j.get("failedCount") or status.get("failedCount") or 0)
+                      running = int(j.get("runningCount") or status.get("runningCount") or 0)
+                      state = "UNKNOWN"
+                      if running > 0:
+                          state = "RUNNING"
+                      elif failed > 0:
+                          state = "FAILED"
+                      elif succeeded > 0 or terminal_condition.get("status") == "True":
+                          state = "SUCCEEDED"
+                      elif terminal_condition.get("status") == "False":
+                          state = "FAILED"
+                      parsed.append(
+                          {
+                              "name": name,
+                              "job": job_name,
+                              "state": state,
+                              "createTime": j.get("createTime", "") or metadata.get("creationTimestamp", ""),
+                              "startTime": start_time,
+                              "completionTime": completion_time,
+                              "succeededCount": succeeded,
+                              "failedCount": failed,
+                              "runningCount": running,
+                              "taskCount": spec.get("taskCount") or j.get("taskCount") or "",
+                              "parallelism": spec.get("parallelism") or j.get("parallelism") or "",
+                              "conditionType": terminal_condition.get("type", ""),
+                              "conditionReason": terminal_condition.get("reason", ""),
+                              "conditionMessage": terminal_condition.get("message", ""),
+                          }
+                      )
+                  cloud_run_jobs[job_name] = parsed
+                  latest_cloud_run_jobs[job_name] = parsed[0] if parsed else None
               else:
                   cloud_run_jobs[job_name] = []
+                  latest_cloud_run_jobs[job_name] = None
 
           warehouse_run_status = {}
           for ex in sorted(gcp_executions, key=lambda e: e.get("startTime", ""), reverse=True):
@@ -369,14 +499,40 @@ jobs:
                       "latest_end": ex.get("endTime", ""),
                       "latest_match_run_id": ex["matchRunId"],
                       "is_active": ex["state"] == "ACTIVE",
-                      "current_step": (
-                          ex["currentSteps"][0].get("step", "")
-                          if ex["currentSteps"]
-                          else ""
-                      ),
+                      "current_step": ex.get("currentStep", ""),
+                      "current_routine": ex.get("currentRoutine", ""),
+                      "elapsed_human": ex.get("elapsedHuman", ""),
+                      "report_uri_prefix": ex.get("reportUriPrefix", ""),
                   }
 
           now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+          active_runs = [e for e in gcp_executions if e["state"] == "ACTIVE"]
+          running_cloud_run_jobs = [
+              j
+              for j in latest_cloud_run_jobs.values()
+              if j and j.get("state") == "RUNNING"
+          ]
+          failed_cloud_run_jobs = [
+              j
+              for j in latest_cloud_run_jobs.values()
+              if j and j.get("state") == "FAILED"
+          ]
+          status_summary = {
+              "active_gcp_workflow_count": len(active_runs),
+              "running_cloud_run_job_count": len(running_cloud_run_jobs),
+              "failed_cloud_run_job_count": len(failed_cloud_run_jobs),
+              "github_in_progress_count": len(
+                  [r for r in gh_runs if r.get("status") == "in_progress"]
+              ),
+              "github_failed_recent_count": len(
+                  [
+                      r
+                      for r in gh_runs
+                      if r.get("status") == "completed"
+                      and r.get("conclusion") in {"failure", "cancelled", "timed_out"}
+                  ]
+              ),
+          }
           snapshot = {
               "generated_at": now,
               "project": os.environ["PROJECT_ID"],
@@ -384,10 +540,12 @@ jobs:
               "workflow_name": os.environ["WORKFLOW_NAME"],
               "lookback_hours": int(os.environ["LOOKBACK_HOURS"]),
               "warehouse_filter": wh_filter or "all",
+              "status_summary": status_summary,
               "github_actions_runs": gh_runs,
               "workflow_executions": gcp_executions,
-              "active_runs": [e for e in gcp_executions if e["state"] == "ACTIVE"],
+              "active_runs": active_runs,
               "cloud_run_jobs": cloud_run_jobs,
+              "latest_cloud_run_jobs": latest_cloud_run_jobs,
               "warehouse_run_status": warehouse_run_status,
               "warehouse_stats": warehouse_stats,
               "data_source_note": (
@@ -452,12 +610,12 @@ jobs:
           if active:
               lines.append(f"### Active Runs ({len(active)})")
               lines.append("")
-              lines.append("| Warehouse | Match Run ID | Current Step | Started |")
-              lines.append("|-----------|-------------|--------------|---------|")
+              lines.append("| Warehouse | Match Run ID | Current Step | Elapsed | Started |")
+              lines.append("|-----------|-------------|--------------|---------|---------|")
               for r in active:
-                  step = r["currentSteps"][0].get("step", "?") if r["currentSteps"] else "?"
+                  step = r.get("currentStep") or "?"
                   lines.append(
-                      f"| {r['warehouse']} | `{r['matchRunId'][:40]}` | {step} | {r['startTime'][:19]} |"
+                      f"| {r['warehouse']} | `{r['matchRunId'][:40]}` | {step} | {r.get('elapsedHuman', '')} | {r['startTime'][:19]} |"
                   )
               lines.append("")
           else:
@@ -490,12 +648,13 @@ jobs:
           if gh_runs:
               lines.append(f"### GitHub Actions Runs ({len(gh_runs)})")
               lines.append("")
-              lines.append("| Run ID | Status | Conclusion | Started |")
-              lines.append("|--------|--------|-----------|---------|")
+              lines.append("| Run ID | Warehouse | Status | Conclusion | Step Progress | Active Step | Started |")
+              lines.append("|--------|-----------|--------|------------|---------------|-------------|---------|")
               for r in gh_runs[:10]:
+                  progress = f"{r.get('completedStepCount', 0)}/{r.get('totalStepCount', 0)}"
                   lines.append(
-                      f"| {r['databaseId']} | {r['status']} "
-                      f"| {r.get('conclusion') or '-'} | {r['startedAt'][:19]} |"
+                      f"| {r['databaseId']} | {r.get('warehouse') or '-'} | {r['status']} "
+                      f"| {r.get('conclusion') or '-'} | {progress} | {r.get('currentStep') or '-'} | {r['startedAt'][:19]} |"
                   )
               lines.append("")
 

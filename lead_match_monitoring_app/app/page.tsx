@@ -10,25 +10,47 @@ function bucketName() {
 
 type GcpExecution = {
   name: string;
+  executionId?: string;
   state: string;
   startTime: string;
   endTime: string;
   duration: string;
+  elapsedSeconds?: number | null;
+  elapsedHuman?: string;
   warehouse: string;
   matchRunId: string;
+  reportBucket?: string;
+  reportPrefix?: string;
+  reportUriPrefix?: string;
+  reportUris?: {
+    summary?: string;
+    matches?: string;
+    report?: string;
+  };
+  currentStep?: string;
+  currentRoutine?: string;
   currentSteps: Array<{ routine?: string; step?: string }>;
   error?: unknown;
 };
 
 type GhRun = {
   databaseId: number;
+  url?: string;
   status: string;
   conclusion: string | null;
   startedAt: string;
+  updatedAt?: string;
   displayTitle: string;
   warehouse?: string;
   jobStatus?: string;
+  jobName?: string;
+  jobConclusion?: string;
   currentStep?: string;
+  currentStepNumber?: number | null;
+  completedStepCount?: number;
+  totalStepCount?: number;
+  failedStep?: string;
+  lastCompletedStep?: string;
 };
 
 type WarehouseStats = {
@@ -41,25 +63,66 @@ type WarehouseStats = {
   pos_embedding_count?: number;
   pos_embedding_pct?: number;
   match_count?: number;
+  primary_transactions?: number;
+  embedding_model?: string;
+  generated_at?: string;
+  match_types?: Record<string, number>;
+  lifecycle_states?: Record<string, number>;
   latest_run_id?: string | null;
+};
+
+type CloudRunJobExecution = {
+  name: string;
+  job: string;
+  state: string;
+  createTime?: string;
+  startTime?: string;
+  completionTime?: string;
+  succeededCount?: number;
+  failedCount?: number;
+  runningCount?: number;
+  taskCount?: number | string;
+  parallelism?: number | string;
+  conditionType?: string;
+  conditionReason?: string;
+  conditionMessage?: string;
 };
 
 type Snapshot = {
   generated_at: string;
   project: string;
   region: string;
+  workflow_name?: string;
   lookback_hours: number;
   warehouse_filter: string;
+  status_summary?: {
+    active_gcp_workflow_count?: number;
+    running_cloud_run_job_count?: number;
+    failed_cloud_run_job_count?: number;
+    github_in_progress_count?: number;
+    github_failed_recent_count?: number;
+  };
   active_runs: GcpExecution[];
   workflow_executions: GcpExecution[];
   github_actions_runs: GhRun[];
+  cloud_run_jobs?: Record<string, CloudRunJobExecution[]>;
+  latest_cloud_run_jobs?: Record<string, CloudRunJobExecution | null>;
   warehouse_stats: {
     available: boolean;
     warehouses: Record<string, WarehouseStats>;
   };
   warehouse_run_status: Record<
     string,
-    { latest_state: string; latest_start: string; current_step: string }
+    {
+      latest_state: string;
+      latest_start: string;
+      latest_end?: string;
+      latest_match_run_id?: string;
+      current_step: string;
+      current_routine?: string;
+      elapsed_human?: string;
+      report_uri_prefix?: string;
+    }
   >;
 };
 
@@ -88,12 +151,41 @@ function formatDuration(dur: string): string {
   }
 }
 
+function formatDateTime(value?: string): string {
+  return value ? value.slice(0, 19).replace("T", " ") : "-";
+}
+
+function formatElapsed(start?: string, end?: string): string {
+  if (!start) return "-";
+  const startMs = Date.parse(start);
+  if (Number.isNaN(startMs)) return "-";
+  const endMs = end ? Date.parse(end) : Date.now();
+  const seconds = Math.max(0, Math.floor((endMs - startMs) / 1000));
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = seconds % 60;
+  return h > 0 ? `${h}h ${m}m ${s}s` : `${m}m ${s}s`;
+}
+
+function shortName(value?: string): string {
+  if (!value) return "-";
+  return value.split("/").pop() || value;
+}
+
+function formatCount(value?: number): string {
+  return (value ?? 0).toLocaleString();
+}
+
+function statusText(value?: string | null): string {
+  return value && value.length > 0 ? value : "-";
+}
+
 function stateBadge(state: string) {
   const s = state.toUpperCase();
   if (s === "SUCCEEDED" || s === "completed") return "badge badge-success";
-  if (s === "ACTIVE" || s === "in_progress") return "badge badge-info";
-  if (s === "FAILED" || s === "failure") return "badge badge-error";
-  if (s === "CANCELLED" || s === "canceled") return "badge badge-warning";
+  if (s === "ACTIVE" || s === "RUNNING" || s === "in_progress") return "badge badge-info";
+  if (s === "FAILED" || s === "failure" || s === "timed_out") return "badge badge-error";
+  if (s === "CANCELLED" || s === "cancelled" || s === "canceled") return "badge badge-warning";
   return "badge";
 }
 
@@ -133,6 +225,22 @@ export default async function MonitorPage() {
     ? snap.warehouse_stats.warehouses
     : {};
   const whRunStatus = snap.warehouse_run_status || {};
+  const latestCloudRunJobs = snap.latest_cloud_run_jobs || {};
+  const cloudRunRows = Object.keys(latestCloudRunJobs)
+    .sort()
+    .map((job) => latestCloudRunJobs[job])
+    .filter((job): job is CloudRunJobExecution => Boolean(job));
+  const summary = snap.status_summary || {};
+  const snapshotAge = formatElapsed(snap.generated_at);
+  const ghInProgress =
+    summary.github_in_progress_count ??
+    ghRuns.filter((run) => run.status === "in_progress").length;
+  const runningCloudRun =
+    summary.running_cloud_run_job_count ??
+    cloudRunRows.filter((job) => job.state === "RUNNING").length;
+  const failedCloudRun =
+    summary.failed_cloud_run_job_count ??
+    cloudRunRows.filter((job) => job.state === "FAILED").length;
 
   return (
     <>
@@ -147,8 +255,31 @@ export default async function MonitorPage() {
         </a>
       </div>
 
+      <section className="grid">
+        <div className="metric">
+          <span>Active GCP Workflows</span>
+          <strong>{summary.active_gcp_workflow_count ?? active.length}</strong>
+        </div>
+        <div className="metric">
+          <span>Running Cloud Run Jobs</span>
+          <strong>{runningCloudRun}</strong>
+        </div>
+        <div className={`metric${failedCloudRun > 0 ? " warning" : " success"}`}>
+          <span>Failed Cloud Run Jobs</span>
+          <strong>{failedCloudRun}</strong>
+        </div>
+        <div className="metric">
+          <span>GitHub In Progress</span>
+          <strong>{ghInProgress}</strong>
+        </div>
+        <div className="metric">
+          <span>Snapshot Age</span>
+          <strong className="metric-text">{snapshotAge}</strong>
+        </div>
+      </section>
+
       {/* Active Runs */}
-      <section className="card">
+      <section className="card section-gap">
         <h2>
           Active Runs{" "}
           <span className="pill" style={{ fontSize: 11 }}>
@@ -164,8 +295,11 @@ export default async function MonitorPage() {
                 <tr>
                   <th>Warehouse</th>
                   <th>Match Run ID</th>
-                  <th>Current Step</th>
+                  <th>Workflow Step</th>
+                  <th>Elapsed</th>
                   <th>Started</th>
+                  <th>Execution</th>
+                  <th>Report Prefix</th>
                 </tr>
               </thead>
               <tbody>
@@ -179,10 +313,14 @@ export default async function MonitorPage() {
                     </td>
                     <td>
                       <span className="badge badge-info">
-                        {r.currentSteps?.[0]?.step || "running"}
+                        {r.currentRoutine ? `${r.currentRoutine}.` : ""}
+                        {r.currentStep || r.currentSteps?.[0]?.step || "running"}
                       </span>
                     </td>
-                    <td>{r.startTime?.slice(0, 19)}</td>
+                    <td>{r.elapsedHuman || formatElapsed(r.startTime)}</td>
+                    <td>{formatDateTime(r.startTime)}</td>
+                    <td className="mono">{r.executionId || shortName(r.name)}</td>
+                    <td className="mono small-cell">{r.reportUriPrefix || "-"}</td>
                   </tr>
                 ))}
               </tbody>
@@ -190,6 +328,53 @@ export default async function MonitorPage() {
           </div>
         )}
       </section>
+
+      {/* Cloud Run Jobs */}
+      {cloudRunRows.length > 0 && (
+        <section className="card section-gap">
+          <h2>Latest Cloud Run Job Executions</h2>
+          <p className="subtitle">
+            Latest execution per semantic job. This helps separate lead embeddings,
+            POS embeddings, fuzzy matching, and report generation bottlenecks.
+          </p>
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Job</th>
+                  <th>State</th>
+                  <th>Running</th>
+                  <th>Succeeded</th>
+                  <th>Failed</th>
+                  <th>Started</th>
+                  <th>Completed</th>
+                  <th>Execution</th>
+                  <th>Reason</th>
+                </tr>
+              </thead>
+              <tbody>
+                {cloudRunRows.map((job) => (
+                  <tr key={`${job.job}-${job.name}`}>
+                    <td><strong>{job.job}</strong></td>
+                    <td>
+                      <span className={stateBadge(job.state)}>{job.state}</span>
+                    </td>
+                    <td>{job.runningCount ?? 0}</td>
+                    <td>{job.succeededCount ?? 0}</td>
+                    <td>{job.failedCount ?? 0}</td>
+                    <td>{formatDateTime(job.startTime || job.createTime)}</td>
+                    <td>{formatDateTime(job.completionTime)}</td>
+                    <td className="mono">{shortName(job.name)}</td>
+                    <td className="small-cell">
+                      {job.conditionReason || job.conditionMessage || "-"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
 
       {/* Warehouse Stats */}
       {Object.keys(whStats).length > 0 && (
@@ -211,6 +396,7 @@ export default async function MonitorPage() {
                   <th>POS Embeds</th>
                   <th style={{ minWidth: 100 }}></th>
                   <th>Matches</th>
+                  <th>Latest Report</th>
                   <th>Run Status</th>
                 </tr>
               </thead>
@@ -231,7 +417,7 @@ export default async function MonitorPage() {
                       return (
                         <tr key={wh}>
                           <td><strong>{wh}</strong></td>
-                          <td colSpan={6} style={{ color: "var(--muted)" }}>
+                          <td colSpan={7} style={{ color: "var(--muted)" }}>
                             {s.summary_missing ? "Summary file missing" : "No reports"}
                           </td>
                           <td>-</td>
@@ -243,13 +429,29 @@ export default async function MonitorPage() {
                     return (
                       <tr key={wh}>
                         <td><strong>{wh}</strong></td>
-                        <td>{(s.lead_count ?? 0).toLocaleString()}</td>
-                        <td>{(s.lead_embedding_count ?? 0).toLocaleString()} ({s.lead_embedding_pct ?? 0}%)</td>
+                        <td>{formatCount(s.lead_count)}</td>
+                        <td>{formatCount(s.lead_embedding_count)} ({s.lead_embedding_pct ?? 0}%)</td>
                         <td><ProgressBar pct={s.lead_embedding_pct ?? 0} /></td>
-                        <td>{(s.pos_count ?? 0).toLocaleString()}</td>
-                        <td>{(s.pos_embedding_count ?? 0).toLocaleString()} ({s.pos_embedding_pct ?? 0}%)</td>
+                        <td>{formatCount(s.pos_count)}</td>
+                        <td>{formatCount(s.pos_embedding_count)} ({s.pos_embedding_pct ?? 0}%)</td>
                         <td><ProgressBar pct={s.pos_embedding_pct ?? 0} /></td>
-                        <td>{(s.match_count ?? 0).toLocaleString()}</td>
+                        <td>
+                          <strong>{formatCount(s.match_count)}</strong>
+                          {s.primary_transactions !== undefined && (
+                            <div className="muted tiny">
+                              Primary tx: {formatCount(s.primary_transactions)}
+                            </div>
+                          )}
+                        </td>
+                        <td className="small-cell">
+                          <div className="mono">{s.latest_run_id || "-"}</div>
+                          <div className="muted tiny">
+                            {formatDateTime(s.generated_at)}
+                          </div>
+                          {s.embedding_model && (
+                            <div className="muted tiny">{s.embedding_model}</div>
+                          )}
+                        </td>
                         <td><span className={stateBadge(state)}>{state}</span></td>
                       </tr>
                     );
@@ -277,7 +479,10 @@ export default async function MonitorPage() {
                   <th>State</th>
                   <th>Match Run ID</th>
                   <th>Duration</th>
+                  <th>Step</th>
                   <th>Started</th>
+                  <th>Report Prefix</th>
+                  <th>Error</th>
                 </tr>
               </thead>
               <tbody>
@@ -290,8 +495,13 @@ export default async function MonitorPage() {
                     <td style={{ fontSize: 12, fontFamily: "monospace" }}>
                       {r.matchRunId || "-"}
                     </td>
-                    <td>{formatDuration(r.duration)}</td>
-                    <td>{r.startTime?.slice(0, 19)}</td>
+                    <td>{formatDuration(r.duration) || r.elapsedHuman || "-"}</td>
+                    <td>{r.currentStep || "-"}</td>
+                    <td>{formatDateTime(r.startTime)}</td>
+                    <td className="mono small-cell">{r.reportUriPrefix || "-"}</td>
+                    <td className="small-cell">
+                      {r.error ? JSON.stringify(r.error).slice(0, 180) : "-"}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -317,8 +527,11 @@ export default async function MonitorPage() {
                   <th>Warehouse</th>
                   <th>Status</th>
                   <th>Conclusion</th>
+                  <th>Step Progress</th>
                   <th>Current Step</th>
+                  <th>Last/Failed Step</th>
                   <th>Started</th>
+                  <th>Run</th>
                 </tr>
               </thead>
               <tbody>
@@ -333,11 +546,30 @@ export default async function MonitorPage() {
                     </td>
                     <td>
                       <span className={stateBadge(r.conclusion || "")}>
-                        {r.conclusion || "-"}
+                        {statusText(r.conclusion)}
                       </span>
                     </td>
+                    <td>
+                      {(r.completedStepCount ?? 0)}/{r.totalStepCount ?? 0}
+                    </td>
                     <td>{r.currentStep || "-"}</td>
-                    <td>{r.startedAt?.slice(0, 19)}</td>
+                    <td className="small-cell">
+                      {r.failedStep ? (
+                        <span className="badge badge-error">{r.failedStep}</span>
+                      ) : (
+                        r.lastCompletedStep || "-"
+                      )}
+                    </td>
+                    <td>{formatDateTime(r.startedAt)}</td>
+                    <td>
+                      {r.url ? (
+                        <a href={r.url} target="_blank" rel="noreferrer">
+                          Open
+                        </a>
+                      ) : (
+                        "-"
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>

@@ -113,6 +113,19 @@ h2 { font-size: 20px; font-weight: 600; margin: 0 0 8px; }
 .metric strong { display: block; font-size: 28px; margin-top: 6px; color: var(--costco-blue); }
 .metric.success strong { color: var(--success); }
 .metric.warning strong { color: var(--warning); }
+.metric .metric-text { font-size: 18px; line-height: 1.25; }
+
+.mono {
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+}
+
+.muted { color: var(--muted); }
+.tiny { font-size: 11px; }
+.small-cell {
+  max-width: 320px;
+  overflow-wrap: anywhere;
+}
 
 .badge {
   display: inline-block;
