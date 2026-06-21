@@ -26,6 +26,7 @@ jobs:
   trigger:
     name: "ctoteam-lead-match-${{ github.event.inputs.warehouse || 'all' }}"
     runs-on: ubuntu-latest
+    timeout-minutes: 240
 
     permissions:
       id-token: write
@@ -68,20 +69,28 @@ jobs:
             WAREHOUSE_LABEL="${WAREHOUSE}"
           fi
           MATCH_RUN_ID="github-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${WAREHOUSE_LABEL}"
-          PAYLOAD="{\"project\":\"${PROJECT_ID}\",\"region\":\"${REGION}\",\"warehouse\":\"${WAREHOUSE_LABEL}\",\"matchRunId\":\"${MATCH_RUN_ID}\",\"reportBucket\":\"${BUCKET_NAME}\"}"
+          FINAL_REPORT_PREFIX="reports/lead_match/${PROJECT_ID}/${WAREHOUSE_LABEL}/${MATCH_RUN_ID}"
+          PAYLOAD="{\"project\":\"${PROJECT_ID}\",\"region\":\"${REGION}\",\"warehouse\":\"${WAREHOUSE_LABEL}\",\"matchRunId\":\"${MATCH_RUN_ID}\",\"reportBucket\":\"${BUCKET_NAME}\",\"reportPrefix\":\"${FINAL_REPORT_PREFIX}\"}"
           HANDOFF_PREFIX="preflight/lead_match/${PROJECT_ID}/${WAREHOUSE_LABEL}"
           READY_URI="gs://${BUCKET_NAME}/${HANDOFF_PREFIX}/READY"
-          REPORT_URI="gs://${BUCKET_NAME}/${HANDOFF_PREFIX}/report.md"
-          RESULT_URI="gs://${BUCKET_NAME}/${HANDOFF_PREFIX}/result.json"
+          PREFLIGHT_REPORT_URI="gs://${BUCKET_NAME}/${HANDOFF_PREFIX}/report.md"
+          PREFLIGHT_RESULT_URI="gs://${BUCKET_NAME}/${HANDOFF_PREFIX}/result.json"
+          FINAL_SUMMARY_URI="gs://${BUCKET_NAME}/${FINAL_REPORT_PREFIX}/summary.json"
+          FINAL_MATCHES_URI="gs://${BUCKET_NAME}/${FINAL_REPORT_PREFIX}/matches.csv"
+          FINAL_REPORT_URI="gs://${BUCKET_NAME}/${FINAL_REPORT_PREFIX}/report.md"
           echo "PAYLOAD=${PAYLOAD}" >> "$GITHUB_ENV"
           echo "MATCH_RUN_ID=${MATCH_RUN_ID}" >> "$GITHUB_ENV"
           echo "WAREHOUSE_LABEL=${WAREHOUSE_LABEL}" >> "$GITHUB_ENV"
           echo "HANDOFF_PREFIX=${HANDOFF_PREFIX}" >> "$GITHUB_ENV"
           echo "READY_URI=${READY_URI}" >> "$GITHUB_ENV"
-          echo "REPORT_URI=${REPORT_URI}" >> "$GITHUB_ENV"
-          echo "RESULT_URI=${RESULT_URI}" >> "$GITHUB_ENV"
+          echo "PREFLIGHT_REPORT_URI=${PREFLIGHT_REPORT_URI}" >> "$GITHUB_ENV"
+          echo "PREFLIGHT_RESULT_URI=${PREFLIGHT_RESULT_URI}" >> "$GITHUB_ENV"
+          echo "FINAL_REPORT_PREFIX=${FINAL_REPORT_PREFIX}" >> "$GITHUB_ENV"
+          echo "FINAL_SUMMARY_URI=${FINAL_SUMMARY_URI}" >> "$GITHUB_ENV"
+          echo "FINAL_MATCHES_URI=${FINAL_MATCHES_URI}" >> "$GITHUB_ENV"
+          echo "FINAL_REPORT_URI=${FINAL_REPORT_URI}" >> "$GITHUB_ENV"
 
-      - name: Check readiness marker
+      - name: Check readiness contract
         run: |
           set -euo pipefail
           if ! gsutil stat "${READY_URI}" >/dev/null 2>&1; then
@@ -89,16 +98,49 @@ jobs:
             echo "Run Lead Match Preflight first."
             exit 1
           fi
+          if ! gsutil stat "${PREFLIGHT_RESULT_URI}" >/dev/null 2>&1; then
+            echo "Missing preflight result at ${PREFLIGHT_RESULT_URI}"
+            echo "Run Lead Match Preflight first."
+            exit 1
+          fi
+          PREFLIGHT_RESULT="${RUNNER_TEMP}/lead_match_preflight_result.json"
+          export PREFLIGHT_RESULT
+          gsutil cp "${PREFLIGHT_RESULT_URI}" "${PREFLIGHT_RESULT}"
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          path = Path(os.environ["PREFLIGHT_RESULT"])
+          result = json.loads(path.read_text())
+          if not result.get("ready"):
+              raise SystemExit(f"Preflight result is not ready: {result}")
+          if result.get("status") == "FAIL":
+              raise SystemExit(f"Preflight result failed: {result}")
+          expected_project = os.environ["PROJECT_ID"]
+          expected_warehouse = os.environ["WAREHOUSE_LABEL"]
+          if result.get("project") != expected_project:
+              raise SystemExit(
+                  f"Preflight project mismatch: {result.get('project')} != {expected_project}"
+              )
+          if result.get("warehouse") != expected_warehouse:
+              raise SystemExit(
+                  f"Preflight warehouse mismatch: {result.get('warehouse')} != {expected_warehouse}"
+              )
+          print(json.dumps(result, indent=2))
+          PY
           echo "READY marker found at ${READY_URI}"
 
       - name: Trigger lead match workflow
         run: |
           set -euo pipefail
           gcloud config set project "${PROJECT_ID}"
-          EXECUTION=$(gcloud workflows run "${WORKFLOW_NAME}" \
+          EXECUTION=$(gcloud workflows execute "${WORKFLOW_NAME}" \
             --location="${REGION}" \
             --project="${PROJECT_ID}" \
             --data="${PAYLOAD}" \
+            --call-log-level=log-errors-only \
+            --execution-history-level=execution-history-basic \
             --format="value(name)")
           echo "EXECUTION_NAME=${EXECUTION}" >> "$GITHUB_ENV"
           echo "Execution started: ${EXECUTION}"
@@ -142,8 +184,11 @@ jobs:
             echo "- Bucket: \`${BUCKET_NAME}\`"
             echo "- Warehouse: \`${WAREHOUSE_LABEL:-unknown}\`"
             echo "- READY URI: \`${READY_URI:-unknown}\`"
-            echo "- Report URI: \`${REPORT_URI:-unknown}\`"
-            echo "- Result URI: \`${RESULT_URI:-unknown}\`"
+            echo "- Preflight report URI: \`${PREFLIGHT_REPORT_URI:-unknown}\`"
+            echo "- Preflight result URI: \`${PREFLIGHT_RESULT_URI:-unknown}\`"
+            echo "- Final summary URI: \`${FINAL_SUMMARY_URI:-unknown}\`"
+            echo "- Final matches URI: \`${FINAL_MATCHES_URI:-unknown}\`"
+            echo "- Final report URI: \`${FINAL_REPORT_URI:-unknown}\`"
             echo "- Payload: \`${PAYLOAD:-unknown}\`"
             echo "- Match run ID: \`${MATCH_RUN_ID:-unknown}\`"
             echo "- Execution: \`${EXECUTION_NAME:-not-started}\`"

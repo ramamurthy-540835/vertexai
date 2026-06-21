@@ -19,9 +19,10 @@ else
 fi
 
 READY_URI="gs://${BUCKET_NAME}/preflight/lead_match/${PROJECT_ID}/${WAREHOUSE_LABEL}/READY"
-REPORT_PREFIX="gs://${BUCKET_NAME}/reports/lead_match/${PROJECT_ID}/${WAREHOUSE_LABEL}/${MATCH_RUN_ID}"
+REPORT_OBJECT_PREFIX="reports/lead_match/${PROJECT_ID}/${WAREHOUSE_LABEL}/${MATCH_RUN_ID}"
+REPORT_PREFIX="gs://${BUCKET_NAME}/${REPORT_OBJECT_PREFIX}"
 LOCAL_REPORT_DIR="reports/lead_match/${PROJECT_ID}/${WAREHOUSE_LABEL}/${MATCH_RUN_ID}"
-export PROJECT_ID REGION WAREHOUSE_LABEL MATCH_RUN_ID BUCKET_NAME
+export PROJECT_ID REGION WAREHOUSE_LABEL MATCH_RUN_ID BUCKET_NAME REPORT_OBJECT_PREFIX
 
 echo "Project          : ${PROJECT_ID}"
 echo "Region           : ${REGION}"
@@ -42,13 +43,16 @@ PAYLOAD="$(python3 -c 'import json, os; print(json.dumps({
   "warehouse": os.environ["WAREHOUSE_LABEL"],
   "matchRunId": os.environ["MATCH_RUN_ID"],
   "reportBucket": os.environ["BUCKET_NAME"],
+  "reportPrefix": os.environ["REPORT_OBJECT_PREFIX"],
 }))')"
 
 START_EPOCH="$(date +%s)"
-EXECUTION_NAME="$(gcloud workflows run "${WORKFLOW_NAME}" \
+EXECUTION_NAME="$(gcloud workflows execute "${WORKFLOW_NAME}" \
   --location="${REGION}" \
   --project="${PROJECT_ID}" \
   --data="${PAYLOAD}" \
+  --call-log-level=log-errors-only \
+  --execution-history-level=execution-history-basic \
   --format="value(name)")"
 
 echo "Execution        : ${EXECUTION_NAME}"

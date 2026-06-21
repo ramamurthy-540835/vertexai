@@ -1,7 +1,10 @@
 import argparse
 import os
+import random
 import sys
+import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime
 
 import numpy as np
@@ -26,6 +29,10 @@ EMBEDDING_DIMENSION = int(
 DEFAULT_FISCAL_YEAR = int(os.environ.get("DEFAULT_FISCAL_YEAR", "2026"))
 DEFAULT_FISCAL_PERIOD = int(os.environ.get("DEFAULT_FISCAL_PERIOD", "10"))
 DEFAULT_BATCH_SIZE = int(os.environ.get("EMBEDDING_BATCH_SIZE", "25"))
+DEFAULT_MAX_WORKERS = max(1, int(os.environ.get("EMBEDDING_MAX_WORKERS", "3")))
+EMBEDDING_MAX_RETRIES = max(1, int(os.environ.get("EMBEDDING_MAX_RETRIES", "6")))
+EMBEDDING_RETRY_BASE_DELAY = float(os.environ.get("EMBEDDING_RETRY_BASE_DELAY", "1.5"))
+EMBEDDING_RETRY_MAX_DELAY = float(os.environ.get("EMBEDDING_RETRY_MAX_DELAY", "90"))
 
 EXPECTED_PROJECT = os.environ.get("EXPECTED_PROJECT_ID", BUSINESS_RULES["environment"]["project_id"])
 EXPECTED_CLOUDSQL_CONNECTION_NAME = "ctoteam:us-central1:lead-mgmt-db"
@@ -141,20 +148,86 @@ def vector_literal(values):
     return "[" + ",".join(f"{float(value):.8f}" for value in arr.tolist()) + "]"
 
 
-def embed_texts(client, texts):
+def is_retryable_embedding_error(exc):
+    error = str(exc).lower()
+    retryable_markers = (
+        "429",
+        "500",
+        "502",
+        "503",
+        "504",
+        "deadline",
+        "temporarily unavailable",
+        "timeout",
+        "connection reset",
+        "resource exhausted",
+        "quota",
+        "rate limit",
+    )
+    return any(marker in error for marker in retryable_markers)
+
+
+def embed_texts(client, texts, label="embedding"):
     normalized = [(text or "").strip() for text in texts]
     if not any(normalized):
         return [None] * len(normalized)
 
-    response = client.models.embed_content(
-        model=EMBEDDING_MODEL,
-        contents=normalized,
-        config=types.EmbedContentConfig(
-            task_type="SEMANTIC_SIMILARITY",
-            output_dimensionality=EMBEDDING_DIMENSION,
-        ),
-    )
-    return [vector_literal(embedding.values) for embedding in response.embeddings]
+    started = time.monotonic()
+    for attempt in range(1, EMBEDDING_MAX_RETRIES + 1):
+        try:
+            response = client.models.embed_content(
+                model=EMBEDDING_MODEL,
+                contents=normalized,
+                config=types.EmbedContentConfig(
+                    task_type="SEMANTIC_SIMILARITY",
+                    output_dimensionality=EMBEDDING_DIMENSION,
+                ),
+            )
+            duration = time.monotonic() - started
+            print(
+                f"Embedded {label}: rows={len(normalized)} attempt={attempt} "
+                f"duration_seconds={duration:.2f}"
+            )
+            return [vector_literal(embedding.values) for embedding in response.embeddings]
+        except Exception as exc:
+            if attempt >= EMBEDDING_MAX_RETRIES or not is_retryable_embedding_error(exc):
+                print(
+                    f"Embedding failed for {label}: rows={len(normalized)} "
+                    f"attempt={attempt} error={exc}",
+                    file=sys.stderr,
+                )
+                raise
+            delay = min(
+                EMBEDDING_RETRY_BASE_DELAY * (2 ** (attempt - 1)) + random.uniform(0, 1.5),
+                EMBEDDING_RETRY_MAX_DELAY,
+            )
+            print(
+                f"Retrying {label}: rows={len(normalized)} attempt={attempt} "
+                f"delay_seconds={delay:.2f} error={exc}"
+            )
+            time.sleep(delay)
+
+    raise RuntimeError(f"Embedding failed for {label}")
+
+
+def embed_field_batches(client, field_texts):
+    if DEFAULT_MAX_WORKERS == 1 or len(field_texts) == 1:
+        return {
+            field: embed_texts(client, texts, label=field)
+            for field, texts in field_texts.items()
+        }
+
+    results = {}
+    max_workers = min(DEFAULT_MAX_WORKERS, len(field_texts))
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_to_field = {
+            executor.submit(embed_texts, client, texts, field): field
+            for field, texts in field_texts.items()
+        }
+        for future in as_completed(future_to_field):
+            field = future_to_field[future]
+            results[field] = future.result()
+    return results
 
 
 def chunks(rows, size):
@@ -234,17 +307,20 @@ def pos_source_rows(cursor):
 
 
 def generate_lead_embeddings():
+    job_started = time.monotonic()
     client = vertex_client()
     conn = connect()
     cursor = conn.cursor()
     rows = lead_source_rows(cursor)
     print(f"Warehouse scope: {warehouse_scope_label()}")
     print(f"Lead rows needing embeddings: {len(rows)}")
+    print(f"Embedding batch size: {DEFAULT_BATCH_SIZE}; max workers: {DEFAULT_MAX_WORKERS}")
 
     inserted = 0
     now = datetime.now(UTC)
     total_batches = (len(rows) + DEFAULT_BATCH_SIZE - 1) // DEFAULT_BATCH_SIZE
     for batch_number, batch in enumerate(chunks(rows, DEFAULT_BATCH_SIZE), start=1):
+        batch_started = time.monotonic()
         records = [
             {
                 "business_name": row[4],
@@ -258,9 +334,17 @@ def generate_lead_embeddings():
         combined_texts = [build_embedding_text(record, "combined_field") for record in records]
         address_texts = [build_embedding_text(record, "full_address") for record in records]
         name_texts = [build_embedding_text(record, "business_name") for record in records]
-        combined_vectors = embed_texts(client, combined_texts)
-        address_vectors = embed_texts(client, address_texts)
-        name_vectors = embed_texts(client, name_texts)
+        vectors = embed_field_batches(
+            client,
+            {
+                f"lead_batch_{batch_number}_combined": combined_texts,
+                f"lead_batch_{batch_number}_address": address_texts,
+                f"lead_batch_{batch_number}_name": name_texts,
+            },
+        )
+        combined_vectors = vectors[f"lead_batch_{batch_number}_combined"]
+        address_vectors = vectors[f"lead_batch_{batch_number}_address"]
+        name_vectors = vectors[f"lead_batch_{batch_number}_name"]
         insert_rows = []
         for row, record, combined, address, name in zip(batch, records, combined_vectors, address_vectors, name_vectors):
             insert_rows.append((
@@ -291,24 +375,34 @@ def generate_lead_embeddings():
         )
         conn.commit()
         inserted += len(insert_rows)
+        batch_duration = time.monotonic() - batch_started
         if batch_number == 1 or batch_number % 10 == 0 or batch_number == total_batches:
-            print(f"Inserted lead embedding batches: {batch_number}/{total_batches}; rows={inserted}")
+            print(
+                f"Inserted lead embedding batches: {batch_number}/{total_batches}; "
+                f"rows={inserted}; batch_duration_seconds={batch_duration:.2f}"
+            )
     conn.close()
-    print(f"Inserted lead embeddings: {inserted}")
+    print(
+        f"Inserted lead embeddings: {inserted}; "
+        f"duration_seconds={time.monotonic() - job_started:.2f}"
+    )
 
 
 def generate_pos_embeddings():
+    job_started = time.monotonic()
     client = vertex_client()
     conn = connect()
     cursor = conn.cursor()
     rows = pos_source_rows(cursor)
     print(f"Warehouse scope: {warehouse_scope_label()}")
     print(f"POS rows needing embeddings: {len(rows)}")
+    print(f"Embedding batch size: {DEFAULT_BATCH_SIZE}; max workers: {DEFAULT_MAX_WORKERS}")
 
     inserted = 0
     now = datetime.now(UTC)
     total_batches = (len(rows) + DEFAULT_BATCH_SIZE - 1) // DEFAULT_BATCH_SIZE
     for batch_number, batch in enumerate(chunks(rows, DEFAULT_BATCH_SIZE), start=1):
+        batch_started = time.monotonic()
         records = [
             {
                 "business_name": row[6],
@@ -322,9 +416,17 @@ def generate_pos_embeddings():
         combined_texts = [build_embedding_text(record, "combined_field") for record in records]
         address_texts = [build_embedding_text(record, "full_address") for record in records]
         name_texts = [build_embedding_text(record, "business_name") for record in records]
-        combined_vectors = embed_texts(client, combined_texts)
-        address_vectors = embed_texts(client, address_texts)
-        name_vectors = embed_texts(client, name_texts)
+        vectors = embed_field_batches(
+            client,
+            {
+                f"pos_batch_{batch_number}_combined": combined_texts,
+                f"pos_batch_{batch_number}_address": address_texts,
+                f"pos_batch_{batch_number}_name": name_texts,
+            },
+        )
+        combined_vectors = vectors[f"pos_batch_{batch_number}_combined"]
+        address_vectors = vectors[f"pos_batch_{batch_number}_address"]
+        name_vectors = vectors[f"pos_batch_{batch_number}_name"]
         insert_rows = []
         for row, record, combined, address, name in zip(batch, records, combined_vectors, address_vectors, name_vectors):
             insert_rows.append((
@@ -357,13 +459,21 @@ def generate_pos_embeddings():
         )
         conn.commit()
         inserted += len(insert_rows)
+        batch_duration = time.monotonic() - batch_started
         if batch_number == 1 or batch_number % 10 == 0 or batch_number == total_batches:
-            print(f"Inserted POS embedding batches: {batch_number}/{total_batches}; rows={inserted}")
+            print(
+                f"Inserted POS embedding batches: {batch_number}/{total_batches}; "
+                f"rows={inserted}; batch_duration_seconds={batch_duration:.2f}"
+            )
     conn.close()
-    print(f"Inserted POS embeddings: {inserted}")
+    print(
+        f"Inserted POS embeddings: {inserted}; "
+        f"duration_seconds={time.monotonic() - job_started:.2f}"
+    )
 
 
 def run_fuzzy_match():
+    job_started = time.monotonic()
     conn = connect()
     cursor = conn.cursor()
     schema = schema_name()
@@ -386,6 +496,10 @@ def run_fuzzy_match():
         EMBEDDING_MODEL,
     ])
 
+    print(f"Warehouse scope: {warehouse_scope_label()}")
+    print(f"Match run: {run_id}")
+    print(f"Match lead limit: {limit}; nearest_neighbor_limit: {nearest_neighbor_limit}")
+    query_started = time.monotonic()
     cursor.execute(
         f"""
         WITH lead_batch AS (
@@ -491,12 +605,15 @@ def run_fuzzy_match():
         """,
         params,
     )
+    query_duration = time.monotonic() - query_started
     inserted = cursor.rowcount
     conn.commit()
     conn.close()
-    print(f"Warehouse scope: {warehouse_scope_label()}")
-    print(f"Match run: {run_id}")
-    print(f"Inserted match decision rows: {inserted}")
+    print(
+        f"Inserted match decision rows: {inserted}; "
+        f"query_duration_seconds={query_duration:.2f}; "
+        f"duration_seconds={time.monotonic() - job_started:.2f}"
+    )
 
 
 def print_summary():

@@ -12,102 +12,137 @@ main:
           - reportJob: ${default(map.get(args, "reportJob"), "lead-match-report")}
           - matchRunId: ${default(map.get(args, "matchRunId"), "")}
           - reportBucket: ${default(map.get(args, "reportBucket"), "lead-match-ctoteam")}
+          - reportPrefix: ${default(map.get(args, "reportPrefix"), "reports/lead_match/" + project + "/" + warehouse + "/" + matchRunId)}
+          - leadResult: null
+          - posResult: null
 
-    - runLeadEmbeddings:
-        call: googleapis.run.v2.projects.locations.jobs.run
-        args:
-          name: ${"projects/" + project + "/locations/" + region + "/jobs/" + leadJob}
-          body:
-            overrides:
-              containerOverrides:
-                - env:
-                    - name: WAREHOUSE
-                      value: ${warehouse}
-                    - name: WAREHOUSE_SCOPE
-                      value: ${warehouse}
-                    - name: MATCH_RUN_ID
-                      value: ${matchRunId}
-        result: leadExecution
-
-    - waitLeadEmbeddings:
-        call: waitForRunJobExecution
-        args:
-          executionName: ${leadExecution.name}
-
-    - runPosEmbeddings:
-        call: googleapis.run.v2.projects.locations.jobs.run
-        args:
-          name: ${"projects/" + project + "/locations/" + region + "/jobs/" + posJob}
-          body:
-            overrides:
-              containerOverrides:
-                - env:
-                    - name: WAREHOUSE
-                      value: ${warehouse}
-                    - name: WAREHOUSE_SCOPE
-                      value: ${warehouse}
-                    - name: MATCH_RUN_ID
-                      value: ${matchRunId}
-        result: posExecution
-
-    - waitPosEmbeddings:
-        call: waitForRunJobExecution
-        args:
-          executionName: ${posExecution.name}
+    - runEmbeddingJobs:
+        parallel:
+          shared: [leadResult, posResult]
+          branches:
+            - leadEmbeddings:
+                steps:
+                  - runLeadEmbeddings:
+                      call: runCloudRunJob
+                      args:
+                        project: ${project}
+                        region: ${region}
+                        jobName: ${leadJob}
+                        envVars:
+                          - name: WAREHOUSE
+                            value: ${warehouse}
+                          - name: WAREHOUSE_SCOPE
+                            value: ${warehouse}
+                          - name: MATCH_RUN_ID
+                            value: ${matchRunId}
+                      result: leadResult
+            - posEmbeddings:
+                steps:
+                  - runPosEmbeddings:
+                      call: runCloudRunJob
+                      args:
+                        project: ${project}
+                        region: ${region}
+                        jobName: ${posJob}
+                        envVars:
+                          - name: WAREHOUSE
+                            value: ${warehouse}
+                          - name: WAREHOUSE_SCOPE
+                            value: ${warehouse}
+                          - name: MATCH_RUN_ID
+                            value: ${matchRunId}
+                      result: posResult
 
     - runFuzzyMatch:
-        call: googleapis.run.v2.projects.locations.jobs.run
+        call: runCloudRunJob
         args:
-          name: ${"projects/" + project + "/locations/" + region + "/jobs/" + matchJob}
-          body:
-            overrides:
-              containerOverrides:
-                - env:
-                    - name: WAREHOUSE
-                      value: ${warehouse}
-                    - name: WAREHOUSE_SCOPE
-                      value: ${warehouse}
-                    - name: MATCH_RUN_ID
-                      value: ${matchRunId}
-        result: matchExecution
-
-    - waitFuzzyMatch:
-        call: waitForRunJobExecution
-        args:
-          executionName: ${matchExecution.name}
+          project: ${project}
+          region: ${region}
+          jobName: ${matchJob}
+          envVars:
+            - name: WAREHOUSE
+              value: ${warehouse}
+            - name: WAREHOUSE_SCOPE
+              value: ${warehouse}
+            - name: MATCH_RUN_ID
+              value: ${matchRunId}
+        result: matchResult
 
     - runReport:
-        call: googleapis.run.v2.projects.locations.jobs.run
+        call: runCloudRunJob
         args:
-          name: ${"projects/" + project + "/locations/" + region + "/jobs/" + reportJob}
-          body:
-            overrides:
-              containerOverrides:
-                - env:
-                    - name: WAREHOUSE
-                      value: ${warehouse}
-                    - name: WAREHOUSE_SCOPE
-                      value: ${warehouse}
-                    - name: MATCH_RUN_ID
-                      value: ${matchRunId}
-                    - name: REPORT_BUCKET
-                      value: ${reportBucket}
-        result: reportExecution
-
-    - waitReport:
-        call: waitForRunJobExecution
-        args:
-          executionName: ${reportExecution.name}
+          project: ${project}
+          region: ${region}
+          jobName: ${reportJob}
+          envVars:
+            - name: WAREHOUSE
+              value: ${warehouse}
+            - name: WAREHOUSE_SCOPE
+              value: ${warehouse}
+            - name: MATCH_RUN_ID
+              value: ${matchRunId}
+            - name: REPORT_BUCKET
+              value: ${reportBucket}
+            - name: REPORT_PREFIX
+              value: ${reportPrefix}
+        result: reportResult
 
     - done:
         return:
           status: "success"
           warehouse: ${warehouse}
           matchRunId: ${matchRunId}
-          leadExecution: ${leadExecution.name}
-          posExecution: ${posExecution.name}
-          matchExecution: ${matchExecution.name}
-          reportExecution: ${reportExecution.name}
+          reportBucket: ${reportBucket}
+          reportPrefix: ${reportPrefix}
+          lead: ${leadResult}
+          pos: ${posResult}
+          match: ${matchResult}
+          report: ${reportResult}
+
+runCloudRunJob:
+  params: [project, region, jobName, envVars]
+  steps:
+    - init:
+        assign:
+          - startedAt: ${sys.now()}
+    - logStart:
+        call: sys.log
+        args:
+          severity: INFO
+          text: ${"Starting Cloud Run Job " + jobName}
+    - runJob:
+        call: googleapis.run.v2.projects.locations.jobs.run
+        args:
+          name: ${"projects/" + project + "/locations/" + region + "/jobs/" + jobName}
+          body:
+            overrides:
+              containerOverrides:
+                - env: ${envVars}
+        result: jobExecution
+    - waitJob:
+        call: waitForRunJobExecution
+        args:
+          executionName: ${jobExecution.name}
+        result: jobResult
+    - finish:
+        assign:
+          - completedAt: ${sys.now()}
+    - logComplete:
+        call: sys.log
+        args:
+          severity: INFO
+          text: ${"Completed Cloud Run Job " + jobName + " execution " + jobExecution.name}
+    - returnResult:
+        return:
+          job: ${jobName}
+          executionName: ${jobExecution.name}
+          startedAt: ${startedAt}
+          completedAt: ${completedAt}
+          durationSeconds: ${completedAt - startedAt}
+          taskCount: ${default(map.get(jobResult, "taskCount"), 1)}
+          succeededCount: ${default(map.get(jobResult, "succeededCount"), 0)}
+          failedCount: ${default(map.get(jobResult, "failedCount"), 0)}
+          cancelledCount: ${default(map.get(jobResult, "cancelledCount"), 0)}
 
 waitForRunJobExecution:
   params: [executionName]
@@ -117,18 +152,22 @@ waitForRunJobExecution:
         args:
           name: ${executionName}
         result: execution
-    - check:
+    - failOnFailedTask:
         switch:
-          - condition: ${default(map.get(execution, "succeededCount"), 0) + default(map.get(execution, "failedCount"), 0) > 0}
-            next: validate
+          - condition: ${default(map.get(execution, "failedCount"), 0) > 0}
+            next: fail
+    - failOnCancelledTask:
+        switch:
+          - condition: ${default(map.get(execution, "cancelledCount"), 0) > 0}
+            next: fail
+    - returnWhenAllTasksSucceeded:
+        switch:
+          - condition: ${default(map.get(execution, "succeededCount"), 0) >= default(map.get(execution, "taskCount"), 1)}
+            return: ${execution}
     - sleep:
         call: sys.sleep
         args:
           seconds: 15
         next: poll
-    - validate:
-        switch:
-          - condition: ${default(map.get(execution, "succeededCount"), 0) > 0}
-            return: ${execution}
     - fail:
-        raise: '${"Cloud Run Job execution failed: " + executionName}'
+        raise: '${"Cloud Run Job execution failed: " + executionName + " execution=" + json.encode_to_string(execution)}'
