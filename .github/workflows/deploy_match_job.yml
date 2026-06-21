@@ -5,36 +5,31 @@ on:
       workflow_trigger_event:
         required: true
         type: string
+      # Accepted for a consistent call contract with the orchestrators.
+      # NOTE: this job EXECUTES an already-deployed Cloud Run job (it doesn't
+      # deploy an image), so the tag isn't used directly here.
+      image_tag:
+        required: false
+        type: string
+        default: ''
     secrets:
       GCP_WORKLOAD_IDENTITY_PROVIDER_ID:
         required: true
       GCP_WORKLOAD_IDENTITY_SA_EMAIL:
         required: true
-  #Triggers the workflow on push or pull request events but only for the "main" branch
-  push:
-    branches:
-      - 'feature/**'
-    paths:
-      - lead_match_codebase/**
-      - .github/workflows/deploy_match_job.yml
-  
+  # workflow_call ONLY — self-trigger removed to stop the double-run.
+
 env:
-  PROJECT_ID: 'p-601-np-bcleadsmgmt-adt' # TODO: update to your Google Cloud project ID
-  REGION: 'us-central1' # TODO: update to your region
+  PROJECT_ID: 'p-601-np-bcleadsmgmt-adt'
+  REGION: 'us-central1'
 
 jobs:
   run:
-    name: "auth"
+    name: "compile-match-job"
     runs-on: cw-gcp-us-west1-np
-    environment: ${{ github.event.pull_request.head.ref }}
-    strategy:
-      matrix:
-        env: ['adt'] #,['adt', 'qat', 'spt'] # Exclude prd from auto-plan
-    
     permissions:
       id-token: write
       contents: read
-
     steps:
       - name: "Checkout code"
         uses: actions/checkout@v4
@@ -47,11 +42,10 @@ jobs:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
           service_account: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
 
-      - name: "Deploy match job"
+      - name: "Compile match job (ADT only)"
         run: |
           unset CLOUDSDK_CORE_PROJECT
-          gcloud config set project p-601-np-bcleadsmgmt-adt
+          gcloud config set project ${{ env.PROJECT_ID }}
           gcloud run jobs execute lead-match-job \
-          --region us-central1 \
-          --args="run.py,compile_pipeline"
-        
+            --region ${{ env.REGION }} \
+            --args="run.py,compile_pipeline"

@@ -1,28 +1,109 @@
 name: lead_mgmt_image_creation
 on:
   workflow_dispatch:
-  # Triggers the workflow on push or pull request events but only for the "main" branch
+  # Properties are INCLUDED again so config-only changes still trigger the
+  # workflow — but the build job is gated behind "code changed", so a property
+  # edit never rebuilds the image (see detect-changes / build-and-push).
   push:
     branches:
       - 'feature/**'
     paths:
-      - .github/workflows/lead_mgmt_image.yml
-      - lead_management_job/**
-      - lead_match_codebase/**
+      - 'lead_management_job/**'
+      - 'lead_match_codebase/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  # Serialize ADT activity per branch so a code+config push (or two rapid
+  # pushes) can't race two ADT deploys.
+  group: lead-mgmt-adt-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
+  # ── Decide what kind of change this is ───────────────────────────────
+  detect-changes:
+    name: Detect change type
+    runs-on:
+      - self-hosted
+      - us-central1
+    outputs:
+      code_changed: ${{ steps.detect.outputs.code_changed }}
+      adt_config_changed: ${{ steps.detect.outputs.adt_config_changed }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect changed files
+        id: detect
+        run: |
+          # Manual runs: always do a full build.
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "code_changed=true" >> $GITHUB_OUTPUT
+            echo "adt_config_changed=false" >> $GITHUB_OUTPUT
+            echo "workflow_dispatch -> full build"
+            exit 0
+          fi
+
+          BASE="${{ github.event.before }}"
+          if [[ "$BASE" == "0000000000000000000000000000000000000000" || -z "$BASE" ]]; then
+            FILES=$(git show --pretty="" --name-only "${{ github.sha }}")
+          else
+            FILES=$(git diff --name-only "$BASE" "${{ github.sha }}")
+          fi
+          echo "Changed files:"; echo "$FILES"
+
+          CODE_CHANGED=false
+          ADT_CFG_CHANGED=false
+
+          while IFS= read -r f; do
+            [[ -z "$f" ]] && continue
+            case "$f" in
+              lead_management_job/*|lead_match_codebase/*)
+                if [[ "$f" == *.properties ]]; then
+                  # ADT-relevant property files (config, app, deploy) -> redeploy ADT only.
+                  case "$f" in
+                    *adt*.properties) ADT_CFG_CHANGED=true ;;
+                    *) : ;;  # qat/spt/prd properties: promotion, not our concern here
+                  esac
+                else
+                  # Any non-properties file in the image paths -> rebuild.
+                  CODE_CHANGED=true
+                fi
+                ;;
+            esac
+          done <<< "$FILES"
+
+          echo "code_changed=$CODE_CHANGED" >> $GITHUB_OUTPUT
+          echo "adt_config_changed=$ADT_CFG_CHANGED" >> $GITHUB_OUTPUT
+          echo "Result: code_changed=$CODE_CHANGED adt_config_changed=$ADT_CFG_CHANGED"
+
+  # ── Build the image ONLY when code changed ───────────────────────────
   build-and-push-container:
     name: Build and Push Container
-    runs-on: 
+    needs: detect-changes
+    if: needs.detect-changes.outputs.code_changed == 'true'
+    runs-on:
       - self-hosted
       - us-central1
     permissions:
       id-token: write
       contents: read
       packages: write
+    outputs:
+      image_tag: ${{ steps.tag.outputs.image_tag }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Set image tag
+        id: tag
+        run: |
+          SHORT_SHA=${GITHUB_SHA::7}
+          echo "image_tag=sha-${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+          echo "Building image tag: sha-${SHORT_SHA}"
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -32,25 +113,13 @@ jobs:
         run: |
             python -m pip install --upgrade pip
             pip install build wheel setuptools
-      - name: Debug directory structure
-        run: |
-          echo "=== Current working directory ==="
-          pwd
-          echo ""
-          echo "=== Repository root contents ==="
-          ls -la
       - name: Build wheel and replace existing
         run: |
-          # Remove existing wheel files
           rm -f ./lead_management_job/*.whl
-          # Build new wheel
           cd ./lead_match_codebase
           python -m build --wheel
-          # Copy the built wheel to base_image directory
           cp dist/*.whl ../lead_management_job/
-          # Go back to root and verify the copy worked
           cd ..
-          echo "Wheel files copied to base_image:"
           ls -la ./lead_management_job/*.whl
       - name: Login to GitHub Container Registry
         uses: docker/login-action@v3
@@ -60,11 +129,11 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - id: auth
         name: Auth to GCP for GAR service account
-        uses : google-github-actions/auth@v2
+        uses: google-github-actions/auth@v2
         with:
           token_format: access_token
-          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID}}
-          service_account: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL}}
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
+          service_account: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
       - name: Login to Google Artifact Registry
         uses: docker/login-action@v3
         with:
@@ -80,8 +149,6 @@ jobs:
           images: |
             ghcr.io/${{ github.repository_owner }}/membership/lead-management/lead-mgmt
             us-docker.pkg.dev/gcp-prj-images/gcp-gar-repo-mbrshp/lead-mgmt
-      - name: Debug lead_management_job contents
-        run: ls -la ./lead_management_job
       - name: Build and push
         uses: docker/build-push-action@v6
         env:
@@ -91,33 +158,100 @@ jobs:
           file: ./lead_management_job/Dockerfile
           push: true
           labels: ${{ steps.meta.outputs.labels }}
-          tags: us-docker.pkg.dev/gcp-prj-images/gcp-gar-repo-mbrshp/lead-mgmt:latest 
+          tags: us-docker.pkg.dev/gcp-prj-images/gcp-gar-repo-mbrshp/lead-mgmt:${{ steps.tag.outputs.image_tag }}
+
+      - name: Publish tag to job summary
+        run: |
+          echo "### Image built and pushed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Tag:** \`${{ steps.tag.outputs.image_tag }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "To promote: set \`IMAGE_TAG=${{ steps.tag.outputs.image_tag }}\` in the target env's deploy_<env>.properties and merge / cut the release tag." >> $GITHUB_STEP_SUMMARY
+
+  # ── Resolve which tag ADT should deploy ──────────────────────────────
+  # If a build ran, use its fresh tag. If this was an ADT-config-only change,
+  # read the tag currently running on the ADT job from GCP (no bookkeeping).
+  resolve-adt-tag:
+    name: Resolve ADT image tag
+    needs: [detect-changes, build-and-push-container]
+    if: >-
+      always() &&
+      needs.detect-changes.result == 'success' &&
+      (needs.detect-changes.outputs.code_changed == 'true' ||
+       needs.detect-changes.outputs.adt_config_changed == 'true')
+    runs-on: cw-gcp-us-west1-np
+    permissions:
+      id-token: write
+      contents: read
+    outputs:
+      image_tag: ${{ steps.resolve.outputs.image_tag }}
+    steps:
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          token_format: access_token
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
+          service_account: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - id: resolve
+        run: |
+          BUILT_TAG="${{ needs.build-and-push-container.outputs.image_tag }}"
+          if [[ -n "$BUILT_TAG" ]]; then
+            echo "Using freshly built tag: $BUILT_TAG"
+            echo "image_tag=$BUILT_TAG" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "No build ran (ADT config-only change). Reading current ADT image from GCP..."
+          # NOTE: verify this --format projection against your gcloud version.
+          # Fallback parses the first 'image:' line from the YAML, which is robust.
+          IMAGE=$(gcloud run jobs describe lead-match-job \
+            --region us-central1 \
+            --project p-601-np-bcleadsmgmt-adt \
+            --format=yaml 2>/dev/null | grep -m1 -E '^\s*image:' | awk '{print $2}')
+
+          if [[ -z "$IMAGE" ]]; then
+            echo "ERROR: could not read current ADT image (job not deployed yet?)."
+            echo "If ADT has never been deployed, push a code change first to build + deploy."
+            exit 1
+          fi
+          TAG="${IMAGE##*:}"
+          echo "Current ADT image: $IMAGE  ->  tag: $TAG"
+          echo "image_tag=$TAG" >> "$GITHUB_OUTPUT"
+
+  # ── Deploy ADT (runs for code changes AND ADT-config-only changes) ───
   deploy-lead-match-job:
-    name: Trigger Workflow to Deploy Lead Matching Job
-    needs: build-and-push-container
+    name: Deploy Lead Matching Job (ADT)
+    needs: resolve-adt-tag
+    if: always() && needs.resolve-adt-tag.result == 'success'
     uses: ./.github/workflows/lead_match_job_deployment.yml
     with:
-      workflow_trigger_event: "True" 
+      workflow_trigger_event: "True"
+      image_tag: ${{ needs.resolve-adt-tag.outputs.image_tag }}
     secrets:
       GCP_WORKLOAD_IDENTITY_PROVIDER_ID: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
       GCP_WORKLOAD_IDENTITY_SA_EMAIL: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
+
   deploy-snow-sync-job:
-    name: Trigger Workflow to Deploy Snow Sync Job
-    needs: build-and-push-container
+    name: Deploy Snow Sync Job (ADT)
+    needs: resolve-adt-tag
+    if: always() && needs.resolve-adt-tag.result == 'success'
     uses: ./.github/workflows/snow_sync_job_deployment.yml
     with:
       workflow_trigger_event: "True"
+      image_tag: ${{ needs.resolve-adt-tag.outputs.image_tag }}
     secrets:
       GCP_WORKLOAD_IDENTITY_PROVIDER_ID: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
       GCP_WORKLOAD_IDENTITY_SA_EMAIL: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
+
+  # ── Compile the pipeline ONLY on a real code change ──────────────────
   compile-match-job:
-    name: Trigger Workflow to compile match job
-    needs: build-and-push-container
+    name: Compile match job (ADT)
+    needs: [detect-changes, build-and-push-container]
+    if: needs.detect-changes.outputs.code_changed == 'true'
     uses: ./.github/workflows/deploy_match_job.yml
     with:
       workflow_trigger_event: "True"
     secrets:
       GCP_WORKLOAD_IDENTITY_PROVIDER_ID: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
       GCP_WORKLOAD_IDENTITY_SA_EMAIL: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
- 
- 

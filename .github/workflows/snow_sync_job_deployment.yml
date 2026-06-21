@@ -6,6 +6,10 @@ on:
       workflow_trigger_event:
         required: true
         type: string
+      image_tag:
+        required: false
+        type: string
+        default: ''
     secrets:
       GCP_WORKLOAD_IDENTITY_PROVIDER_ID:
         required: true
@@ -13,18 +17,9 @@ on:
         required: true
       GCP_WORKLOAD_IDENTITY_SA_EMAIL_PRD:
         required: false
-  push:
-    branches:
-      - main
-      - 'feature/**'
-    tags:
-      - release-spt*
-      - release-prd-phase2-*
-    paths:
-      - .github/workflows/snow_sync_job_deployment.yml
-      - lead_management_job/**
-      - lead_match_codebase/**
-
+  # workflow_call ONLY. No self-triggers — invoked by an orchestrator
+  # (lead_mgmt_image_creation.yml for ADT, deploy_all_environments.yml for
+  # QAT/SPT/PRD). Removing the push block is what kills the double-run.
 
 jobs:
   build-and-deploy:
@@ -80,12 +75,15 @@ jobs:
             echo "$MODIFIED_FILES"
           fi
 
+          # DEPLOY_PARAMS_PATH = shared per-env file holding IMAGE_TAG + infra tunables
+          # ENVIRONMENT_VARIABLES_PATH = this job's own runtime env vars
           if [[ "$WORKFLOW_TRIGGER" == "True" || ("$REF" == refs/heads/feature* && "$MODIFIED_FILES" == *".github/workflows/snow_sync_job_deployment.yml"* )]]; then
             echo "ENV=adt" >> $GITHUB_ENV
             echo "DEPLOY=true" >> $GITHUB_ENV
             echo "PROJECT_ID=p-601-np-bcleadsmgmt-adt" >> $GITHUB_ENV
             echo "SERVICE_ACCOUNT=gco-iam-svc-lead-mgmt-bc-adt@p-601-np-bcleadsmgmt-adt.iam.gserviceaccount.com" >> $GITHUB_ENV
-            echo "ENVIRONMENT_VARIABLES_PATH=./lead_management_job/app_adt.properties" >> $GITHUB_ENV
+            echo "DEPLOY_PARAMS_PATH=./lead_management_job/deploy_config/deploy_adt.properties" >> $GITHUB_ENV
+            echo "ENVIRONMENT_VARIABLES_PATH=./lead_management_job/snow_sync_config/app_adt.properties" >> $GITHUB_ENV
             echo "NETWORK=projects/gcp-prj-transit-hub/global/networks/gcp-vpc-np-host" >> $GITHUB_ENV
             echo "SUBNET=projects/gcp-prj-transit-hub/regions/us-central1/subnetworks/gcp-snt-np-usc1-601-cloudrunjobs-np2" >> $GITHUB_ENV
 
@@ -94,7 +92,8 @@ jobs:
             echo "DEPLOY=true" >> $GITHUB_ENV
             echo "PROJECT_ID=p-601-np-bcleadsmgmt-qat" >> $GITHUB_ENV
             echo "SERVICE_ACCOUNT=gco-iam-svc-lead-mgmt-bc-qat@p-601-np-bcleadsmgmt-qat.iam.gserviceaccount.com" >> $GITHUB_ENV
-            echo "ENVIRONMENT_VARIABLES_PATH=./lead_management_job/app_qat.properties" >> $GITHUB_ENV
+            echo "DEPLOY_PARAMS_PATH=./lead_management_job/deploy_config/deploy_qat.properties" >> $GITHUB_ENV
+            echo "ENVIRONMENT_VARIABLES_PATH=./lead_management_job/snow_sync_config/app_qat.properties" >> $GITHUB_ENV
             echo "NETWORK=projects/gcp-prj-transit-hub/global/networks/gcp-vpc-np-host" >> $GITHUB_ENV
             echo "SUBNET=projects/gcp-prj-transit-hub/regions/us-central1/subnetworks/gcp-snt-np-usc1-601-cloudrunjobs-np" >> $GITHUB_ENV
 
@@ -103,7 +102,8 @@ jobs:
             echo "DEPLOY=true" >> $GITHUB_ENV
             echo "PROJECT_ID=p-601-np-bcleadsmgmt-spt" >> $GITHUB_ENV
             echo "SERVICE_ACCOUNT=gco-iam-svc-lead-mgmt-bc-spt@p-601-np-bcleadsmgmt-spt.iam.gserviceaccount.com" >> $GITHUB_ENV
-            echo "ENVIRONMENT_VARIABLES_PATH=./lead_management_job/app_spt.properties" >> $GITHUB_ENV
+            echo "DEPLOY_PARAMS_PATH=./lead_management_job/deploy_config/deploy_spt.properties" >> $GITHUB_ENV
+            echo "ENVIRONMENT_VARIABLES_PATH=./lead_management_job/snow_sync_config/app_spt.properties" >> $GITHUB_ENV
             echo "NETWORK=projects/gcp-prj-transit-hub/global/networks/gcp-vpc-np-host" >> $GITHUB_ENV
             echo "SUBNET=projects/gcp-prj-transit-hub/regions/us-central1/subnetworks/gcp-snt-np-usc1-601-cloudrunjobs-np" >> $GITHUB_ENV
 
@@ -112,7 +112,8 @@ jobs:
             echo "DEPLOY=true" >> $GITHUB_ENV
             echo "PROJECT_ID=p-601-pd-bcleadsmgmt-prd" >> $GITHUB_ENV
             echo "SERVICE_ACCOUNT=gco-iam-svc-lead-mgmt-bc-prd@p-601-pd-bcleadsmgmt-prd.iam.gserviceaccount.com" >> $GITHUB_ENV
-            echo "ENVIRONMENT_VARIABLES_PATH=./lead_management_job/app_prd.properties" >> $GITHUB_ENV
+            echo "DEPLOY_PARAMS_PATH=./lead_management_job/deploy_config/deploy_prd.properties" >> $GITHUB_ENV
+            echo "ENVIRONMENT_VARIABLES_PATH=./lead_management_job/snow_sync_config/app_prd.properties" >> $GITHUB_ENV
             echo "NETWORK=projects/gcp-prj-transit-hub/global/networks/gcp-vpc-pd-host" >> $GITHUB_ENV
             echo "SUBNET=projects/gcp-prj-transit-hub/regions/us-central1/subnetworks/gcp-snt-pd-usc1-601-cloudrunjobs" >> $GITHUB_ENV
 
@@ -123,10 +124,49 @@ jobs:
         env:
           WORKFLOW_TRIGGER: ${{ inputs.workflow_trigger_event }}
 
-      - name: "Prepare env vars for lead matching job"
-        id: env
+      # IMAGE_TAG + shared infra tunables come from the shared deploy file so this
+      # job and lead-match always deploy the SAME image for a given env.
+      # COMMAND/ARGS are job identity (snow-sync runs main.py snow_to_db), so they
+      # stay defaulted here, overridable via the shared file if ever needed.
+      - name: Resolve deploy parameters
+        if: env.DEPLOY == 'true'
         run: |
-          # Filter out comments and blank lines, then join into comma-separated string
+          PROPS="${{ env.DEPLOY_PARAMS_PATH }}"
+
+          read_prop () {
+            local val
+            val=$(grep "^${1}=" "$PROPS" | head -n1 | cut -d= -f2- | tr -d '[:space:]')
+            echo "${val:-$2}"
+          }
+
+          if [[ "${{ env.ENV }}" == "adt" && -n "${{ inputs.image_tag }}" ]]; then
+            IMAGE_TAG="${{ inputs.image_tag }}"
+            echo "ADT: using image tag from build -> $IMAGE_TAG"
+          else
+            IMAGE_TAG=$(read_prop IMAGE_TAG "")
+            if [[ -z "$IMAGE_TAG" ]]; then
+              echo "ERROR: IMAGE_TAG not set in $PROPS"; exit 1
+            fi
+            echo "${{ env.ENV }}: using pinned image tag -> $IMAGE_TAG"
+          fi
+
+          {
+            echo "IMAGE_TAG=$IMAGE_TAG"
+            echo "PARALLELISM=$(read_prop PARALLELISM 10)"
+            echo "TASK_TIMEOUT=$(read_prop TASK_TIMEOUT 40h)"
+            echo "MAX_RETRIES=$(read_prop MAX_RETRIES 0)"
+            echo "MEMORY=$(read_prop MEMORY 8Gi)"
+            echo "CPU=$(read_prop CPU 2)"
+            echo "JOB_COMMAND=$(read_prop SNOW_SYNC_COMMAND python)"
+            echo "JOB_ARGS=$(read_prop SNOW_SYNC_ARGS main.py,snow_to_db)"
+          } >> $GITHUB_ENV
+
+      - name: "Prepare env vars for snow sync job"
+        id: env
+        if: env.DEPLOY == 'true'
+        run: |
+          # Runtime env vars come from this job's own file. No deploy keys live
+          # here (they're in the shared deploy file), so nothing to strip.
           ENV_VARS=$(grep -v '^\s*#' ${{ env.ENVIRONMENT_VARIABLES_PATH }} | grep -v '^\s*$' | paste -sd, -)
           echo "env_vars=$ENV_VARS" >> "$GITHUB_OUTPUT"
 
@@ -135,64 +175,22 @@ jobs:
         uses: google-github-actions/deploy-cloudrun@v2
         with:
           job: 'snow-sync-job'
-          image: 'us-docker.pkg.dev/gcp-prj-images/gcp-gar-repo-mbrshp/lead-mgmt:latest'
+          image: 'us-docker.pkg.dev/gcp-prj-images/gcp-gar-repo-mbrshp/lead-mgmt:${{ env.IMAGE_TAG }}'
           project_id: ${{ env.PROJECT_ID }}
-          region: us-central1 
+          region: us-central1
           flags: |
             --service-account=${{ env.SERVICE_ACCOUNT }}
             --vpc-egress=all-traffic
             --network=${{ env.NETWORK }}
             --subnet=${{ env.SUBNET }}
-            --parallelism=10
-            --command="python"
-            --args="main.py,snow_to_db"
-            --task-timeout=40h
+            --parallelism=${{ env.PARALLELISM }}
+            --command="${{ env.JOB_COMMAND }}"
+            --args="${{ env.JOB_ARGS }}"
+            --task-timeout=${{ env.TASK_TIMEOUT }}
             --set-env-vars=${{ steps.env.outputs.env_vars }}
-            --max-retries=0
-            --memory=8Gi
-            --cpu=2
-
-      # - name: Deploy cloud run service
-      #   if: env.DEPLOY == 'true'
-      #   uses: google-github-actions/deploy-cloudrun@v2
-      #   with:
-      #     service: cloud-scheduler-service
-      #     image: 'us-docker.pkg.dev/gcp-prj-images/gcp-gar-repo-mbrshp/cloud-run-service:latest'
-      #     project_id: ${{ env.PROJECT_ID }}
-      #     flags: |
-      #       --service-account=${{ env.SERVICE_ACCOUNT }}
-      #       --vpc-egress=all-traffic
-      #       --ingress=internal
-      #       --network=projects/gcp-prj-transit-hub/global/networks/gcp-vpc-np-host
-      #       --subnet=projects/gcp-prj-transit-hub/regions/us-central1/subnetworks/gcp-snt-np-usc1-601-cloudrunjobs-np
-      #       --set-env-vars="PROJECT_ID=${{ env.PROJECT_ID }}"
-
-      # - name: Set SERVICE_URL output
-      #   if: env.DEPLOY == 'true'
-      #   id: get-service-url
-      #   run: |
-      #     SERVICE_URL=$(gcloud run jobs describe cloud-scheduler-service \
-      #     --project ${{ env.PROJECT_ID }} --region us-central1 --format 'value(status.uri)')
-      #     echo "SERVICE_URL=$SERVICE_URL"
-      #     echo "service_url=$SERVICE_URL" >> $GITHUB_OUTPUT
-
-      # - name: Add schedule to Cloud Run Job
-      #   if: env.DEPLOY == 'true'
-      #   run: |
-      #     if gcloud scheduler jobs describe snow-sync-job-scheduler \
-      #       --project ${{ env.PROJECT_ID }} \
-      #       --location us-central1 > /dev/null 2>&1; then
-      #       echo "Scheduler job already exists. Skipping creation."
-      #     else
-      #       echo "Creating scheduler job..."
-      #       gcloud scheduler jobs create http snow-sync-job-scheduler \
-      #         --project ${{ env.PROJECT_ID }} \
-      #         --location us-central1 \
-      #         --schedule="0 0 * * *" \
-      #         --uri=${{ steps.get-service-url.outputs.service_url }} \
-      #         --http-method=GET \
-      #         --oidc-service-account-email=${{ env.SERVICE_ACCOUNT }}
-      #     fi
+            --max-retries=${{ env.MAX_RETRIES }}
+            --memory=${{ env.MEMORY }}
+            --cpu=${{ env.CPU }}
 
       - name: Describe deployed job
         if: env.DEPLOY == 'true'
