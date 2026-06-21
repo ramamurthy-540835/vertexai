@@ -99,11 +99,36 @@ jobs:
         run: |
           set -euo pipefail
           gcloud config set project "${PROJECT_ID}"
-          gcloud builds submit \
+          BUILD_ID="$(gcloud builds submit \
             --project="${PROJECT_ID}" \
             --config=cloudbuild.lead-match.yaml \
             --substitutions=SHORT_SHA="${SHORT_SHA}" \
-            .
+            --async \
+            --format='value(id)' \
+            .)"
+          if [[ -z "${BUILD_ID}" ]]; then
+            echo "Cloud Build ID was not returned" >&2
+            exit 1
+          fi
+          echo "Runtime Cloud Build ID: ${BUILD_ID}"
+          echo "RUNTIME_BUILD_ID=${BUILD_ID}" >> "$GITHUB_ENV"
+          while true; do
+            BUILD_STATUS="$(gcloud builds describe "${BUILD_ID}" \
+              --project="${PROJECT_ID}" \
+              --format='value(status)')"
+            echo "Cloud Build ${BUILD_ID}: ${BUILD_STATUS}"
+            case "${BUILD_STATUS}" in
+              SUCCESS)
+                break
+                ;;
+              FAILURE|INTERNAL_ERROR|TIMEOUT|CANCELLED|EXPIRED)
+                exit 1
+                ;;
+              *)
+                sleep 10
+                ;;
+            esac
+          done
 
       - name: Update semantic Cloud Run jobs
         if: github.event.inputs.update_cloud_run_jobs == 'true'
@@ -322,6 +347,7 @@ jobs:
             echo "- Region: \`${REGION}\`"
             echo "- Bucket: \`${BUCKET_NAME}\`"
             echo "- Runtime image: \`${RUNTIME_IMAGE:-unknown}\`"
+            echo "- Runtime Cloud Build ID: \`${RUNTIME_BUILD_ID:-not-run}\`"
             echo "- Warehouse: \`${WAREHOUSE_LABEL:-unknown}\`"
             echo "- READY URI: \`${READY_URI:-unknown}\`"
             echo "- Preflight report URI: \`${PREFLIGHT_REPORT_URI:-unknown}\`"
