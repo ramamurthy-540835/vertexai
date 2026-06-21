@@ -11,6 +11,9 @@ on:
       - 'lead_management_job/**'
       - 'lead_match_codebase/**'
 
+permissions:
+  contents: read
+
 concurrency:
   # Serialize ADT activity per branch so a code+config push (or two rapid
   # pushes) can't race two ADT deploys.
