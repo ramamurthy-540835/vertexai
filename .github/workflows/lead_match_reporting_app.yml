@@ -80,14 +80,17 @@ jobs:
           gsutil ls -b "gs://${BUCKET_NAME}"
           gsutil ls "gs://${BUCKET_NAME}/${REPORT_PREFIX}/${PROJECT_ID}/${WAREHOUSE}/" >/dev/null
 
-      - name: Build and push reporting image
+      - name: Build reporting image with Cloud Build
         run: |
           set -euo pipefail
           gcloud config set project "${PROJECT_ID}"
-          gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
           IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${ARTIFACT_REPO}/${SERVICE_NAME}:${GITHUB_SHA::7}"
-          docker build -f lead_match_reporting_app/Dockerfile -t "${IMAGE}" .
-          docker push "${IMAGE}"
+          gcloud builds submit \
+            --project="${PROJECT_ID}" \
+            --region="${REGION}" \
+            --tag="${IMAGE}" \
+            --file=lead_match_reporting_app/Dockerfile \
+            .
           echo "IMAGE=${IMAGE}" >> "$GITHUB_ENV"
 
       - name: Deploy Cloud Run reporting API
