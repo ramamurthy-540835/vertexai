@@ -1,0 +1,15 @@
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -f
+      - lead_match_monitoring_app/Dockerfile
+      - -t
+      - us-central1-docker.pkg.dev/$PROJECT_ID/cloud-run-repo/lead-match-monitoring-app:$SHORT_SHA
+      - -t
+      - us-central1-docker.pkg.dev/$PROJECT_ID/cloud-run-repo/lead-match-monitoring-app:latest
+      - .
+
+images:
+  - us-central1-docker.pkg.dev/$PROJECT_ID/cloud-run-repo/lead-match-monitoring-app:$SHORT_SHA
+  - us-central1-docker.pkg.dev/$PROJECT_ID/cloud-run-repo/lead-match-monitoring-app:latest
