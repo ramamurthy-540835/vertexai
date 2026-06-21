@@ -87,6 +87,7 @@ jobs:
           gcloud builds submit \
             --project="${PROJECT_ID}" \
             --config=cloudbuild.lead-match-reporting.yaml \
+            --substitutions=SHORT_SHA="${GITHUB_SHA::7}" \
             .
           IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${ARTIFACT_REPO}/${SERVICE_NAME}:latest"
           echo "IMAGE=${IMAGE}" >> "$GITHUB_ENV"
