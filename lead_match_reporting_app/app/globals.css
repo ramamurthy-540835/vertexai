@@ -476,6 +476,27 @@ tbody tr:hover {
   background: rgba(107, 114, 128, 0.06);
 }
 
+.graph-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+.graph-toolbar-left,
+.graph-toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.graph-toolbar .button {
+  font-size: 12px;
+  padding: 6px 12px;
+}
+
 .graph-legend {
   display: flex;
   gap: 20px;
