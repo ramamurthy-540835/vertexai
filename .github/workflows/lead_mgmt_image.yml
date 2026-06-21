@@ -9,6 +9,7 @@ on:
       - .github/workflows/lead_mgmt_image.yml
       - lead_management_job/**
       - lead_match_codebase/**
+      - '!**/*.properties'
 
 jobs:
   build-and-push-container:
