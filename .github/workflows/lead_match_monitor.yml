@@ -1,0 +1,490 @@
+name: Lead Match Monitor
+
+on:
+  schedule:
+    - cron: "17,47 * * * *"
+  workflow_dispatch:
+    inputs:
+      warehouse:
+        description: "Filter to specific warehouse (blank = all)"
+        required: false
+        default: ""
+        type: string
+      lookback_hours:
+        description: "How many hours of execution history to query"
+        required: false
+        default: "24"
+        type: string
+
+jobs:
+  monitor:
+    name: "monitor-${{ github.event.inputs.warehouse || 'all' }}"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    permissions:
+      id-token: write
+      contents: read
+
+    env:
+      PROJECT_ID: ctoteam
+      WORKFLOW_NAME: lead_match_workflow
+      REGION: us-central1
+      BUCKET_NAME: lead-match-ctoteam
+      REPORT_PREFIX: reports/lead_match
+      LOOKBACK_HOURS: ${{ github.event.inputs.lookback_hours || '24' }}
+      WAREHOUSE_FILTER: ${{ github.event.inputs.warehouse || '' }}
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Auth to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
+          service_account: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
+          create_credentials_file: true
+          export_environment_variables: true
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Validate infrastructure exists
+        run: |
+          set -euo pipefail
+          gcloud config set project "${PROJECT_ID}"
+
+          echo "--- Checking Cloud Workflow ---"
+          gcloud workflows describe "${WORKFLOW_NAME}" \
+            --location="${REGION}" \
+            --project="${PROJECT_ID}" \
+            --format="value(name,revisionId,updateTime)" \
+            || { echo "Cloud Workflow ${WORKFLOW_NAME} not found"; exit 1; }
+
+          echo ""
+          echo "--- Checking Cloud Run Jobs ---"
+          for JOB in lead-match-lead-embeddings lead-match-pos-embeddings lead-match-fuzzy-match lead-match-report; do
+            gcloud run jobs describe "${JOB}" \
+              --region="${REGION}" \
+              --project="${PROJECT_ID}" \
+              --format="value(name)" 2>/dev/null \
+              && echo "  ${JOB}: exists" \
+              || echo "  ${JOB}: NOT FOUND (warning)"
+          done
+
+      - name: Collect GitHub Actions runs
+        run: |
+          set -euo pipefail
+          gh run list \
+            --workflow=lead_match_semantic_workflow.yml \
+            --limit=20 \
+            --json databaseId,status,conclusion,startedAt,updatedAt,headBranch,displayTitle \
+            > "${RUNNER_TEMP}/gh_runs.json"
+          echo "GitHub Actions runs found: $(jq length "${RUNNER_TEMP}/gh_runs.json")"
+          jq -r '.[] | "\(.databaseId) \(.status) \(.conclusion // "-") \(.startedAt)"' \
+            "${RUNNER_TEMP}/gh_runs.json"
+
+      - name: Collect GCP workflow executions
+        run: |
+          set -euo pipefail
+          AFTER="$(date -u -d "${LOOKBACK_HOURS} hours ago" +%Y-%m-%dT%H:%M:%SZ)"
+          gcloud workflows executions list "${WORKFLOW_NAME}" \
+            --location="${REGION}" \
+            --project="${PROJECT_ID}" \
+            --filter="createTime>='${AFTER}'" \
+            --format=json \
+            --limit=50 \
+            > "${RUNNER_TEMP}/gcp_executions.json"
+          echo "GCP workflow executions found: $(jq length "${RUNNER_TEMP}/gcp_executions.json")"
+
+      - name: Collect Cloud Run Job executions
+        run: |
+          set -euo pipefail
+          JOBS="lead-match-lead-embeddings lead-match-pos-embeddings lead-match-fuzzy-match lead-match-report"
+          for JOB in ${JOBS}; do
+            gcloud run jobs executions list \
+              --job="${JOB}" \
+              --region="${REGION}" \
+              --project="${PROJECT_ID}" \
+              --limit=10 \
+              --format=json \
+              > "${RUNNER_TEMP}/crj_${JOB}.json" 2>/dev/null \
+              || echo "[]" > "${RUNNER_TEMP}/crj_${JOB}.json"
+            echo "${JOB}: $(jq length "${RUNNER_TEMP}/crj_${JOB}.json") executions"
+          done
+
+      - name: Collect warehouse stats from GCS report summaries
+        run: |
+          set -euo pipefail
+          # Cloud SQL is accessed through GCP runtime connectivity only.
+          # GitHub Actions does not connect to Cloud SQL directly.
+          # Warehouse counts come from summary.json files written by the report Cloud Run Job.
+          python3 - <<'PY'
+          import json, os, subprocess, sys
+
+          bucket = os.environ["BUCKET_NAME"]
+          prefix = os.environ["REPORT_PREFIX"]
+          project = os.environ["PROJECT_ID"]
+          temp = os.environ["RUNNER_TEMP"]
+          wh_filter = os.environ.get("WAREHOUSE_FILTER", "").strip()
+
+          # Discover warehouses that have report folders in GCS
+          base = f"gs://{bucket}/{prefix}/{project}/"
+          try:
+              ls_out = subprocess.run(
+                  ["gsutil", "ls", base],
+                  capture_output=True, text=True, check=True,
+              ).stdout.strip()
+          except subprocess.CalledProcessError:
+              print(f"No report folders found under {base}")
+              result = {"available": False, "warehouse_list": [], "warehouses": {}}
+              with open(f"{temp}/warehouse_stats.json", "w") as f:
+                  json.dump(result, f, indent=2)
+              sys.exit(0)
+
+          # Each line is gs://bucket/reports/lead_match/ctoteam/<warehouse>/
+          warehouse_dirs = [
+              line.rstrip("/").split("/")[-1]
+              for line in ls_out.splitlines()
+              if line.strip()
+          ]
+
+          if wh_filter:
+              filter_set = {w.strip() for w in wh_filter.split(",") if w.strip()}
+              warehouse_dirs = [w for w in warehouse_dirs if w in filter_set]
+
+          stats = {}
+          for wh in warehouse_dirs:
+              wh_base = f"gs://{bucket}/{prefix}/{project}/{wh}/"
+              # Find the most recent run folder (latest by name sort)
+              try:
+                  run_dirs = subprocess.run(
+                      ["gsutil", "ls", wh_base],
+                      capture_output=True, text=True, check=True,
+                  ).stdout.strip().splitlines()
+              except subprocess.CalledProcessError:
+                  continue
+
+              run_dirs = [d.rstrip("/") for d in run_dirs if d.strip()]
+              if not run_dirs:
+                  stats[wh] = {"has_reports": False, "latest_run_id": None}
+                  continue
+
+              latest_run_dir = sorted(run_dirs)[-1]
+              latest_run_id = latest_run_dir.split("/")[-1]
+              summary_uri = f"{latest_run_dir}/summary.json"
+
+              local_summary = f"{temp}/summary_{wh}.json"
+              try:
+                  subprocess.run(
+                      ["gsutil", "cp", summary_uri, local_summary],
+                      capture_output=True, text=True, check=True,
+                  )
+                  with open(local_summary) as f:
+                      summary = json.load(f)
+                  stats[wh] = {
+                      "has_reports": True,
+                      "latest_run_id": latest_run_id,
+                      "lead_count": summary.get("lead_rows", 0),
+                      "lead_embedding_count": summary.get("lead_embedding_rows", 0),
+                      "lead_embedding_pct": round(
+                          summary.get("lead_embedding_rows", 0)
+                          / max(summary.get("lead_rows", 1), 1)
+                          * 100,
+                          1,
+                      ),
+                      "pos_count": summary.get("pos_rows", 0),
+                      "pos_embedding_count": summary.get("pos_embedding_rows", 0),
+                      "pos_embedding_pct": round(
+                          summary.get("pos_embedding_rows", 0)
+                          / max(summary.get("pos_rows", 1), 1)
+                          * 100,
+                          1,
+                      ),
+                      "match_count": summary.get("match_rows", 0),
+                      "match_types": summary.get("match_type_counts", {}),
+                      "lifecycle_states": summary.get("lifecycle_state_counts", {}),
+                      "primary_transactions": summary.get("primary_transaction_count", 0),
+                      "embedding_model": summary.get("embedding_model", ""),
+                      "generated_at": summary.get("generated_at", ""),
+                  }
+              except (subprocess.CalledProcessError, json.JSONDecodeError, FileNotFoundError):
+                  stats[wh] = {
+                      "has_reports": True,
+                      "latest_run_id": latest_run_id,
+                      "summary_missing": True,
+                  }
+
+          result = {
+              "available": True,
+              "source": "gcs_report_summaries",
+              "warehouse_list": sorted(warehouse_dirs),
+              "warehouses": stats,
+          }
+          with open(f"{temp}/warehouse_stats.json", "w") as f:
+              json.dump(result, f, indent=2, default=str)
+          print(json.dumps(result, indent=2, default=str))
+          PY
+
+      - name: Assemble monitoring snapshot
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os
+          from datetime import datetime, timezone
+
+          temp = os.environ["RUNNER_TEMP"]
+
+          with open(f"{temp}/gh_runs.json") as f:
+              gh_runs = json.load(f)
+
+          with open(f"{temp}/gcp_executions.json") as f:
+              gcp_execs_raw = json.load(f)
+
+          with open(f"{temp}/warehouse_stats.json") as f:
+              warehouse_stats = json.load(f)
+
+          wh_filter = os.environ.get("WAREHOUSE_FILTER", "").strip()
+
+          gcp_executions = []
+          for ex in gcp_execs_raw:
+              argument = {}
+              try:
+                  argument = json.loads(ex.get("argument", "{}"))
+              except (json.JSONDecodeError, TypeError):
+                  pass
+              entry = {
+                  "name": ex.get("name", ""),
+                  "state": ex.get("state", "UNKNOWN"),
+                  "startTime": ex.get("startTime", ""),
+                  "endTime": ex.get("endTime", ""),
+                  "duration": ex.get("duration", ""),
+                  "warehouse": argument.get("warehouse", "unknown"),
+                  "matchRunId": argument.get("matchRunId", ""),
+                  "reportPrefix": argument.get("reportPrefix", ""),
+                  "error": ex.get("error"),
+                  "currentSteps": ex.get("status", {}).get("currentSteps", []),
+              }
+              if wh_filter:
+                  filter_set = {w.strip() for w in wh_filter.split(",")}
+                  if entry["warehouse"] not in filter_set and entry["warehouse"] != "all":
+                      continue
+              gcp_executions.append(entry)
+
+          cloud_run_jobs = {}
+          for job_name in [
+              "lead-match-lead-embeddings",
+              "lead-match-pos-embeddings",
+              "lead-match-fuzzy-match",
+              "lead-match-report",
+          ]:
+              path = f"{temp}/crj_{job_name}.json"
+              if os.path.exists(path):
+                  with open(path) as f:
+                      raw = json.load(f)
+                  cloud_run_jobs[job_name] = [
+                      {
+                          "name": j.get("name", ""),
+                          "createTime": j.get("createTime", ""),
+                          "completionTime": j.get("completionTime", ""),
+                          "succeededCount": j.get("succeededCount", 0),
+                          "failedCount": j.get("failedCount", 0),
+                          "runningCount": j.get("runningCount", 0),
+                      }
+                      for j in raw[:10]
+                  ]
+              else:
+                  cloud_run_jobs[job_name] = []
+
+          warehouse_run_status = {}
+          for ex in sorted(gcp_executions, key=lambda e: e.get("startTime", ""), reverse=True):
+              wh = ex["warehouse"]
+              if wh not in warehouse_run_status:
+                  warehouse_run_status[wh] = {
+                      "latest_state": ex["state"],
+                      "latest_start": ex["startTime"],
+                      "latest_end": ex.get("endTime", ""),
+                      "latest_match_run_id": ex["matchRunId"],
+                      "is_active": ex["state"] == "ACTIVE",
+                      "current_step": (
+                          ex["currentSteps"][0].get("step", "")
+                          if ex["currentSteps"]
+                          else ""
+                      ),
+                  }
+
+          now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+          snapshot = {
+              "generated_at": now,
+              "project": os.environ["PROJECT_ID"],
+              "region": os.environ["REGION"],
+              "workflow_name": os.environ["WORKFLOW_NAME"],
+              "lookback_hours": int(os.environ["LOOKBACK_HOURS"]),
+              "warehouse_filter": wh_filter or "all",
+              "github_actions_runs": gh_runs,
+              "workflow_executions": gcp_executions,
+              "active_runs": [e for e in gcp_executions if e["state"] == "ACTIVE"],
+              "cloud_run_jobs": cloud_run_jobs,
+              "warehouse_run_status": warehouse_run_status,
+              "warehouse_stats": warehouse_stats,
+              "data_source_note": (
+                  "warehouse_stats sourced from GCS report summary.json files "
+                  "(written by report Cloud Run Job). "
+                  "warehouse_run_status sourced from gcloud workflow executions. "
+                  "GitHub Actions does not connect to Cloud SQL directly."
+              ),
+          }
+
+          out = f"{temp}/monitor_snapshot.json"
+          with open(out, "w") as f:
+              json.dump(snapshot, f, indent=2, default=str)
+          print(
+              f"Snapshot assembled: {len(gcp_executions)} GCP executions, "
+              f"{len(gh_runs)} GH runs, "
+              f"{len(warehouse_stats.get('warehouses', {}))} warehouses with reports"
+          )
+          PY
+
+      - name: Upload snapshot to GCS
+        run: |
+          set -euo pipefail
+          TIMESTAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+          gsutil cp "${RUNNER_TEMP}/monitor_snapshot.json" \
+            "gs://${BUCKET_NAME}/monitoring/snapshots/${TIMESTAMP}.json"
+          gsutil cp "${RUNNER_TEMP}/monitor_snapshot.json" \
+            "gs://${BUCKET_NAME}/monitoring/latest.json"
+          echo "SNAPSHOT_URI=gs://${BUCKET_NAME}/monitoring/latest.json" >> "$GITHUB_ENV"
+          echo "SNAPSHOT_TIMESTAMP=${TIMESTAMP}" >> "$GITHUB_ENV"
+          echo "Uploaded: gs://${BUCKET_NAME}/monitoring/snapshots/${TIMESTAMP}.json"
+          echo "Latest:   gs://${BUCKET_NAME}/monitoring/latest.json"
+
+      - name: Summary
+        if: always()
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os
+
+          temp = os.environ["RUNNER_TEMP"]
+          try:
+              with open(f"{temp}/monitor_snapshot.json") as f:
+                  snap = json.load(f)
+          except FileNotFoundError:
+              with open(os.environ.get("GITHUB_STEP_SUMMARY", "/dev/null"), "a") as s:
+                  s.write("## Lead Match Monitor\n\nNo snapshot generated.\n")
+              exit(0)
+
+          lines = [
+              "## Lead Match Monitor",
+              "",
+              f"- Generated: `{snap['generated_at']}`",
+              f"- Project: `{snap['project']}`",
+              f"- Lookback: `{snap['lookback_hours']}h`",
+              f"- Filter: `{snap['warehouse_filter']}`",
+              f"- Snapshot: `{os.environ.get('SNAPSHOT_URI', 'N/A')}`",
+              "",
+          ]
+
+          active = snap.get("active_runs", [])
+          if active:
+              lines.append(f"### Active Runs ({len(active)})")
+              lines.append("")
+              lines.append("| Warehouse | Match Run ID | Current Step | Started |")
+              lines.append("|-----------|-------------|--------------|---------|")
+              for r in active:
+                  step = r["currentSteps"][0].get("step", "?") if r["currentSteps"] else "?"
+                  lines.append(
+                      f"| {r['warehouse']} | `{r['matchRunId'][:40]}` | {step} | {r['startTime'][:19]} |"
+                  )
+              lines.append("")
+          else:
+              lines.append("### No Active GCP Runs")
+              lines.append("")
+
+          recent = [e for e in snap.get("workflow_executions", []) if e["state"] != "ACTIVE"]
+          if recent:
+              lines.append(f"### Recent GCP Executions ({len(recent)})")
+              lines.append("")
+              lines.append("| Warehouse | State | Match Run ID | Duration |")
+              lines.append("|-----------|-------|-------------|----------|")
+              for r in recent[:10]:
+                  dur = r.get("duration", "")
+                  if dur and dur.endswith("s"):
+                      try:
+                          secs = float(dur.rstrip("s"))
+                          m, s = divmod(int(secs), 60)
+                          h, m = divmod(m, 60)
+                          dur = f"{h}h {m}m {s}s" if h else f"{m}m {s}s"
+                      except ValueError:
+                          pass
+                  lines.append(
+                      f"| {r['warehouse']} | {r['state']} "
+                      f"| `{r['matchRunId'][:40]}` | {dur} |"
+                  )
+              lines.append("")
+
+          gh_runs = snap.get("github_actions_runs", [])
+          if gh_runs:
+              lines.append(f"### GitHub Actions Runs ({len(gh_runs)})")
+              lines.append("")
+              lines.append("| Run ID | Status | Conclusion | Started |")
+              lines.append("|--------|--------|-----------|---------|")
+              for r in gh_runs[:10]:
+                  lines.append(
+                      f"| {r['databaseId']} | {r['status']} "
+                      f"| {r.get('conclusion') or '-'} | {r['startedAt'][:19]} |"
+                  )
+              lines.append("")
+
+          wh = snap.get("warehouse_stats", {})
+          if wh.get("available"):
+              wh_data = wh.get("warehouses", {})
+              if wh_data:
+                  lines.append("### Warehouse Stats (from GCS report summaries)")
+                  lines.append("")
+                  lines.append(
+                      "| WH | Leads | Lead Embeds | POS | POS Embeds | Matches | Run Status |"
+                  )
+                  lines.append(
+                      "|----|-------|-------------|-----|------------|---------|------------|"
+                  )
+                  run_status = snap.get("warehouse_run_status", {})
+                  for w in sorted(wh_data, key=lambda x: int(x) if x.isdigit() else 0):
+                      s = wh_data[w]
+                      if s.get("summary_missing"):
+                          state = run_status.get(w, {}).get("latest_state", "Never run")
+                          lines.append(
+                              f"| {w} | - | - | - | - | - | {state} (no summary) |"
+                          )
+                          continue
+                      if not s.get("has_reports"):
+                          lines.append(f"| {w} | - | - | - | - | - | No reports |")
+                          continue
+                      state = run_status.get(w, {}).get("latest_state", "Never run")
+                      lines.append(
+                          f"| {w} "
+                          f"| {s.get('lead_count', 0):,} "
+                          f"| {s.get('lead_embedding_count', 0):,} ({s.get('lead_embedding_pct', 0)}%) "
+                          f"| {s.get('pos_count', 0):,} "
+                          f"| {s.get('pos_embedding_count', 0):,} ({s.get('pos_embedding_pct', 0)}%) "
+                          f"| {s.get('match_count', 0):,} "
+                          f"| {state} |"
+                      )
+                  lines.append("")
+          else:
+              lines.append("### No warehouse reports found in GCS")
+              lines.append("")
+
+          lines.append("---")
+          lines.append(
+              "*Warehouse stats sourced from GCS report `summary.json` files. "
+              "GitHub Actions does not connect to Cloud SQL directly.*"
+          )
+
+          summary = "\n".join(lines)
+          with open(os.environ.get("GITHUB_STEP_SUMMARY", "/dev/null"), "a") as f:
+              f.write(summary + "\n")
+          print(summary)
+          PY
