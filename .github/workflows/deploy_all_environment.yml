@@ -16,13 +16,15 @@ on:
       # image, so neither source code nor workflow edits belong here.
       - lead_management_job/**
 
-# This orchestrator itself never checks out code or calls GCP — it only fans
-# out to child workflow_call workflows, each of which declares its own
-# permissions (id-token: write, contents: read, packages: write) for what it
-# actually does. contents: read here is the minimum needed to dispatch/read
-# the calling ref.
+# Permissions on a reusable-workflow CALLER cap what the called workflows are
+# allowed to use, regardless of what the children themselves declare. Both
+# children auth to GCP (id-token) and snow-sync's image pull path touches GAR
+# packages, so those must be granted here too, or the auth step in the
+# children fails with "requesting X, but is only allowed none".
 permissions:
   contents: read
+  id-token: write
+  packages: write
 
 jobs:
   deploy-lead-match-job:
