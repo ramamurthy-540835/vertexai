@@ -62,7 +62,7 @@ export default async function TalkWithDataPage({
   return (
     <section className="talk-page">
       <div className="talk-header-card">
-        <div className="talk-header-strip">Powered by Gemini 3.5 Flash</div>
+        <div className="talk-header-strip">Powered by Gemini 2.5 Flash</div>
         <div className="talk-header-body">
           <div className="talk-header-left">
             <h1>Talk with Data</h1>

@@ -19,7 +19,7 @@ function getVertexAI() {
   if (!vertexAI) {
     vertexAI = new VertexAI({
       project: process.env.GOOGLE_CLOUD_PROJECT || process.env.VERTEX_PROJECT_ID || "ctoteam",
-      location: process.env.VERTEX_LOCATION || "global",
+      location: process.env.VERTEX_LOCATION || "us-central1",
     });
   }
   return vertexAI;
@@ -93,7 +93,7 @@ export async function POST(request: NextRequest) {
   try {
     const ai = getVertexAI();
     const model = ai.getGenerativeModel({
-      model: process.env.GEMINI_MODEL || "gemini-3.5-flash",
+      model: process.env.GEMINI_MODEL || "gemini-2.5-flash",
       systemInstruction: SYSTEM_INSTRUCTION,
     });
 

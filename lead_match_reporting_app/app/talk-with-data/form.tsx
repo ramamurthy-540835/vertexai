@@ -104,7 +104,7 @@ export function TalkWithDataForm({
           <span className="talk-answer-title">Answer</span>
           {source !== "report-data" && (
             <span className="talk-source-badge">
-              {source === "gemini" ? "Gemini 3.5 Flash" : source}
+              {source === "gemini" ? "Gemini 2.5 Flash" : source}
             </span>
           )}
         </div>
