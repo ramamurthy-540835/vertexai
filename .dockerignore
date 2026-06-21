@@ -1,0 +1,11 @@
+.git
+.next
+node_modules
+**/.next
+**/node_modules
+**/__pycache__
+**/*.pyc
+.env
+.env.*
+reports
+test_results
