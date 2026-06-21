@@ -1,0 +1,40 @@
+name: deploy_all_environments
+
+# One entry point for promotion. A push to main (QAT) or a release tag
+# (SPT / PRD) fires this once, and it fans out to every child deploy workflow.
+# You never run the children individually.
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    tags:
+      - release-spt*
+      - release-prd-phase2-*
+    paths:
+      # Promotion is driven purely by .properties edits (tag/tunable changes)
+      # and the release tags below — nothing else. Promotion deploys a pre-built
+      # image, so neither source code nor workflow edits belong here.
+      - lead_management_job/**
+
+jobs:
+  deploy-lead-match-job:
+    name: Deploy Lead Matching Job
+    uses: ./.github/workflows/lead_match_job_deployment.yml
+    with:
+      # Not a build trigger — children resolve the pinned tag from .properties.
+      workflow_trigger_event: "False"
+    secrets:
+      GCP_WORKLOAD_IDENTITY_PROVIDER_ID: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
+      GCP_WORKLOAD_IDENTITY_SA_EMAIL: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
+      GCP_WORKLOAD_IDENTITY_SA_EMAIL_PRD: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL_PRD }}
+
+  deploy-snow-sync-job:
+    name: Deploy Snow Sync Job
+    uses: ./.github/workflows/snow_sync_job_deployment.yml
+    with:
+      workflow_trigger_event: "False"
+    secrets:
+      GCP_WORKLOAD_IDENTITY_PROVIDER_ID: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
+      GCP_WORKLOAD_IDENTITY_SA_EMAIL: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
+      GCP_WORKLOAD_IDENTITY_SA_EMAIL_PRD: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL_PRD }}

@@ -1,7 +1,7 @@
 name: lead_mgmt_image_creation
 on:
   workflow_dispatch:
-  # Triggers the workflow on push or pull request events but only for the "main" branch
+  # Build happens ONLY on feature branches (ADT). Higher envs never build.
   push:
     branches:
       - 'feature/**'
@@ -13,16 +13,27 @@ on:
 jobs:
   build-and-push-container:
     name: Build and Push Container
-    runs-on: 
+    runs-on:
       - self-hosted
       - us-central1
     permissions:
       id-token: write
       contents: read
       packages: write
+    # Expose the tag we built so the called deploy workflows can use the exact image.
+    outputs:
+      image_tag: ${{ steps.tag.outputs.image_tag }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      # Immutable, self-describing tag. Replaces :latest entirely.
+      - name: Set image tag
+        id: tag
+        run: |
+          SHORT_SHA=${GITHUB_SHA::7}
+          echo "image_tag=sha-${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+          echo "Building image tag: sha-${SHORT_SHA}"
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -41,14 +52,10 @@ jobs:
           ls -la
       - name: Build wheel and replace existing
         run: |
-          # Remove existing wheel files
           rm -f ./lead_management_job/*.whl
-          # Build new wheel
           cd ./lead_match_codebase
           python -m build --wheel
-          # Copy the built wheel to base_image directory
           cp dist/*.whl ../lead_management_job/
-          # Go back to root and verify the copy worked
           cd ..
           echo "Wheel files copied to base_image:"
           ls -la ./lead_management_job/*.whl
@@ -60,11 +67,11 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - id: auth
         name: Auth to GCP for GAR service account
-        uses : google-github-actions/auth@v2
+        uses: google-github-actions/auth@v2
         with:
           token_format: access_token
-          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID}}
-          service_account: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL}}
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
+          service_account: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
       - name: Login to Google Artifact Registry
         uses: docker/login-action@v3
         with:
@@ -91,13 +98,25 @@ jobs:
           file: ./lead_management_job/Dockerfile
           push: true
           labels: ${{ steps.meta.outputs.labels }}
-          tags: us-docker.pkg.dev/gcp-prj-images/gcp-gar-repo-mbrshp/lead-mgmt:latest 
+          # SHA tag instead of :latest — never overwrites another build.
+          tags: us-docker.pkg.dev/gcp-prj-images/gcp-gar-repo-mbrshp/lead-mgmt:${{ steps.tag.outputs.image_tag }}
+
+      # Easy lookup for promotion — no commit-back needed.
+      - name: Publish tag to job summary
+        run: |
+          echo "### Image built and pushed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Tag:** \`${{ steps.tag.outputs.image_tag }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "To promote: set \`IMAGE_TAG=${{ steps.tag.outputs.image_tag }}\` in the target env's .properties file and merge / cut the release tag." >> $GITHUB_STEP_SUMMARY
+
   deploy-lead-match-job:
     name: Trigger Workflow to Deploy Lead Matching Job
     needs: build-and-push-container
     uses: ./.github/workflows/lead_match_job_deployment.yml
     with:
-      workflow_trigger_event: "True" 
+      workflow_trigger_event: "True"
+      image_tag: ${{ needs.build-and-push-container.outputs.image_tag }}
     secrets:
       GCP_WORKLOAD_IDENTITY_PROVIDER_ID: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
       GCP_WORKLOAD_IDENTITY_SA_EMAIL: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
@@ -107,6 +126,7 @@ jobs:
     uses: ./.github/workflows/snow_sync_job_deployment.yml
     with:
       workflow_trigger_event: "True"
+      image_tag: ${{ needs.build-and-push-container.outputs.image_tag }}
     secrets:
       GCP_WORKLOAD_IDENTITY_PROVIDER_ID: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
       GCP_WORKLOAD_IDENTITY_SA_EMAIL: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
@@ -116,8 +136,7 @@ jobs:
     uses: ./.github/workflows/deploy_match_job.yml
     with:
       workflow_trigger_event: "True"
+      image_tag: ${{ needs.build-and-push-container.outputs.image_tag }}
     secrets:
       GCP_WORKLOAD_IDENTITY_PROVIDER_ID: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
       GCP_WORKLOAD_IDENTITY_SA_EMAIL: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
- 
- 
