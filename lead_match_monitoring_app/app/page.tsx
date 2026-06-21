@@ -26,6 +26,9 @@ type GhRun = {
   conclusion: string | null;
   startedAt: string;
   displayTitle: string;
+  warehouse?: string;
+  jobStatus?: string;
+  currentStep?: string;
 };
 
 type WarehouseStats = {
@@ -311,9 +314,10 @@ export default async function MonitorPage() {
               <thead>
                 <tr>
                   <th>Run ID</th>
+                  <th>Warehouse</th>
                   <th>Status</th>
                   <th>Conclusion</th>
-                  <th>Title</th>
+                  <th>Current Step</th>
                   <th>Started</th>
                 </tr>
               </thead>
@@ -323,6 +327,7 @@ export default async function MonitorPage() {
                     <td style={{ fontFamily: "monospace", fontSize: 13 }}>
                       {r.databaseId}
                     </td>
+                    <td><strong>{r.warehouse || "-"}</strong></td>
                     <td>
                       <span className={stateBadge(r.status)}>{r.status}</span>
                     </td>
@@ -331,7 +336,7 @@ export default async function MonitorPage() {
                         {r.conclusion || "-"}
                       </span>
                     </td>
-                    <td>{r.displayTitle}</td>
+                    <td>{r.currentStep || "-"}</td>
                     <td>{r.startedAt?.slice(0, 19)}</td>
                   </tr>
                 ))}
