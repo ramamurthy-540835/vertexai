@@ -52,49 +52,71 @@ export function TalkWithDataForm({
 
   return (
     <>
-      <form className="form" onSubmit={handleSubmit}>
-        <div className="field">
-          <label>Warehouse</label>
-          <input
-            name="warehouse"
-            value={warehouse}
-            onChange={(e) => setWarehouse(e.target.value)}
-          />
-        </div>
-        <div className="field">
-          <label>Question</label>
-          <input
-            name="question"
-            value={question}
-            onChange={(e) => setQuestion(e.target.value)}
-          />
-        </div>
-        <button className="button primary" type="submit" disabled={loading}>
-          {loading ? "Thinking…" : "Ask"}
-        </button>
-      </form>
-
-      <div className="chips">
-        {templates.map((t) => (
+      <div className="card talk-input-card">
+        <form className="talk-form" onSubmit={handleSubmit}>
+          <div className="field" style={{ flex: "0 0 140px" }}>
+            <label>Warehouse</label>
+            <input
+              name="warehouse"
+              value={warehouse}
+              onChange={(e) => setWarehouse(e.target.value)}
+            />
+          </div>
+          <div className="field" style={{ flex: 1 }}>
+            <label>Ask a question about this warehouse&apos;s match data</label>
+            <input
+              name="question"
+              value={question}
+              onChange={(e) => setQuestion(e.target.value)}
+              placeholder="e.g. Which leads have the highest match scores?"
+            />
+          </div>
           <button
-            key={t.label}
-            type="button"
-            className="chip"
+            className="button primary talk-ask-btn"
+            type="submit"
             disabled={loading}
-            onClick={() => handleChip(t)}
-            title={t.filterHint}
           >
-            {t.label}
+            {loading ? "Analyzing…" : "Ask"}
           </button>
-        ))}
+        </form>
       </div>
 
-      <div className="card answer">
-        <strong>Answer</strong>
-        {source !== "report-data" && (
-          <small style={{ marginLeft: 8, color: "var(--muted)" }}>via {source}</small>
-        )}
-        <p>{loading ? "Querying match data…" : answer}</p>
+      <div className="talk-chips-section">
+        <span className="talk-chips-label">Quick questions:</span>
+        <div className="chips">
+          {templates.map((t) => (
+            <button
+              key={t.label}
+              type="button"
+              className="chip"
+              disabled={loading}
+              onClick={() => handleChip(t)}
+              title={t.filterHint}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="talk-answer-card">
+        <div className="talk-answer-header">
+          <span className="talk-answer-title">Answer</span>
+          {source !== "report-data" && (
+            <span className="talk-source-badge">
+              {source === "gemini" ? "Gemini 3.5 Flash" : source}
+            </span>
+          )}
+        </div>
+        <div className="talk-answer-body">
+          {loading ? (
+            <p className="talk-loading">
+              Analyzing match data for warehouse {warehouse}…
+            </p>
+          ) : (
+            <p>{answer}</p>
+          )}
+        </div>
       </div>
     </>
   );

@@ -1,4 +1,4 @@
-import { searchMatches, type SearchParams } from "@/lib/reports";
+import { searchMatches, latestSummary, type SearchParams } from "@/lib/reports";
 import { queryTemplates } from "@/lib/query_templates";
 import { TalkWithDataForm } from "./form";
 
@@ -50,6 +50,7 @@ export default async function TalkWithDataPage({
   const intent = describeIntent(filters);
 
   const result = await searchMatches({ warehouse, ...filters, limit });
+  const summary = await latestSummary(warehouse);
   const fuzzy = result.rows.filter((row) => row.match_type === "Fuzzy").length;
   const manual = result.rows.filter((row) => row.match_type === "Manual Review").length;
 
@@ -59,13 +60,39 @@ export default async function TalkWithDataPage({
     `Use Search for exact row filtering and Download CSV for ServiceNow handoff.`;
 
   return (
-    <section className="card">
-      <div className="gemini-header">Powered by Gemini 3.5 Flash</div>
-      <h1>Talk with Data</h1>
-      <p className="subtitle">
-        Ask questions about lead-to-POS match data. Answers are grounded in your
-        warehouse report data.
-      </p>
+    <section className="talk-page">
+      <div className="talk-header-card">
+        <div className="talk-header-strip">Powered by Gemini 3.5 Flash</div>
+        <div className="talk-header-body">
+          <div className="talk-header-left">
+            <h1>Talk with Data</h1>
+            <p className="subtitle" style={{ marginBottom: 0 }}>
+              Ask natural-language questions about lead-to-POS match quality,
+              coverage, and exceptions. Answers are grounded in your warehouse
+              report data.
+            </p>
+          </div>
+          {summary && (
+            <div className="talk-context-stats">
+              <div className="talk-stat">
+                <span className="talk-stat-value">{summary.match_rows.toLocaleString()}</span>
+                <span className="talk-stat-label">Total Matches</span>
+              </div>
+              <div className="talk-stat">
+                <span className="talk-stat-value">
+                  {summary.primary_transaction_count.toLocaleString()}
+                </span>
+                <span className="talk-stat-label">Primary Txns</span>
+              </div>
+              <div className="talk-stat">
+                <span className="talk-stat-value">{summary.lead_rows.toLocaleString()}</span>
+                <span className="talk-stat-label">Leads</span>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
       <TalkWithDataForm
         warehouse={warehouse}
         question={question || "Show exact and high-confidence matches"}

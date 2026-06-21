@@ -497,41 +497,125 @@ tbody tr:hover {
   border: 2px solid;
 }
 
-/* ─── Talk with Data ─── */
-.gemini-header {
+/* ─── Talk with Data (executive layout) ─── */
+.talk-page {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.talk-header-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.talk-header-strip {
   background: var(--costco-blue);
   color: #fff;
-  padding: 12px 20px;
-  border-radius: 8px 8px 0 0;
-  font-size: 14px;
+  padding: 10px 24px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.talk-header-body {
+  padding: 24px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 32px;
+}
+
+.talk-header-left {
+  flex: 1;
+}
+
+.talk-context-stats {
+  display: flex;
+  gap: 24px;
+  flex-shrink: 0;
+}
+
+.talk-stat {
+  text-align: center;
+  min-width: 80px;
+}
+
+.talk-stat-value {
+  display: block;
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--costco-blue);
+  line-height: 1.2;
+}
+
+.talk-stat-label {
+  display: block;
+  font-size: 11px;
   font-weight: 500;
-  margin: -24px -24px 20px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-top: 4px;
+}
+
+.talk-input-card {
+  padding: 20px 24px;
+}
+
+.talk-form {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+}
+
+.talk-ask-btn {
+  height: 42px;
+  padding: 0 24px;
+  white-space: nowrap;
+}
+
+.talk-chips-section {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.talk-chips-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--muted);
+  white-space: nowrap;
 }
 
 .chips {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  margin: 16px 0;
 }
 
 .chip {
   display: inline-flex;
   align-items: center;
-  padding: 6px 14px;
+  padding: 7px 16px;
   border-radius: 20px;
   font-size: 13px;
   font-weight: 500;
   cursor: pointer;
-  border: 1px solid rgba(0, 93, 170, 0.3);
-  background: rgba(0, 93, 170, 0.06);
+  border: 1px solid rgba(0, 93, 170, 0.25);
+  background: rgba(0, 93, 170, 0.04);
   color: var(--costco-blue);
-  transition: background 0.15s, border-color 0.15s;
+  transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
 }
 
 .chip:hover {
-  background: rgba(0, 93, 170, 0.12);
+  background: rgba(0, 93, 170, 0.1);
   border-color: var(--costco-blue);
+  box-shadow: 0 1px 4px rgba(0, 93, 170, 0.12);
 }
 
 .chip:disabled {
@@ -539,9 +623,57 @@ tbody tr:hover {
   cursor: not-allowed;
 }
 
-.answer {
-  line-height: 1.6;
-  white-space: pre-wrap;
+.talk-answer-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.talk-answer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 24px;
+  border-bottom: 1px solid var(--border);
+  background: #f8f9fb;
+}
+
+.talk-answer-title {
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.talk-source-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  background: rgba(0, 93, 170, 0.08);
+  color: var(--costco-blue);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.talk-answer-body {
+  padding: 24px;
+}
+
+.talk-answer-body p {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.7;
+  color: var(--ink);
+}
+
+.talk-loading {
+  color: var(--muted);
+  font-style: italic;
 }
 
 /* ─── Banners / alerts ─── */
@@ -644,5 +776,24 @@ tbody tr:hover {
 
   .warehouse-grid {
     grid-template-columns: 1fr;
+  }
+
+  .talk-header-body {
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .talk-context-stats {
+    width: 100%;
+    justify-content: space-around;
+  }
+
+  .talk-form {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .talk-form .field {
+    flex: unset !important;
   }
 }
