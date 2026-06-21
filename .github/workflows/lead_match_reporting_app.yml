@@ -84,13 +84,11 @@ jobs:
         run: |
           set -euo pipefail
           gcloud config set project "${PROJECT_ID}"
-          IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${ARTIFACT_REPO}/${SERVICE_NAME}:${GITHUB_SHA::7}"
           gcloud builds submit \
             --project="${PROJECT_ID}" \
-            --region="${REGION}" \
-            --tag="${IMAGE}" \
-            --file=lead_match_reporting_app/Dockerfile \
+            --config=cloudbuild.lead-match-reporting.yaml \
             .
+          IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${ARTIFACT_REPO}/${SERVICE_NAME}:latest"
           echo "IMAGE=${IMAGE}" >> "$GITHUB_ENV"
 
       - name: Deploy Cloud Run reporting API
