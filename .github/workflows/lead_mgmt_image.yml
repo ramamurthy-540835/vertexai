@@ -12,7 +12,9 @@ on:
       - 'lead_match_codebase/**'
 
 permissions:
+  id-token: write
   contents: read
+  packages: write
 
 concurrency:
   # Serialize ADT activity per branch so a code+config push (or two rapid
@@ -183,6 +185,7 @@ jobs:
     permissions:
       id-token: write
       contents: read
+      packages: write
     outputs:
       image_tag: ${{ steps.resolve.outputs.image_tag }}
     steps:
