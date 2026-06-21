@@ -88,7 +88,37 @@ jobs:
             --project="${PROJECT_ID}" \
             --config=cloudbuild.lead-match-reporting.yaml \
             --substitutions=SHORT_SHA="${GITHUB_SHA::7}" \
+            --async \
+            --format='value(id)' \
             .
+          BUILD_ID="$(gcloud builds list \
+            --project="${PROJECT_ID}" \
+            --filter="substitutions.SHORT_SHA=${GITHUB_SHA::7}" \
+            --sort-by='~createTime' \
+            --limit=1 \
+            --format='value(id)')"
+          if [[ -z "${BUILD_ID}" ]]; then
+            echo "Cloud Build ID was not found for SHORT_SHA=${GITHUB_SHA::7}" >&2
+            exit 1
+          fi
+          echo "BUILD_ID=${BUILD_ID}" >> "$GITHUB_ENV"
+          while true; do
+            BUILD_STATUS="$(gcloud builds describe "${BUILD_ID}" \
+              --project="${PROJECT_ID}" \
+              --format='value(status)')"
+            echo "Cloud Build ${BUILD_ID}: ${BUILD_STATUS}"
+            case "${BUILD_STATUS}" in
+              SUCCESS)
+                break
+                ;;
+              FAILURE|INTERNAL_ERROR|TIMEOUT|CANCELLED|EXPIRED)
+                exit 1
+                ;;
+              *)
+                sleep 10
+                ;;
+            esac
+          done
           IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${ARTIFACT_REPO}/${SERVICE_NAME}:latest"
           echo "IMAGE=${IMAGE}" >> "$GITHUB_ENV"
 
