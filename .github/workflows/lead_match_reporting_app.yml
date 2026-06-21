@@ -21,11 +21,18 @@ on:
       allow_unauthenticated:
         description: "Allow public unauthenticated access?"
         required: true
-        default: "false"
+        default: "true"
         type: choice
         options:
           - "false"
           - "true"
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/lead_match_reporting_app.yml"
+      - "cloudbuild.lead-match-reporting.yaml"
+      - "lead_match_reporting_app/**"
 
 jobs:
   deploy-reporting-app:
@@ -45,6 +52,7 @@ jobs:
       REPORT_PREFIX: reports/lead_match
       VERTEX_LOCATION: us-central1
       GEMINI_MODEL: gemini-2.5-flash
+      ALLOW_UNAUTHENTICATED: ${{ github.event.inputs.allow_unauthenticated || 'true' }}
       REPORTING_API_TOKEN: ${{ secrets.REPORTING_API_TOKEN }}
 
     steps:
@@ -125,7 +133,7 @@ jobs:
         run: |
           set -euo pipefail
           AUTH_FLAG="--no-allow-unauthenticated"
-          if [[ "${{ github.event.inputs.allow_unauthenticated }}" == "true" ]]; then
+          if [[ "${ALLOW_UNAUTHENTICATED}" == "true" ]]; then
             AUTH_FLAG="--allow-unauthenticated"
           fi
 
