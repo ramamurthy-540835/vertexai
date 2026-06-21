@@ -13,6 +13,17 @@ type Params = {
   min_score?: string;
 };
 
+function scoreBadge(score: string | undefined) {
+  const n = Number(score || 0);
+  if (n >= 95) return "badge badge-success";
+  return "badge";
+}
+
+function typeBadge(matchType: string | undefined) {
+  if (matchType === "Fuzzy" || matchType === "Manual Review") return "badge badge-warning";
+  return "badge";
+}
+
 export default async function SearchPage({ searchParams }: { searchParams: Promise<Params> }) {
   const params = await searchParams;
   const warehouse = params.warehouse || "115";
@@ -31,99 +42,115 @@ export default async function SearchPage({ searchParams }: { searchParams: Promi
   const firstRow = result.rows[0];
 
   return (
-    <section className="card">
-      <h1>Search Match Results</h1>
-      <form className="form">
-        <div className="field">
-          <label>Warehouse</label>
-          <input name="warehouse" defaultValue={warehouse} />
-        </div>
-        <div className="field">
-          <label>Run ID</label>
-          <input name="run_id" defaultValue={runId} />
-        </div>
-        <div className="field">
-          <label>Lead ID</label>
-          <input name="lead_id" defaultValue={params.lead_id || ""} />
-        </div>
-        <div className="field">
-          <label>POS ID</label>
-          <input name="pos_id" defaultValue={params.pos_id || ""} />
-        </div>
-        <div className="field">
-          <label>Match Type</label>
-          <select name="match_type" defaultValue={params.match_type || ""}>
-            <option value="">Any</option>
-            <option value="Fuzzy">Fuzzy</option>
-            <option value="Manual Review">Manual Review</option>
-          </select>
-        </div>
-        <div className="field">
-          <label>Min Score</label>
-          <input name="min_score" defaultValue={params.min_score || ""} />
-        </div>
-        <button className="button primary" type="submit">
-          Filter
-        </button>
-      </form>
+    <div className="search-layout">
+      <aside className="card">
+        <h2>Filters</h2>
+        <form className="form form-stack">
+          <div className="field">
+            <label>Warehouse</label>
+            <input name="warehouse" defaultValue={warehouse} />
+          </div>
+          <div className="field">
+            <label>Run ID</label>
+            <input name="run_id" defaultValue={runId} />
+          </div>
+          <div className="field">
+            <label>Lead ID</label>
+            <input name="lead_id" defaultValue={params.lead_id || ""} />
+          </div>
+          <div className="field">
+            <label>POS ID</label>
+            <input name="pos_id" defaultValue={params.pos_id || ""} />
+          </div>
+          <div className="field">
+            <label>Match Type</label>
+            <select name="match_type" defaultValue={params.match_type || ""}>
+              <option value="">Any</option>
+              <option value="Fuzzy">Fuzzy</option>
+              <option value="Manual Review">Manual Review</option>
+            </select>
+          </div>
+          <div className="field">
+            <label>Min Score</label>
+            <input name="min_score" defaultValue={params.min_score || ""} />
+          </div>
+          <button className="button primary" type="submit" style={{ width: "100%" }}>
+            Filter
+          </button>
+        </form>
 
-      <div className="links" style={{ marginBottom: 16 }}>
-        <a className="button" href={`/api/results/download?warehouse=${warehouse}&run_id=${runId}&type=csv`}>
-          Download CSV
-        </a>
-        <a
-          className="button"
-          href={`/api/results/download?warehouse=${warehouse}&run_id=${runId}&type=summary`}
-        >
-          Download Summary
-        </a>
-        <a
-          className="button"
-          href={`/api/results/download?warehouse=${warehouse}&run_id=${runId}&type=markdown`}
-        >
-          Download Markdown
-        </a>
-      </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 12 }}>
+          <a
+            className="button outline-red"
+            href={`/api/results/download?warehouse=${warehouse}&run_id=${runId}&type=csv`}
+            style={{ textAlign: "center" }}
+          >
+            Download CSV
+          </a>
+          <a
+            className="button"
+            href={`/api/results/download?warehouse=${warehouse}&run_id=${runId}&type=summary`}
+            style={{ textAlign: "center" }}
+          >
+            Download Summary
+          </a>
+          <a
+            className="button"
+            href={`/api/results/download?warehouse=${warehouse}&run_id=${runId}&type=markdown`}
+            style={{ textAlign: "center" }}
+          >
+            Download Markdown
+          </a>
+        </div>
+      </aside>
 
-      <p>
-        Showing {result.rows.length.toLocaleString()} of {result.total?.toLocaleString() || 0} matching rows.
-      </p>
-      <div className="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Lead</th>
-              <th>POS</th>
-              <th>Warehouse</th>
-              <th>Type</th>
-              <th>State</th>
-              <th>Primary</th>
-              <th>Score</th>
-              <th>Lead Business</th>
-              <th>POS Business</th>
-            </tr>
-          </thead>
-          <tbody>
-            {result.rows.map((row) => (
-              <tr key={`${row.lead_id}-${row.pos_id}`}>
-                <td>{row.lead_id}</td>
-                <td>{row.pos_id}</td>
-                <td>{row.warehouse_number}</td>
-                <td>{row.match_type}</td>
-                <td>{row.lifecycle_state}</td>
-                <td>{row.primary_transaction}</td>
-                <td>{row.final_score}</td>
-                <td>{row.lead_business_name}</td>
-                <td>{row.pos_business_name}</td>
+      <section>
+        <h1>Search Match Results</h1>
+        <p className="subtitle">
+          Showing {result.rows.length.toLocaleString()} of{" "}
+          {result.total?.toLocaleString() || 0} matching rows.
+        </p>
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Lead</th>
+                <th>POS</th>
+                <th>Warehouse</th>
+                <th>Type</th>
+                <th>State</th>
+                <th>Primary</th>
+                <th>Score</th>
+                <th>Lead Business</th>
+                <th>POS Business</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+            </thead>
+            <tbody>
+              {result.rows.map((row) => (
+                <tr key={`${row.lead_id}-${row.pos_id}`}>
+                  <td>{row.lead_id}</td>
+                  <td>{row.pos_id}</td>
+                  <td>{row.warehouse_number}</td>
+                  <td>
+                    <span className={typeBadge(row.match_type)}>{row.match_type}</span>
+                  </td>
+                  <td>{row.lifecycle_state}</td>
+                  <td>{row.primary_transaction}</td>
+                  <td>
+                    <span className={scoreBadge(row.final_score)}>{row.final_score}</span>
+                  </td>
+                  <td>{row.lead_business_name}</td>
+                  <td>{row.pos_business_name}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
 
-      {runId ? (
-        <AnnotationForm runId={runId} leadId={firstRow?.lead_id} posId={firstRow?.pos_id} />
-      ) : null}
-    </section>
+        {runId ? (
+          <AnnotationForm runId={runId} leadId={firstRow?.lead_id} posId={firstRow?.pos_id} />
+        ) : null}
+      </section>
+    </div>
   );
 }

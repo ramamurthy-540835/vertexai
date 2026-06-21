@@ -25,6 +25,7 @@ export type SearchParams = {
   lifecycleState?: string;
   minScore?: number;
   limit?: number;
+  manualReview?: boolean;
 };
 
 export type Annotation = {
@@ -142,6 +143,7 @@ export async function searchMatches(params: SearchParams) {
     if (params.leadId && !row.lead_id?.includes(params.leadId)) return false;
     if (params.posId && !row.pos_id?.includes(params.posId)) return false;
     if (params.matchType && row.match_type !== params.matchType) return false;
+    if (params.manualReview && row.match_type !== "Manual Review") return false;
     if (params.lifecycleState && row.lifecycle_state !== params.lifecycleState) return false;
     if (params.minScore && Number(row.final_score || 0) < params.minScore) return false;
     return true;

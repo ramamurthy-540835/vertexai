@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       warehouse:
-        description: "Warehouse number used for reporting links"
+        description: "Optional manifest label — does NOT affect the deployed service or URL. The app serves all warehouses via ?warehouse=<id>."
         required: false
-        default: "115"
+        default: ""
         type: string
       bucket:
         description: "GCS bucket containing lead-match reports"
@@ -29,7 +29,7 @@ on:
 
 jobs:
   deploy-reporting-app:
-    name: "deploy-reporting-app-${{ github.event.inputs.warehouse || '115' }}"
+    name: "deploy-reporting-app"
     runs-on: ubuntu-latest
 
     permissions:
@@ -42,10 +42,9 @@ jobs:
       ARTIFACT_REPO: cloud-run-repo
       BUCKET_NAME: ${{ github.event.inputs.bucket || 'lead-match-ctoteam' }}
       SERVICE_NAME: ${{ github.event.inputs.service_name || 'lead-match-reporting-app' }}
-      WAREHOUSE: ${{ github.event.inputs.warehouse || '115' }}
       REPORT_PREFIX: reports/lead_match
       VERTEX_LOCATION: us-central1
-      GEMINI_MODEL: gemini-1.5-flash
+      GEMINI_MODEL: gemini-3.5-flash
       REPORTING_API_TOKEN: ${{ secrets.REPORTING_API_TOKEN }}
 
     steps:
@@ -78,7 +77,7 @@ jobs:
           set -euo pipefail
           gcloud config set project "${PROJECT_ID}"
           gsutil ls -b "gs://${BUCKET_NAME}"
-          gsutil ls "gs://${BUCKET_NAME}/${REPORT_PREFIX}/${PROJECT_ID}/${WAREHOUSE}/" >/dev/null
+          gsutil ls "gs://${BUCKET_NAME}/${REPORT_PREFIX}/${PROJECT_ID}/" >/dev/null
 
       - name: Build reporting image with Cloud Build
         run: |
@@ -149,7 +148,7 @@ jobs:
             --format='value(status.url)')"
           echo "SERVICE_URL=${SERVICE_URL}" >> "$GITHUB_ENV"
 
-      - name: Publish reporting URL manifest
+      - name: Publish fleet manifest
         run: |
           set -euo pipefail
           MANIFEST="${RUNNER_TEMP}/lead_match_reporting_app.json"
@@ -158,17 +157,19 @@ jobs:
             "project": "${PROJECT_ID}",
             "region": "${REGION}",
             "service_name": "${SERVICE_NAME}",
-            "warehouse": "${WAREHOUSE}",
             "bucket": "${BUCKET_NAME}",
             "service_url": "${SERVICE_URL}",
-            "latest_url": "${SERVICE_URL}/api/results/latest?warehouse=${WAREHOUSE}",
-            "search_url": "${SERVICE_URL}/search?warehouse=${WAREHOUSE}",
-            "download_url_template": "${SERVICE_URL}/api/results/download?warehouse=${WAREHOUSE}&run_id=<run_id>&type=csv",
-            "graph_url": "${SERVICE_URL}/graph?warehouse=${WAREHOUSE}",
+            "landing_url": "${SERVICE_URL}/",
+            "url_templates": {
+              "latest": "${SERVICE_URL}/?warehouse=<id>",
+              "search": "${SERVICE_URL}/search?warehouse=<id>",
+              "graph": "${SERVICE_URL}/graph?warehouse=<id>",
+              "talk": "${SERVICE_URL}/talk-with-data?warehouse=<id>"
+            },
             "deployed_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           }
           EOF
-          gsutil cp "${MANIFEST}" "gs://${BUCKET_NAME}/post-match/reporting/${PROJECT_ID}/${WAREHOUSE}/lead_match_reporting_app.json"
+          gsutil cp "${MANIFEST}" "gs://${BUCKET_NAME}/post-match/reporting/${PROJECT_ID}/lead_match_reporting_app.json"
 
       - name: Summary
         run: |
@@ -178,8 +179,8 @@ jobs:
             echo "- Service: \`${SERVICE_NAME}\`"
             echo "- Image: \`${IMAGE}\`"
             echo "- URL: ${SERVICE_URL}"
-            echo "- Latest API: ${SERVICE_URL}/api/results/latest?warehouse=${WAREHOUSE}"
-            echo "- Search UI: ${SERVICE_URL}/search?warehouse=${WAREHOUSE}"
-            echo "- Graph UI: ${SERVICE_URL}/graph?warehouse=${WAREHOUSE}"
-            echo "- Manifest: \`gs://${BUCKET_NAME}/post-match/reporting/${PROJECT_ID}/${WAREHOUSE}/lead_match_reporting_app.json\`"
+            echo "- Landing: ${SERVICE_URL}/"
+            echo "- Manifest: \`gs://${BUCKET_NAME}/post-match/reporting/${PROJECT_ID}/lead_match_reporting_app.json\`"
+            echo ""
+            echo "All warehouses served from this single URL via \`?warehouse=<id>\`."
           } >> "$GITHUB_STEP_SUMMARY"
