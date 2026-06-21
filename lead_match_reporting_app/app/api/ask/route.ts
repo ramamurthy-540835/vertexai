@@ -52,16 +52,20 @@ function reportFallback(
   });
 }
 
-function parseGeminiJson(text: string): { answer: string; matchCountReferenced: number } {
+function parseGeminiResponse(text: string): { answer: string; matchCountReferenced: number } {
   const cleaned = text
     .replace(/^```(?:json)?\s*\n?/m, "")
     .replace(/\n?```\s*$/m, "")
     .trim();
-  const parsed = JSON.parse(cleaned);
-  return {
-    answer: String(parsed.answer || ""),
-    matchCountReferenced: Number(parsed.matchCountReferenced || 0),
-  };
+  try {
+    const parsed = JSON.parse(cleaned);
+    return {
+      answer: String(parsed.answer || ""),
+      matchCountReferenced: Number(parsed.matchCountReferenced || 0),
+    };
+  } catch {
+    return { answer: cleaned, matchCountReferenced: 0 };
+  }
 }
 
 export async function POST(request: NextRequest) {
@@ -91,9 +95,6 @@ export async function POST(request: NextRequest) {
     const model = ai.getGenerativeModel({
       model: process.env.GEMINI_MODEL || "gemini-3.5-flash",
       systemInstruction: SYSTEM_INSTRUCTION,
-      generationConfig: {
-        responseMimeType: "application/json",
-      },
     });
 
     const rowContext = JSON.stringify(result.rows.slice(0, 200));
@@ -111,7 +112,7 @@ export async function POST(request: NextRequest) {
     });
 
     const text = response.response.candidates?.[0]?.content?.parts?.[0]?.text || "";
-    const parsed = parseGeminiJson(text);
+    const parsed = parseGeminiResponse(text);
 
     return NextResponse.json({
       question,
