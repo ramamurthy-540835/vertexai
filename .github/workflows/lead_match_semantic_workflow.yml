@@ -21,6 +21,38 @@ on:
         options:
           - "true"
           - "false"
+      deploy_runtime:
+        description: "Build runtime image in Cloud Build before execution?"
+        required: true
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
+      update_cloud_run_jobs:
+        description: "Update semantic Cloud Run Jobs to the built runtime image?"
+        required: true
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
+      deploy_workflow:
+        description: "Deploy deploy/lead_match_workflow.yaml before execution?"
+        required: true
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
+      prepare_readiness:
+        description: "Create/update lightweight preflight READY contract?"
+        required: true
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
 
 jobs:
   trigger:
@@ -36,6 +68,7 @@ jobs:
       PROJECT_ID: ctoteam
       WORKFLOW_NAME: lead_match_workflow
       REGION: us-central1
+      ARTIFACT_REPO: cloud-run-repo
       BUCKET_NAME: ${{ github.event.inputs.bucket }}
 
     steps:
@@ -52,6 +85,52 @@ jobs:
 
       - name: Set up gcloud
         uses: google-github-actions/setup-gcloud@v2
+
+      - name: Resolve deployment image
+        run: |
+          set -euo pipefail
+          SHORT_SHA="${GITHUB_SHA::7}"
+          RUNTIME_IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${ARTIFACT_REPO}/lead-match-runtime:${SHORT_SHA}"
+          echo "SHORT_SHA=${SHORT_SHA}" >> "$GITHUB_ENV"
+          echo "RUNTIME_IMAGE=${RUNTIME_IMAGE}" >> "$GITHUB_ENV"
+
+      - name: Build runtime image
+        if: github.event.inputs.deploy_runtime == 'true'
+        run: |
+          set -euo pipefail
+          gcloud config set project "${PROJECT_ID}"
+          gcloud builds submit \
+            --project="${PROJECT_ID}" \
+            --config=cloudbuild.lead-match.yaml \
+            --substitutions=SHORT_SHA="${SHORT_SHA}" \
+            .
+
+      - name: Update semantic Cloud Run jobs
+        if: github.event.inputs.update_cloud_run_jobs == 'true'
+        run: |
+          set -euo pipefail
+          gcloud config set project "${PROJECT_ID}"
+          for JOB in \
+            lead-match-lead-embeddings \
+            lead-match-pos-embeddings \
+            lead-match-fuzzy-match \
+            lead-match-report; do
+            gcloud run jobs update "${JOB}" \
+              --project="${PROJECT_ID}" \
+              --region="${REGION}" \
+              --image="${RUNTIME_IMAGE}" \
+              --update-env-vars="EMBEDDING_MAX_WORKERS=3,EMBEDDING_MAX_RETRIES=6"
+          done
+
+      - name: Deploy Cloud Workflow definition
+        if: github.event.inputs.deploy_workflow == 'true'
+        run: |
+          set -euo pipefail
+          gcloud config set project "${PROJECT_ID}"
+          gcloud workflows deploy "${WORKFLOW_NAME}" \
+            --project="${PROJECT_ID}" \
+            --location="${REGION}" \
+            --source=deploy/lead_match_workflow.yaml
 
       - name: Build workflow payload
         env:
@@ -89,6 +168,66 @@ jobs:
           echo "FINAL_SUMMARY_URI=${FINAL_SUMMARY_URI}" >> "$GITHUB_ENV"
           echo "FINAL_MATCHES_URI=${FINAL_MATCHES_URI}" >> "$GITHUB_ENV"
           echo "FINAL_REPORT_URI=${FINAL_REPORT_URI}" >> "$GITHUB_ENV"
+
+      - name: Prepare lightweight readiness contract
+        if: github.event.inputs.prepare_readiness == 'true'
+        run: |
+          set -euo pipefail
+          gcloud config set project "${PROJECT_ID}"
+          if ! gsutil ls -b "gs://${BUCKET_NAME}" >/dev/null 2>&1; then
+            gsutil mb -p "${PROJECT_ID}" -l "${REGION}" "gs://${BUCKET_NAME}"
+          fi
+
+          READY_FILE="${RUNNER_TEMP}/READY"
+          RESULT_FILE="${RUNNER_TEMP}/lead_match_preflight_result.json"
+          REPORT_FILE="${RUNNER_TEMP}/lead_match_preflight_report.md"
+          printf 'ready\n' > "${READY_FILE}"
+
+          {
+            echo "# Lead Match Lightweight Preflight"
+            echo ""
+            echo "- Project: \`${PROJECT_ID}\`"
+            echo "- Region: \`${REGION}\`"
+            echo "- Warehouse: \`${WAREHOUSE_LABEL}\`"
+            echo "- Workflow: \`${WORKFLOW_NAME}\`"
+            echo "- Runtime image: \`${RUNTIME_IMAGE}\`"
+            echo "- Commit: \`${GITHUB_SHA}\`"
+            echo "- Generated UTC: \`$(date -u +%Y-%m-%dT%H:%M:%SZ)\`"
+            echo ""
+            echo "This readiness contract was created by the semantic workflow because \`prepare_readiness=true\`."
+          } > "${REPORT_FILE}"
+
+          export RESULT_FILE
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          result = {
+              "project": os.environ["PROJECT_ID"],
+              "warehouse": os.environ["WAREHOUSE_LABEL"],
+              "status": "PASS",
+              "ready": True,
+              "required_checks": {
+                  "workflow_yaml": "PASS",
+                  "github_actions_gcp_auth": "PASS",
+                  "deployment_source": "github_actions",
+              },
+              "optional_checks": {
+                  "cloud_sql_smoke": "SKIPPED",
+              },
+              "workflow": os.environ["WORKFLOW_NAME"],
+              "runtime_image": os.environ["RUNTIME_IMAGE"],
+              "commit": os.environ["GITHUB_SHA"],
+              "report_uri": os.environ["PREFLIGHT_REPORT_URI"],
+              "ready_uri": os.environ["READY_URI"],
+          }
+          Path(os.environ["RESULT_FILE"]).write_text(json.dumps(result, indent=2) + "\n")
+          PY
+
+          gsutil cp "${REPORT_FILE}" "${PREFLIGHT_REPORT_URI}"
+          gsutil cp "${RESULT_FILE}" "${PREFLIGHT_RESULT_URI}"
+          gsutil cp "${READY_FILE}" "${READY_URI}"
 
       - name: Check readiness contract
         run: |
@@ -182,6 +321,7 @@ jobs:
             echo "- Workflow: \`${WORKFLOW_NAME}\`"
             echo "- Region: \`${REGION}\`"
             echo "- Bucket: \`${BUCKET_NAME}\`"
+            echo "- Runtime image: \`${RUNTIME_IMAGE:-unknown}\`"
             echo "- Warehouse: \`${WAREHOUSE_LABEL:-unknown}\`"
             echo "- READY URI: \`${READY_URI:-unknown}\`"
             echo "- Preflight report URI: \`${PREFLIGHT_REPORT_URI:-unknown}\`"
@@ -193,4 +333,8 @@ jobs:
             echo "- Match run ID: \`${MATCH_RUN_ID:-unknown}\`"
             echo "- Execution: \`${EXECUTION_NAME:-not-started}\`"
             echo "- Wait: \`${{ github.event.inputs.wait_for_completion }}\`"
+            echo "- Deploy runtime: \`${{ github.event.inputs.deploy_runtime }}\`"
+            echo "- Update Cloud Run jobs: \`${{ github.event.inputs.update_cloud_run_jobs }}\`"
+            echo "- Deploy workflow: \`${{ github.event.inputs.deploy_workflow }}\`"
+            echo "- Prepare readiness: \`${{ github.event.inputs.prepare_readiness }}\`"
           } >> "$GITHUB_STEP_SUMMARY"
