@@ -201,7 +201,7 @@ runCloudRunJob:
     - returnResult:
         return:
           job: ${jobName}
-          executionName: ${jobExecution.name}
+          executionName: ${jobExecutionName}
           startedAt: ${startedAt}
           completedAt: ${completedAt}
           durationSeconds: ${completedAt - startedAt}
