@@ -292,7 +292,12 @@ def embed_text_request(client, texts, label, log_success=True):
                     f"Embedded {label}: rows={len(texts)} attempt={attempt} "
                     f"duration_seconds={duration:.2f}"
                 )
-            return [vector_literal(embedding.values) for embedding in response.embeddings]
+            embeddings = response.embeddings or []
+            if len(embeddings) != len(texts):
+                raise RuntimeError(
+                    f"API returned {len(embeddings)} embeddings for {len(texts)} texts ({label})"
+                )
+            return [vector_literal(embedding.values) for embedding in embeddings]
         except Exception as exc:
             if attempt >= EMBEDDING_MAX_RETRIES or not is_retryable_embedding_error(exc):
                 print(
@@ -370,14 +375,21 @@ def chunks(rows, size):
         yield rows[idx:idx + size]
 
 
-def execute_many_values(cursor, insert_prefix, rows, fields_per_row, chunk_size=250):
+def execute_many_values(
+    cursor,
+    insert_prefix,
+    rows,
+    fields_per_row,
+    chunk_size=250,
+    conflict_clause="",
+):
     if not rows:
         return
     row_placeholder = "(" + ", ".join(["%s"] * fields_per_row) + ")"
     for chunk in chunks(rows, chunk_size):
         placeholders = ", ".join([row_placeholder] * len(chunk))
         params = [value for row in chunk for value in row]
-        cursor.execute(f"{insert_prefix} VALUES {placeholders}", params)
+        cursor.execute(f"{insert_prefix} VALUES {placeholders} {conflict_clause}", params)
 
 
 def lead_source_rows(cursor):
@@ -575,6 +587,13 @@ def generate_lead_embeddings():
     job_started = time.monotonic()
     client = vertex_client()
     conn = connect()
+    try:
+        _generate_lead_embeddings(conn, job_started, client)
+    finally:
+        conn.close()
+
+
+def _generate_lead_embeddings(conn, job_started, client):
     cursor = conn.cursor()
     rows = lead_source_rows(cursor)
     print(f"Warehouse scope: {warehouse_scope_label()}")
@@ -600,6 +619,7 @@ def generate_lead_embeddings():
             """,
             insert_rows,
             11,
+            conflict_clause="ON CONFLICT (lead_id) DO NOTHING",
         )
 
     inserted = process_embedding_batches(
@@ -611,7 +631,6 @@ def generate_lead_embeddings():
         conn,
         "lead",
     )
-    conn.close()
     print(
         f"Inserted lead embeddings: {inserted}; "
         f"duration_seconds={time.monotonic() - job_started:.2f}"
@@ -622,6 +641,13 @@ def generate_pos_embeddings():
     job_started = time.monotonic()
     client = vertex_client()
     conn = connect()
+    try:
+        _generate_pos_embeddings(conn, job_started, client)
+    finally:
+        conn.close()
+
+
+def _generate_pos_embeddings(conn, job_started, client):
     cursor = conn.cursor()
     rows = pos_source_rows(cursor)
     print(f"Warehouse scope: {warehouse_scope_label()}")
@@ -647,6 +673,7 @@ def generate_pos_embeddings():
             """,
             insert_rows,
             13,
+            conflict_clause="ON CONFLICT (pos_id) DO NOTHING",
         )
 
     inserted = process_embedding_batches(
@@ -658,7 +685,6 @@ def generate_pos_embeddings():
         conn,
         "POS",
     )
-    conn.close()
     print(
         f"Inserted POS embeddings: {inserted}; "
         f"duration_seconds={time.monotonic() - job_started:.2f}"
@@ -668,6 +694,13 @@ def generate_pos_embeddings():
 def run_fuzzy_match():
     job_started = time.monotonic()
     conn = connect()
+    try:
+        _run_fuzzy_match(conn, job_started)
+    finally:
+        conn.close()
+
+
+def _run_fuzzy_match(conn, job_started):
     cursor = conn.cursor()
     schema = schema_name()
     run_id = os.environ.get("MATCH_RUN_ID") or f"workflow-{uuid.uuid4().hex[:12]}"
@@ -687,6 +720,10 @@ def run_fuzzy_match():
         f"hnsw_ef_search: {HNSW_EF_SEARCH}"
     )
     configure_hnsw_search(conn, cursor)
+    if MATCH_STATEMENT_TIMEOUT_MS > 0:
+        cursor.execute(f"SET statement_timeout = {MATCH_STATEMENT_TIMEOUT_MS}")
+        conn.commit()
+        print(f"statement_timeout set to {MATCH_STATEMENT_TIMEOUT_MS}ms")
 
     processed_leads = 0
     inserted = 0
@@ -745,8 +782,6 @@ def run_fuzzy_match():
             EMBEDDING_MODEL,
         ])
         query_started = time.monotonic()
-        if MATCH_STATEMENT_TIMEOUT_MS > 0:
-            cursor.execute("SET LOCAL statement_timeout = %s", [MATCH_STATEMENT_TIMEOUT_MS])
         cursor.execute(
             f"""
             WITH lead_batch AS (
@@ -862,7 +897,11 @@ def run_fuzzy_match():
         )
 
     conn.commit()
-    conn.close()
+    if processed_leads == 0:
+        print(
+            "Warning: fuzzy match processed 0 leads after warehouse and exact-match filters",
+            file=sys.stderr,
+        )
     print(
         f"Inserted match decision rows: {inserted}; "
         f"processed_leads={processed_leads}; "
@@ -873,6 +912,13 @@ def run_fuzzy_match():
 def ensure_indexes():
     job_started = time.monotonic()
     conn = connect()
+    try:
+        _ensure_indexes(conn, job_started)
+    finally:
+        conn.close()
+
+
+def _ensure_indexes(conn, job_started):
     conn.autocommit = True
     cursor = conn.cursor()
     schema = schema_name()
@@ -1063,7 +1109,6 @@ def ensure_indexes():
     if len(index_states) != 4 or not all(row["valid"] and row["ready"] for row in index_states):
         raise RuntimeError(f"Index verification failed: {index_states}")
 
-    conn.close()
     print(
         json.dumps(
             {
@@ -1080,21 +1125,23 @@ def ensure_indexes():
 
 def print_summary():
     conn = connect()
-    cursor = conn.cursor()
-    schema = schema_name()
-    for table in (
-        "account",
-        "lead",
-        "contact",
-        "pos_transactions",
-        "transaction",
-        "leads_embeddings",
-        "pos_embeddings",
-        "match_decision_detail",
-    ):
-        cursor.execute(f'SELECT count(*) FROM "{schema}"."{table}"')
-        print(f"{schema}.{table}: {cursor.fetchone()[0]}")
-    conn.close()
+    try:
+        cursor = conn.cursor()
+        schema = schema_name()
+        for table in (
+            "account",
+            "lead",
+            "contact",
+            "pos_transactions",
+            "transaction",
+            "leads_embeddings",
+            "pos_embeddings",
+            "match_decision_detail",
+        ):
+            cursor.execute(f'SELECT count(*) FROM "{schema}"."{table}"')
+            print(f"{schema}.{table}: {cursor.fetchone()[0]}")
+    finally:
+        conn.close()
 
 
 def main():
