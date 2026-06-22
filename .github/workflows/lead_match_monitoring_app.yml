@@ -125,7 +125,7 @@ jobs:
             --region="${REGION}" \
             --image="${IMAGE}" \
             --platform=managed \
-            --set-env-vars="REPORT_BUCKET=${BUCKET_NAME},GOOGLE_CLOUD_PROJECT=${PROJECT_ID}" \
+            --set-env-vars="REPORT_BUCKET=${BUCKET_NAME},GOOGLE_CLOUD_PROJECT=${PROJECT_ID},REGION=${REGION},WORKFLOW_NAME=lead_match_workflow" \
             ${AUTH_FLAG}
 
           SERVICE_URL="$(gcloud run services describe "${SERVICE_NAME}" \
@@ -145,5 +145,5 @@ jobs:
             echo "- Monitor: ${SERVICE_URL}/"
             echo "- API: ${SERVICE_URL}/api/snapshot"
             echo ""
-            echo "Snapshot source: \`gs://${BUCKET_NAME}/monitoring/latest.json\`"
+            echo "- Data: live GCP API queries + GCS snapshots"
           } >> "$GITHUB_STEP_SUMMARY"
