@@ -12,7 +12,7 @@ main:
           - reportJob: ${default(map.get(args, "reportJob"), "lead-match-report")}
           - matchRunId: ${default(map.get(args, "matchRunId"), "")}
           - reportBucket: ${default(map.get(args, "reportBucket"), "lead-match-ctoteam")}
-          - reportPrefix: ${default(map.get(args, "reportPrefix",), "reports/lead_match/" + project + "/" + warehouse + "/" + matchRunId)}
+          - reportPrefix: ${default(map.get(args, "reportPrefix"), "reports/lead_match/" + project + "/" + warehouse + "/" + matchRunId)}
           - leadResult: null
           - posResult: null
 
