@@ -9,7 +9,7 @@ main:
           - leadJob: ${default(map.get(args, "leadJob"), "lead-match-lead-embeddings")}
           - posJob: ${default(map.get(args, "posJob"), "lead-match-pos-embeddings")}
           - matchJob: ${default(map.get(args, "matchJob"), "lead-match-fuzzy-match")}
-          - indexJob: ${default(map.get(args, "indexJob"), "lead-match-ensure-indexes")}
+          - indexJob: ${default(map.get(args, "indexJob"), "lead-match-fuzzy-match")}
           - reportJob: ${default(map.get(args, "reportJob"), "lead-match-report")}
           - matchRunId: ${default(map.get(args, "matchRunId"), "")}
           - reportBucket: ${default(map.get(args, "reportBucket"), "lead-match-ctoteam")}
@@ -188,13 +188,21 @@ waitForRunJobExecution:
         switch:
           - condition: ${sys.now() - pollStartedAt > maxWaitSeconds}
             next: timeout
+    - extractCounts:
+        assign:
+          - executionStatus: ${default(map.get(execution, "status"), map.new())}
+          - executionSpec: ${default(map.get(execution, "spec"), map.new())}
+          - failedCount: ${default(map.get(execution, "failedCount"), default(map.get(executionStatus, "failedCount"), 0))}
+          - cancelledCount: ${default(map.get(execution, "cancelledCount"), default(map.get(executionStatus, "cancelledCount"), 0))}
+          - succeededCount: ${default(map.get(execution, "succeededCount"), default(map.get(executionStatus, "succeededCount"), 0))}
+          - taskCount: ${default(map.get(execution, "taskCount"), default(map.get(executionSpec, "taskCount"), 1))}
     - checkCompletion:
         switch:
-          - condition: ${execution.status != null AND execution.status.succeededCount != null AND execution.spec != null AND execution.spec.taskCount != null AND execution.status.succeededCount >= execution.spec.taskCount}
+          - condition: ${taskCount > 0 AND succeededCount >= taskCount}
             next: returnSuccess
-          - condition: ${execution.status != null AND execution.status.failedCount != null AND execution.status.failedCount > 0}
+          - condition: ${failedCount > 0}
             next: fail
-          - condition: ${execution.status != null AND execution.status.cancelledCount != null AND execution.status.cancelledCount > 0}
+          - condition: ${cancelledCount > 0}
             next: fail
     - sleep:
         call: sys.sleep
@@ -205,6 +213,10 @@ waitForRunJobExecution:
         return:
           executionName: ${executionName}
           execution: ${execution}
+          taskCount: ${taskCount}
+          succeededCount: ${succeededCount}
+          failedCount: ${failedCount}
+          cancelledCount: ${cancelledCount}
     - timeout:
         raise: '${"Timed out waiting for Cloud Run Job execution after " + json.encode_to_string(maxWaitSeconds) + " seconds: " + executionName + " last_execution=" + json.encode_to_string(execution)}'
     - fail:
