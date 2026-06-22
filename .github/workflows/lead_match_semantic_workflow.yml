@@ -53,6 +53,29 @@ on:
         options:
           - "true"
           - "false"
+      dry_run:
+        description: "Run fuzzy matching without writing match decisions?"
+        required: true
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+      lead_embedding_limit:
+        description: "Max leads to embed; blank/all means no cap"
+        required: false
+        default: ""
+        type: string
+      pos_embedding_limit:
+        description: "Max POS rows to embed; blank/all means no cap"
+        required: false
+        default: ""
+        type: string
+      match_lead_limit:
+        description: "Max embedded leads to fuzzy-match; blank/all means no cap"
+        required: false
+        default: ""
+        type: string
 
 jobs:
   trigger:
@@ -183,6 +206,10 @@ jobs:
       - name: Build workflow payload
         env:
           RAW_WAREHOUSE: ${{ github.event.inputs.warehouse }}
+          RAW_DRY_RUN: ${{ github.event.inputs.dry_run }}
+          RAW_LEAD_EMBEDDING_LIMIT: ${{ github.event.inputs.lead_embedding_limit }}
+          RAW_POS_EMBEDDING_LIMIT: ${{ github.event.inputs.pos_embedding_limit }}
+          RAW_MATCH_LEAD_LIMIT: ${{ github.event.inputs.match_lead_limit }}
         run: |
           set -euo pipefail
           WAREHOUSE="$(printf '%s' "${RAW_WAREHOUSE}" | tr -d '[:space:]')"
@@ -195,9 +222,30 @@ jobs:
             fi
             WAREHOUSE_LABEL="${WAREHOUSE}"
           fi
+          normalize_limit() {
+            local raw="$1"
+            raw="$(printf '%s' "${raw}" | tr -d '[:space:]')"
+            if [[ -z "${raw}" || "${raw,,}" == "all" ]]; then
+              printf ''
+              return
+            fi
+            if [[ ! "${raw}" =~ ^[0-9]+$ || "${raw}" == "0" ]]; then
+              echo "Invalid limit input: ${raw}" >&2
+              exit 1
+            fi
+            printf '%s' "${raw}"
+          }
+          DRY_RUN="${RAW_DRY_RUN:-false}"
+          if [[ "${DRY_RUN}" != "true" && "${DRY_RUN}" != "false" ]]; then
+            echo "Invalid dry_run input: ${DRY_RUN}" >&2
+            exit 1
+          fi
+          LEAD_EMBEDDING_LIMIT="$(normalize_limit "${RAW_LEAD_EMBEDDING_LIMIT:-}")"
+          POS_EMBEDDING_LIMIT="$(normalize_limit "${RAW_POS_EMBEDDING_LIMIT:-}")"
+          MATCH_LEAD_LIMIT="$(normalize_limit "${RAW_MATCH_LEAD_LIMIT:-}")"
           MATCH_RUN_ID="github-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${WAREHOUSE_LABEL}"
           FINAL_REPORT_PREFIX="reports/lead_match/${PROJECT_ID}/${WAREHOUSE_LABEL}/${MATCH_RUN_ID}"
-          PAYLOAD="{\"project\":\"${PROJECT_ID}\",\"region\":\"${REGION}\",\"warehouse\":\"${WAREHOUSE_LABEL}\",\"matchRunId\":\"${MATCH_RUN_ID}\",\"reportBucket\":\"${BUCKET_NAME}\",\"reportPrefix\":\"${FINAL_REPORT_PREFIX}\"}"
+          PAYLOAD="{\"project\":\"${PROJECT_ID}\",\"region\":\"${REGION}\",\"warehouse\":\"${WAREHOUSE_LABEL}\",\"matchRunId\":\"${MATCH_RUN_ID}\",\"reportBucket\":\"${BUCKET_NAME}\",\"reportPrefix\":\"${FINAL_REPORT_PREFIX}\",\"dryRun\":\"${DRY_RUN}\",\"leadEmbeddingLimit\":\"${LEAD_EMBEDDING_LIMIT}\",\"posEmbeddingLimit\":\"${POS_EMBEDDING_LIMIT}\",\"matchLeadLimit\":\"${MATCH_LEAD_LIMIT}\"}"
           HANDOFF_PREFIX="preflight/lead_match/${PROJECT_ID}/${WAREHOUSE_LABEL}"
           READY_URI="gs://${BUCKET_NAME}/${HANDOFF_PREFIX}/READY"
           PREFLIGHT_REPORT_URI="gs://${BUCKET_NAME}/${HANDOFF_PREFIX}/report.md"
@@ -216,6 +264,10 @@ jobs:
           echo "FINAL_SUMMARY_URI=${FINAL_SUMMARY_URI}" >> "$GITHUB_ENV"
           echo "FINAL_MATCHES_URI=${FINAL_MATCHES_URI}" >> "$GITHUB_ENV"
           echo "FINAL_REPORT_URI=${FINAL_REPORT_URI}" >> "$GITHUB_ENV"
+          echo "DRY_RUN=${DRY_RUN}" >> "$GITHUB_ENV"
+          echo "LEAD_EMBEDDING_LIMIT=${LEAD_EMBEDDING_LIMIT}" >> "$GITHUB_ENV"
+          echo "POS_EMBEDDING_LIMIT=${POS_EMBEDDING_LIMIT}" >> "$GITHUB_ENV"
+          echo "MATCH_LEAD_LIMIT=${MATCH_LEAD_LIMIT}" >> "$GITHUB_ENV"
 
       - name: Prepare lightweight readiness contract
         if: github.event.inputs.prepare_readiness == 'true'
@@ -376,6 +428,10 @@ jobs:
             echo "- Runtime image: \`${RUNTIME_IMAGE:-unknown}\`"
             echo "- Runtime Cloud Build ID: \`${RUNTIME_BUILD_ID:-not-run}\`"
             echo "- Warehouse: \`${WAREHOUSE_LABEL:-unknown}\`"
+            echo "- Dry run: \`${DRY_RUN:-unknown}\`"
+            echo "- Lead embedding limit: \`${LEAD_EMBEDDING_LIMIT:-all}\`"
+            echo "- POS embedding limit: \`${POS_EMBEDDING_LIMIT:-all}\`"
+            echo "- Match lead limit: \`${MATCH_LEAD_LIMIT:-all}\`"
             echo "- READY URI: \`${READY_URI:-unknown}\`"
             echo "- Preflight report URI: \`${PREFLIGHT_REPORT_URI:-unknown}\`"
             echo "- Preflight result URI: \`${PREFLIGHT_RESULT_URI:-unknown}\`"
