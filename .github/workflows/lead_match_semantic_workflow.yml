@@ -135,17 +135,28 @@ jobs:
         run: |
           set -euo pipefail
           gcloud config set project "${PROJECT_ID}"
+          ENV_VARS="EMBEDDING_BATCH_SIZE=100,EMBEDDING_MAX_WORKERS=3,EMBEDDING_BATCH_WORKERS=3,EMBEDDING_MAX_RETRIES=6,EMBEDDING_REQUEST_LOG_EVERY=100,MATCH_BATCH_SIZE=100,MATCH_STATEMENT_TIMEOUT_MS=900000,HNSW_EF_SEARCH=100"
           for JOB in \
             lead-match-lead-embeddings \
             lead-match-pos-embeddings \
             lead-match-ensure-indexes \
             lead-match-fuzzy-match \
             lead-match-report; do
-            gcloud run jobs update "${JOB}" \
-              --project="${PROJECT_ID}" \
-              --region="${REGION}" \
-              --image="${RUNTIME_IMAGE}" \
-              --update-env-vars="EMBEDDING_BATCH_SIZE=100,EMBEDDING_MAX_WORKERS=3,EMBEDDING_BATCH_WORKERS=3,EMBEDDING_MAX_RETRIES=6,EMBEDDING_REQUEST_LOG_EVERY=100,MATCH_BATCH_SIZE=100,MATCH_STATEMENT_TIMEOUT_MS=900000,HNSW_EF_SEARCH=100"
+            if gcloud run jobs describe "${JOB}" --project="${PROJECT_ID}" --region="${REGION}" >/dev/null 2>&1; then
+              gcloud run jobs update "${JOB}" \
+                --project="${PROJECT_ID}" \
+                --region="${REGION}" \
+                --image="${RUNTIME_IMAGE}" \
+                --update-env-vars="${ENV_VARS}"
+            else
+              gcloud run jobs create "${JOB}" \
+                --project="${PROJECT_ID}" \
+                --region="${REGION}" \
+                --image="${RUNTIME_IMAGE}" \
+                --set-env-vars="${ENV_VARS}" \
+                --max-retries=0 \
+                --task-timeout=1800
+            fi
           done
 
       - name: Deploy Cloud Workflow definition
