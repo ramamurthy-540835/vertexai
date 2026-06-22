@@ -1,4 +1,6 @@
 import argparse
+import csv
+import io
 import json
 import os
 import random
@@ -12,6 +14,7 @@ from datetime import UTC, datetime
 import numpy as np
 import pg8000.dbapi
 from google import genai
+from google.cloud import storage
 from google.genai import types
 
 from lead_match_runtime.business_rules import (
@@ -64,6 +67,7 @@ def optional_positive_int_env(name):
 
 LEAD_EMBEDDING_LIMIT = optional_positive_int_env("LEAD_EMBEDDING_LIMIT")
 POS_EMBEDDING_LIMIT = optional_positive_int_env("POS_EMBEDDING_LIMIT")
+EXACT_HANDOFF_URI = os.environ.get("EXACT_HANDOFF_URI", "").strip()
 
 EXPECTED_PROJECT = os.environ.get("EXPECTED_PROJECT_ID", BUSINESS_RULES["environment"]["project_id"])
 EXPECTED_CLOUDSQL_CONNECTION_NAME = os.environ.get(
@@ -988,105 +992,105 @@ def run_exact_match():
         conn.close()
 
 
+def parse_gs_uri(uri):
+    if not uri.startswith("gs://"):
+        raise RuntimeError(f"Expected a gs:// URI, got {uri!r}")
+    bucket_and_name = uri[5:]
+    if "/" not in bucket_and_name:
+        raise RuntimeError(f"Expected gs://bucket/object URI, got {uri!r}")
+    bucket, name = bucket_and_name.split("/", 1)
+    if not bucket or not name:
+        raise RuntimeError(f"Expected gs://bucket/object URI, got {uri!r}")
+    return bucket, name
+
+
+def load_exact_handoff_rows(uri):
+    bucket_name, object_name = parse_gs_uri(uri)
+    client = storage.Client()
+    blob = client.bucket(bucket_name).blob(object_name)
+    if not blob.exists():
+        raise RuntimeError(f"Exact handoff file does not exist: {uri}")
+    content = blob.download_as_text()
+    reader = csv.DictReader(io.StringIO(content))
+    required = {"lead_id", "pos_id", "match_type", "similarity_score", "warehouse_number"}
+    missing = sorted(required - set(reader.fieldnames or []))
+    if missing:
+        raise RuntimeError(f"Exact handoff file missing required columns {missing}: {uri}")
+
+    rows = []
+    scope = warehouse_scope()
+    allowed_warehouses = None if scope.is_all else set(scope.values)
+    for row in reader:
+        lead_id = str(row.get("lead_id") or "").strip()
+        pos_id = str(row.get("pos_id") or "").strip()
+        match_type = str(row.get("match_type") or "").strip()
+        match_result = str(row.get("match_result") or "").strip()
+        if not lead_id or not pos_id or match_type.lower() != "exact":
+            continue
+        if match_result and match_result not in {
+            "Match",
+            "Potential",
+            "Closed - Match",
+            "Closed - Existing",
+        }:
+            continue
+        try:
+            score = float(row.get("similarity_score") or 0)
+        except (TypeError, ValueError):
+            score = 0.0
+        try:
+            warehouse_number = int(float(row.get("warehouse_number") or 0))
+        except (TypeError, ValueError):
+            warehouse_number = None
+        if allowed_warehouses is not None and warehouse_number not in allowed_warehouses:
+            continue
+        rows.append((lead_id, pos_id, warehouse_number, score))
+    return rows
+
+
 def _run_exact_match(conn, job_started):
     cursor = conn.cursor()
     schema = schema_name()
     run_id = os.environ.get("MATCH_RUN_ID") or f"workflow-{uuid.uuid4().hex[:12]}"
-    limit = optional_positive_int_env("MATCH_LEAD_LIMIT")
-    warehouse_clause, warehouse_params = warehouse_sql_filter("l")
-    exact_score = 100.0
-    exact_type = "Exact"
-    lead_limit_clause = ""
-    params = [DEFAULT_FISCAL_YEAR, DEFAULT_FISCAL_PERIOD, *warehouse_params]
-    if limit is not None:
-        lead_limit_clause = "LIMIT %s"
-        params.append(limit)
-    params.extend([run_id, exact_type, exact_score, exact_score, exact_score, exact_score])
-
     print(f"Warehouse scope: {warehouse_scope_label()}")
-    print(f"Exact match run: {run_id}; lead_limit={limit or 'all'}; dry_run={DRY_RUN}")
+    print(f"Exact handoff ingest run: {run_id}; uri={EXACT_HANDOFF_URI or '<none>'}; dry_run={DRY_RUN}")
 
-    cursor.execute(
-        f"""
-        WITH eligible_leads AS (
-            SELECT
-                l.lead_id,
-                l.warehouse_number,
-                COALESCE(l.fiscal_year, %s) AS lead_fiscal_year,
-                COALESCE(l.fiscal_period, %s) AS lead_fiscal_period,
-                COALESCE(l.week, 0) AS lead_week,
-                UPPER(REGEXP_REPLACE(TRIM(COALESCE(a.business_name, '')), '[[:space:]]+', ' ', 'g')) AS lead_business_name,
-                UPPER(REGEXP_REPLACE(TRIM(COALESCE(a.address_line_one, '')), '[[:space:]]+', ' ', 'g')) AS lead_address_line_one,
-                UPPER(REGEXP_REPLACE(TRIM(COALESCE(a.city, '')), '[[:space:]]+', ' ', 'g')) AS lead_city,
-                UPPER(TRIM(COALESCE(a.state, ''))) AS lead_state,
-                LEFT(REGEXP_REPLACE(COALESCE(a.zip_code, ''), '[^0-9]', '', 'g'), 5) AS lead_zip
-            FROM "{schema}"."lead" l
-            JOIN "{schema}"."account" a ON a.account_id = l.account_id
-            WHERE 1 = 1
-              {warehouse_clause}
-            ORDER BY l.lead_id
-            {lead_limit_clause}
-        ),
-        exact_candidates AS (
-            SELECT
-                l.lead_id,
-                t.pos_id,
-                l.warehouse_number,
-                CASE
-                    WHEN (
-                        t.fiscal_year < l.lead_fiscal_year
-                        OR (t.fiscal_year = l.lead_fiscal_year AND t.fiscal_period < l.lead_fiscal_period)
-                        OR (
-                            t.fiscal_year = l.lead_fiscal_year
-                            AND t.fiscal_period = l.lead_fiscal_period
-                            AND COALESCE(t.week, 0) < l.lead_week
-                        )
-                    )
-                    THEN 'Closed - Existing'
-                    ELSE 'Closed - Match'
-                END AS lifecycle_state,
-                t.fiscal_year,
-                t.fiscal_period,
-                COALESCE(t.week, 0) AS week
-            FROM eligible_leads l
-            JOIN "{schema}"."transaction" t
-              ON t.warehouse_number = l.warehouse_number
-             AND UPPER(REGEXP_REPLACE(TRIM(COALESCE(t.business_name, '')), '[[:space:]]+', ' ', 'g')) = l.lead_business_name
-             AND UPPER(REGEXP_REPLACE(TRIM(COALESCE(t.address_line_one, '')), '[[:space:]]+', ' ', 'g')) = l.lead_address_line_one
-             AND UPPER(REGEXP_REPLACE(TRIM(COALESCE(t.city, '')), '[[:space:]]+', ' ', 'g')) = l.lead_city
-             AND UPPER(TRIM(COALESCE(t.state, ''))) = l.lead_state
-             AND LEFT(REGEXP_REPLACE(COALESCE(t.zip_code, ''), '[^0-9]', '', 'g'), 5) = l.lead_zip
-            WHERE l.lead_business_name <> ''
-              AND l.lead_address_line_one <> ''
-              AND l.lead_city <> ''
-              AND l.lead_state <> ''
-              AND l.lead_zip <> ''
+    if not EXACT_HANDOFF_URI:
+        print("No EXACT_HANDOFF_URI provided; skipping exact handoff ingest.")
+        return
+
+    handoff_rows = load_exact_handoff_rows(EXACT_HANDOFF_URI)
+    print(f"Exact handoff rows eligible for ingest: {len(handoff_rows)}")
+    insert_rows = [
+        (
+            run_id,
+            lead_id,
+            pos_id,
+            warehouse_number,
+            "Exact",
+            score,
+            score,
+            score,
+            score,
+            "canonical primary_matching.py exact handoff",
+            "primary-matching",
         )
+        for lead_id, pos_id, warehouse_number, score in handoff_rows
+    ]
+    execute_many_values(
+        cursor,
+        f"""
         INSERT INTO "{schema}"."match_decision_detail" (
             match_run_id, lead_id, pos_id, warehouse_number, match_type, final_score,
             combined_field_score, full_address_score, business_name_score,
             weight_formula, embedding_model, created_date
         )
-        SELECT
-            %s,
-            lead_id,
-            pos_id,
-            warehouse_number,
-            %s,
-            %s,
-            %s,
-            %s,
-            %s,
-            'deterministic business_name + full_address equality',
-            'deterministic-exact',
-            CURRENT_TIMESTAMP
-        FROM exact_candidates
-        ORDER BY lead_id, fiscal_year, fiscal_period, week, pos_id
-        ON CONFLICT (match_run_id, lead_id, pos_id) DO NOTHING
         """,
-        params,
+        insert_rows,
+        11,
+        conflict_clause="ON CONFLICT (match_run_id, lead_id, pos_id) DO NOTHING",
     )
-    inserted = cursor.rowcount
+    inserted = len(insert_rows)
     conn.commit()
 
     cursor.execute(
