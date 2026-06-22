@@ -6,6 +6,7 @@ main:
           - project: ${default(map.get(args, "project"), sys.get_env("GOOGLE_CLOUD_PROJECT_ID"))}
           - region: ${default(map.get(args, "region"), "us-central1")}
           - warehouse: ${default(map.get(args, "warehouse"), "all")}
+          - exactJob: ${default(map.get(args, "exactJob"), "lead-match-exact-match")}
           - leadJob: ${default(map.get(args, "leadJob"), "lead-match-lead-embeddings")}
           - posJob: ${default(map.get(args, "posJob"), "lead-match-pos-embeddings")}
           - matchJob: ${default(map.get(args, "matchJob"), "lead-match-fuzzy-match")}
@@ -18,8 +19,30 @@ main:
           - leadEmbeddingLimit: ${default(map.get(args, "leadEmbeddingLimit"), "")}
           - posEmbeddingLimit: ${default(map.get(args, "posEmbeddingLimit"), "")}
           - matchLeadLimit: ${default(map.get(args, "matchLeadLimit"), "")}
+          - exactResult: null
           - leadResult: null
           - posResult: null
+
+    - runExactMatch:
+        call: runCloudRunJob
+        args:
+          project: ${project}
+          region: ${region}
+          jobName: ${exactJob}
+          containerArgs:
+            - exact-match
+          envVars:
+            - name: WAREHOUSE
+              value: ${warehouse}
+            - name: WAREHOUSE_SCOPE
+              value: ${warehouse}
+            - name: MATCH_RUN_ID
+              value: ${matchRunId}
+            - name: DRY_RUN
+              value: ${dryRun}
+            - name: MATCH_LEAD_LIMIT
+              value: ${matchLeadLimit}
+        result: exactResult
 
     - runEmbeddingJobs:
         parallel:
@@ -138,6 +161,7 @@ main:
           leadEmbeddingLimit: ${leadEmbeddingLimit}
           posEmbeddingLimit: ${posEmbeddingLimit}
           matchLeadLimit: ${matchLeadLimit}
+          exact: ${exactResult}
           lead: ${leadResult}
           pos: ${posResult}
           indexes: ${indexResult}

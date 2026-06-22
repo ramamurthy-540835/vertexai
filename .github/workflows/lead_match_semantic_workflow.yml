@@ -165,14 +165,25 @@ jobs:
           ENV_VARS="${BASE_ENV_VARS},${PERF_ENV_VARS}"
           for JOB in \
             lead-match-ensure-indexes \
+            lead-match-exact-match \
             lead-match-lead-embeddings \
             lead-match-pos-embeddings \
             lead-match-fuzzy-match \
             lead-match-report; do
             if ! gcloud run jobs describe "${JOB}" --project="${PROJECT_ID}" --region="${REGION}" >/dev/null 2>&1; then
-              echo "Required Cloud Run Job ${JOB} is missing." >&2
-              echo "Create it once with the DB connector and DB secrets before updating runtime images." >&2
-              exit 1
+              echo "Cloud Run Job ${JOB} is missing; creating it with DB connector and secrets."
+              gcloud run jobs create "${JOB}" \
+                --project="${PROJECT_ID}" \
+                --region="${REGION}" \
+                --image="${RUNTIME_IMAGE}" \
+                --add-cloudsql-instances="${CLOUDSQL_CONNECTION_NAME}" \
+                --set-env-vars="${ENV_VARS}" \
+                --set-secrets="DB_PASSWORD=lead-match-db-password:latest" \
+                --task-timeout=3600 \
+                --max-retries=0 \
+                --cpu=2 \
+                --memory=4Gi
+              continue
             fi
             gcloud run jobs update "${JOB}" \
               --project="${PROJECT_ID}" \

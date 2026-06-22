@@ -951,6 +951,138 @@ def write_match_audit(cursor, schema, run_id, lead_count, match_count, status, c
     )
 
 
+def run_exact_match():
+    job_started = time.monotonic()
+    conn = connect()
+    try:
+        _run_exact_match(conn, job_started)
+    finally:
+        conn.close()
+
+
+def _run_exact_match(conn, job_started):
+    cursor = conn.cursor()
+    schema = schema_name()
+    run_id = os.environ.get("MATCH_RUN_ID") or f"workflow-{uuid.uuid4().hex[:12]}"
+    limit = optional_positive_int_env("MATCH_LEAD_LIMIT")
+    warehouse_clause, warehouse_params = warehouse_sql_filter("l")
+    exact_score = 100.0
+    exact_type = "Exact"
+    lead_limit_clause = ""
+    params = [DEFAULT_FISCAL_YEAR, DEFAULT_FISCAL_PERIOD, *warehouse_params]
+    if limit is not None:
+        lead_limit_clause = "LIMIT %s"
+        params.append(limit)
+    params.extend([run_id, exact_type, exact_score, exact_score, exact_score, exact_score])
+
+    print(f"Warehouse scope: {warehouse_scope_label()}")
+    print(f"Exact match run: {run_id}; lead_limit={limit or 'all'}; dry_run={DRY_RUN}")
+
+    cursor.execute(
+        f"""
+        WITH eligible_leads AS (
+            SELECT
+                l.lead_id,
+                l.warehouse_number,
+                COALESCE(l.fiscal_year, %s) AS lead_fiscal_year,
+                COALESCE(l.fiscal_period, %s) AS lead_fiscal_period,
+                COALESCE(l.week, 0) AS lead_week,
+                UPPER(REGEXP_REPLACE(TRIM(COALESCE(a.business_name, '')), '[[:space:]]+', ' ', 'g')) AS lead_business_name,
+                UPPER(REGEXP_REPLACE(TRIM(COALESCE(a.address_line_one, '')), '[[:space:]]+', ' ', 'g')) AS lead_address_line_one,
+                UPPER(REGEXP_REPLACE(TRIM(COALESCE(a.city, '')), '[[:space:]]+', ' ', 'g')) AS lead_city,
+                UPPER(TRIM(COALESCE(a.state, ''))) AS lead_state,
+                LEFT(REGEXP_REPLACE(COALESCE(a.zip_code, ''), '[^0-9]', '', 'g'), 5) AS lead_zip
+            FROM "{schema}"."lead" l
+            JOIN "{schema}"."account" a ON a.account_id = l.account_id
+            WHERE 1 = 1
+              {warehouse_clause}
+            ORDER BY l.lead_id
+            {lead_limit_clause}
+        ),
+        exact_candidates AS (
+            SELECT
+                l.lead_id,
+                t.pos_id,
+                l.warehouse_number,
+                CASE
+                    WHEN (
+                        t.fiscal_year < l.lead_fiscal_year
+                        OR (t.fiscal_year = l.lead_fiscal_year AND t.fiscal_period < l.lead_fiscal_period)
+                        OR (
+                            t.fiscal_year = l.lead_fiscal_year
+                            AND t.fiscal_period = l.lead_fiscal_period
+                            AND COALESCE(t.week, 0) < l.lead_week
+                        )
+                    )
+                    THEN 'Closed - Existing'
+                    ELSE 'Closed - Match'
+                END AS lifecycle_state,
+                t.fiscal_year,
+                t.fiscal_period,
+                COALESCE(t.week, 0) AS week
+            FROM eligible_leads l
+            JOIN "{schema}"."transaction" t
+              ON t.warehouse_number = l.warehouse_number
+             AND UPPER(REGEXP_REPLACE(TRIM(COALESCE(t.business_name, '')), '[[:space:]]+', ' ', 'g')) = l.lead_business_name
+             AND UPPER(REGEXP_REPLACE(TRIM(COALESCE(t.address_line_one, '')), '[[:space:]]+', ' ', 'g')) = l.lead_address_line_one
+             AND UPPER(REGEXP_REPLACE(TRIM(COALESCE(t.city, '')), '[[:space:]]+', ' ', 'g')) = l.lead_city
+             AND UPPER(TRIM(COALESCE(t.state, ''))) = l.lead_state
+             AND LEFT(REGEXP_REPLACE(COALESCE(t.zip_code, ''), '[^0-9]', '', 'g'), 5) = l.lead_zip
+            WHERE l.lead_business_name <> ''
+              AND l.lead_address_line_one <> ''
+              AND l.lead_city <> ''
+              AND l.lead_state <> ''
+              AND l.lead_zip <> ''
+        )
+        INSERT INTO "{schema}"."match_decision_detail" (
+            match_run_id, lead_id, pos_id, warehouse_number, match_type, final_score,
+            combined_field_score, full_address_score, business_name_score,
+            weight_formula, embedding_model, created_date
+        )
+        SELECT
+            %s,
+            lead_id,
+            pos_id,
+            warehouse_number,
+            %s,
+            %s,
+            %s,
+            %s,
+            %s,
+            'deterministic business_name + full_address equality',
+            'deterministic-exact',
+            CURRENT_TIMESTAMP
+        FROM exact_candidates
+        ORDER BY lead_id, fiscal_year, fiscal_period, week, pos_id
+        ON CONFLICT (match_run_id, lead_id, pos_id) DO NOTHING
+        """,
+        params,
+    )
+    inserted = cursor.rowcount
+    conn.commit()
+
+    cursor.execute(
+        f"""
+        SELECT COUNT(DISTINCT lead_id), COUNT(DISTINCT pos_id)
+        FROM "{schema}"."match_decision_detail"
+        WHERE match_run_id = %s
+          AND lower(match_type) = 'exact'
+        """,
+        (run_id,),
+    )
+    exact_leads, exact_pos = cursor.fetchone()
+    print(
+        f"Inserted exact match decision rows: {inserted}; "
+        f"exact_leads={exact_leads}; exact_pos={exact_pos}; "
+        f"duration_seconds={time.monotonic() - job_started:.2f}"
+    )
+    if inserted > 0 and not DRY_RUN:
+        write_back_match_results(conn, cursor, schema, run_id)
+    elif inserted > 0:
+        print("Dry-run exact business table writeback skipped; match_decision_detail guards fuzzy.")
+    conn.commit()
+
+
 def _run_fuzzy_match(conn, job_started):
     cursor = conn.cursor()
     schema = schema_name()
@@ -1434,7 +1566,16 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "task",
-        choices=("summary", "smoke", "lead-embeddings", "pos-embeddings", "fuzzy-match", "report", "ensure-indexes"),
+        choices=(
+            "summary",
+            "smoke",
+            "exact-match",
+            "lead-embeddings",
+            "pos-embeddings",
+            "fuzzy-match",
+            "report",
+            "ensure-indexes",
+        ),
     )
     args, remaining = parser.parse_known_args()
 
@@ -1444,6 +1585,8 @@ def main():
         from lead_match_runtime.smoke_test import main as smoke_main
         sys.argv = [sys.argv[0]] + remaining
         smoke_main()
+    elif args.task == "exact-match":
+        run_exact_match()
     elif args.task == "lead-embeddings":
         generate_lead_embeddings()
     elif args.task == "pos-embeddings":
