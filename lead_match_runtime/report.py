@@ -215,6 +215,7 @@ def run_report() -> dict:
     project = os.environ.get("GOOGLE_CLOUD_PROJECT", "ctoteam")
     bucket = os.environ.get("REPORT_BUCKET", "lead-match-ctoteam")
     match_run_id = os.environ.get("MATCH_RUN_ID")
+    dry_run = os.environ.get("DRY_RUN", "false").strip().lower() in {"1", "true", "yes", "y"}
     generated_at = datetime.now(UTC)
 
     conn = connect()
@@ -235,6 +236,7 @@ def run_report() -> dict:
             "schema": schema,
             "warehouse": warehouse,
             "match_run_id": match_run_id,
+            "dry_run": dry_run,
             "generated_at": generated_at.isoformat(),
             "cloudsql_connection_name": os.environ.get("CLOUDSQL_CONNECTION_NAME"),
             "cloudsql_backend_pid": backend_pid,
@@ -276,6 +278,7 @@ def run_report() -> dict:
                     f"- Schema: `{schema}`",
                     f"- Warehouse: `{warehouse}`",
                     f"- Match run ID: `{match_run_id}`",
+                    f"- Dry run: `{dry_run}`",
                     f"- Generated UTC: `{generated_at.isoformat()}`",
                     f"- Embedding model: `{EMBEDDING_MODEL}`",
                     f"- Embedding dimension: `{EMBEDDING_DIMENSION}`",
@@ -318,13 +321,21 @@ def run_report() -> dict:
             "REPORT_PREFIX",
             f"reports/lead_match/{project}/{warehouse}/{match_run_id}",
         ).strip("/")
+        if dry_run:
+            summary_name = "dryrun_summary.json"
+            csv_name = "dryrun_matches.csv"
+            md_name = "dryrun_report.md"
+        else:
+            summary_name = "summary.json"
+            csv_name = "matches.csv"
+            md_name = "report.md"
         summary["report_uris"] = {
-            "summary_json": _upload(bucket, summary_path, f"{prefix}/summary.json"),
-            "matches_csv": _upload(bucket, csv_path, f"{prefix}/matches.csv"),
-            "report_md": _upload(bucket, md_path, f"{prefix}/report.md"),
+            "summary_json": _upload(bucket, summary_path, f"{prefix}/{summary_name}"),
+            "matches_csv": _upload(bucket, csv_path, f"{prefix}/{csv_name}"),
+            "report_md": _upload(bucket, md_path, f"{prefix}/{md_name}"),
         }
         summary_path.write_text(json.dumps(summary, indent=2, default=_json_default) + "\n")
-        _upload(bucket, summary_path, f"{prefix}/summary.json")
+        _upload(bucket, summary_path, f"{prefix}/{summary_name}")
         print(json.dumps(summary, indent=2, default=_json_default))
         return summary
     finally:
