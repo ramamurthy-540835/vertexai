@@ -41,6 +41,21 @@ EMBEDDING_REQUEST_LOG_EVERY = max(0, int(os.environ.get("EMBEDDING_REQUEST_LOG_E
 MATCH_BATCH_SIZE = max(1, int(os.environ.get("MATCH_BATCH_SIZE", "100")))
 MATCH_STATEMENT_TIMEOUT_MS = int(os.environ.get("MATCH_STATEMENT_TIMEOUT_MS", "900000"))
 HNSW_EF_SEARCH = max(0, int(os.environ.get("HNSW_EF_SEARCH", "100")))
+DRY_RUN = os.environ.get("DRY_RUN", "false").strip().lower() in {"1", "true", "yes", "y"}
+
+
+def optional_positive_int_env(name):
+    raw = os.environ.get(name, "").strip()
+    if not raw or raw.lower() == "all":
+        return None
+    value = int(raw)
+    if value < 1:
+        raise RuntimeError(f"{name} must be blank, 'all', or a positive integer")
+    return value
+
+
+LEAD_EMBEDDING_LIMIT = optional_positive_int_env("LEAD_EMBEDDING_LIMIT")
+POS_EMBEDDING_LIMIT = optional_positive_int_env("POS_EMBEDDING_LIMIT")
 
 EXPECTED_PROJECT = os.environ.get("EXPECTED_PROJECT_ID", BUSINESS_RULES["environment"]["project_id"])
 EXPECTED_CLOUDSQL_CONNECTION_NAME = os.environ.get(
@@ -410,6 +425,10 @@ def lead_source_rows(cursor):
     warehouse_clause, warehouse_params = warehouse_sql_filter("l")
     params.extend(warehouse_params)
     exact_lead_clause = exact_lead_exclusion_clause(schema, "l.lead_id", params)
+    limit_clause = ""
+    if LEAD_EMBEDDING_LIMIT is not None:
+        limit_clause = "LIMIT %s"
+        params.append(LEAD_EMBEDDING_LIMIT)
 
     cursor.execute(
         f"""
@@ -430,7 +449,8 @@ def lead_source_rows(cursor):
         )
           {warehouse_clause}
           {exact_lead_clause}
-        ORDER BY l.lead_id;
+        ORDER BY l.lead_id
+        {limit_clause};
         """,
         params,
     )
@@ -443,6 +463,10 @@ def pos_source_rows(cursor):
     warehouse_clause, warehouse_params = warehouse_sql_filter("t")
     params.extend(warehouse_params)
     exact_pos_clause = exact_pos_exclusion_clause(schema, "t.pos_id", params)
+    limit_clause = ""
+    if POS_EMBEDDING_LIMIT is not None:
+        limit_clause = "LIMIT %s"
+        params.append(POS_EMBEDDING_LIMIT)
 
     cursor.execute(
         f"""
@@ -464,7 +488,8 @@ def pos_source_rows(cursor):
         )
           {warehouse_clause}
           {exact_pos_clause}
-        ORDER BY t.pos_id;
+        ORDER BY t.pos_id
+        {limit_clause};
         """,
         params,
     )
@@ -596,12 +621,18 @@ def process_embedding_batches(rows, build_insert_rows, insert_insert_rows, conn,
     max_workers = min(EMBEDDING_BATCH_WORKERS, len(batches))
     print(f"Embedding batch-level workers enabled: {max_workers}")
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = [
-            executor.submit(build_insert_rows, batch_number, batch)
+        futures = {
+            executor.submit(build_insert_rows, batch_number, batch): batch_number
             for batch_number, batch in batches
-        ]
+        }
         for future in as_completed(futures):
-            write_result(*future.result())
+            batch_number = futures[future]
+            try:
+                batch_num, insert_rows, duration = future.result()
+                write_result(batch_num, insert_rows, duration)
+            except Exception as e:
+                conn.rollback()
+                raise RuntimeError(f"Database write failed during parallel batch {batch_number}: {e}") from e
     return inserted
 
 
@@ -726,7 +757,7 @@ def _run_fuzzy_match(conn, job_started):
     cursor = conn.cursor()
     schema = schema_name()
     run_id = os.environ.get("MATCH_RUN_ID") or f"workflow-{uuid.uuid4().hex[:12]}"
-    limit = int(os.environ.get("MATCH_LEAD_LIMIT", "1000000"))
+    limit = optional_positive_int_env("MATCH_LEAD_LIMIT") or 1000000
     rules = BUSINESS_RULES
     recall_gate = float(rules["candidate_retrieval"]["recall_gate_min_similarity"])
     qualify_min = float(rules["confidence_bands"]["qualify_min_score"])
@@ -739,7 +770,7 @@ def _run_fuzzy_match(conn, job_started):
         f"Match lead limit: {limit}; match_batch_size: {MATCH_BATCH_SIZE}; "
         f"nearest_neighbor_limit: {nearest_neighbor_limit}; "
         f"statement_timeout_ms: {MATCH_STATEMENT_TIMEOUT_MS}; "
-        f"hnsw_ef_search: {HNSW_EF_SEARCH}"
+        f"hnsw_ef_search: {HNSW_EF_SEARCH}; dry_run: {DRY_RUN}"
     )
     configure_hnsw_search(conn, cursor)
     if MATCH_STATEMENT_TIMEOUT_MS > 0:
@@ -798,13 +829,9 @@ def _run_fuzzy_match(conn, job_started):
             recall_gate,
             nearest_neighbor_limit,
             qualify_min,
-            run_id,
-            ambiguity_delta,
-            EMBEDDING_MODEL,
         ])
         query_started = time.monotonic()
-        cursor.execute(
-            f"""
+        match_cte = f"""
             WITH lead_batch AS (
                 SELECT *
                 FROM "{schema}"."leads_embeddings"
@@ -878,6 +905,28 @@ def _run_fuzzy_match(conn, job_started):
                        ) AS next_pos_score
                 FROM ranked
             )
+        """
+        if DRY_RUN:
+            cursor.execute(
+                f"""
+                {match_cte}
+                SELECT count(*)
+                FROM best_unique_pos
+                WHERE pos_rank = 1;
+                """,
+                params,
+            )
+            batch_inserted = int(cursor.fetchone()[0])
+            conn.rollback()
+        else:
+            params.extend([
+                run_id,
+                ambiguity_delta,
+                EMBEDDING_MODEL,
+            ])
+            cursor.execute(
+                f"""
+                {match_cte}
             INSERT INTO "{schema}"."match_decision_detail" (
                 match_run_id, lead_id, pos_id, warehouse_number, match_type, final_score,
                 combined_field_score, full_address_score, business_name_score,
@@ -905,26 +954,28 @@ def _run_fuzzy_match(conn, job_started):
             WHERE pos_rank = 1
             ON CONFLICT (match_run_id, lead_id, pos_id) DO NOTHING;
             """,
-            params,
-        )
-        batch_inserted = cursor.rowcount
+                params,
+            )
+            batch_inserted = cursor.rowcount
+            conn.commit()
         inserted += batch_inserted
-        conn.commit()
         query_duration = time.monotonic() - query_started
         print(
             f"Fuzzy match batch {batch_number}: leads={len(lead_ids)}; "
-            f"processed_leads={processed_leads}; inserted_rows={batch_inserted}; "
+            f"processed_leads={processed_leads}; "
+            f"{'would_insert_rows' if DRY_RUN else 'inserted_rows'}={batch_inserted}; "
             f"batch_duration_seconds={query_duration:.2f}"
         )
 
-    conn.commit()
+    if not DRY_RUN:
+        conn.commit()
     if processed_leads == 0:
         print(
             "Warning: fuzzy match processed 0 leads after warehouse and exact-match filters",
             file=sys.stderr,
         )
     print(
-        f"Inserted match decision rows: {inserted}; "
+        f"{'Would insert' if DRY_RUN else 'Inserted'} match decision rows: {inserted}; "
         f"processed_leads={processed_leads}; "
         f"duration_seconds={time.monotonic() - job_started:.2f}"
     )
