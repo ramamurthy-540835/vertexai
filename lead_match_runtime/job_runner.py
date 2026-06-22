@@ -1,6 +1,4 @@
 import argparse
-import csv
-import io
 import json
 import os
 import random
@@ -14,7 +12,6 @@ from datetime import UTC, datetime
 import numpy as np
 import pg8000.dbapi
 from google import genai
-from google.cloud import storage
 from google.genai import types
 
 from lead_match_runtime.business_rules import (
@@ -67,7 +64,6 @@ def optional_positive_int_env(name):
 
 LEAD_EMBEDDING_LIMIT = optional_positive_int_env("LEAD_EMBEDDING_LIMIT")
 POS_EMBEDDING_LIMIT = optional_positive_int_env("POS_EMBEDDING_LIMIT")
-EXACT_HANDOFF_URI = os.environ.get("EXACT_HANDOFF_URI", "").strip()
 
 EXPECTED_PROJECT = os.environ.get("EXPECTED_PROJECT_ID", BUSINESS_RULES["environment"]["project_id"])
 EXPECTED_CLOUDSQL_CONNECTION_NAME = os.environ.get(
@@ -847,19 +843,25 @@ def write_back_match_results(conn, cursor, schema, run_id):
             )
         FROM tx_updates tx
         WHERE t.pos_id = tx.pos_id
-          AND NOT (
-              lower(t.match_type) IN ({placeholders})
-              AND (t.match_score IS NULL OR t.match_score >= %s)
-          )
-          AND NOT EXISTS (
-              SELECT 1
-              FROM "{schema}"."match_decision_detail" exact_m
-              WHERE exact_m.pos_id = t.pos_id
-                AND lower(exact_m.match_type) IN ({placeholders})
-                AND (exact_m.final_score IS NULL OR exact_m.final_score >= %s)
+          AND (
+              lower(tx.match_type) IN ({placeholders})
+              OR (
+                  NOT (
+                      lower(COALESCE(t.match_type, '')) IN ({placeholders})
+                      AND (t.match_score IS NULL OR t.match_score >= %s)
+                  )
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM "{schema}"."match_decision_detail" exact_m
+                      WHERE exact_m.pos_id = t.pos_id
+                        AND exact_m.match_run_id <> %s
+                        AND lower(exact_m.match_type) IN ({placeholders})
+                        AND (exact_m.final_score IS NULL OR exact_m.final_score >= %s)
+                  )
+              )
           )
         """,
-        (run_id, run_id, *types, min_score, *types, min_score),
+        (run_id, run_id, *types, *types, min_score, run_id, *types, min_score),
     )
     transaction_updates = cursor.rowcount
 
@@ -905,22 +907,34 @@ def write_back_match_results(conn, cursor, schema, run_id):
             updated_date = CURRENT_TIMESTAMP
         FROM lead_states
         WHERE l.lead_id = lead_states.lead_id
-          AND NOT EXISTS (
-              SELECT 1
-              FROM "{schema}"."match_decision_detail" exact_m
-              WHERE exact_m.lead_id = l.lead_id
-                AND lower(exact_m.match_type) IN ({placeholders})
-                AND (exact_m.final_score IS NULL OR exact_m.final_score >= %s)
-          )
-          AND NOT EXISTS (
-              SELECT 1
-              FROM "{schema}"."transaction" exact_t
-              WHERE exact_t.lead_id = l.lead_id
-                AND lower(exact_t.match_type) IN ({placeholders})
-                AND (exact_t.match_score IS NULL OR exact_t.match_score >= %s)
+          AND (
+              EXISTS (
+                  SELECT 1
+                  FROM "{schema}"."match_decision_detail" cur
+                  WHERE cur.lead_id = l.lead_id
+                    AND cur.match_run_id = %s
+                    AND lower(cur.match_type) IN ({placeholders})
+              )
+              OR (
+                  NOT EXISTS (
+                      SELECT 1
+                      FROM "{schema}"."match_decision_detail" exact_m
+                      WHERE exact_m.lead_id = l.lead_id
+                        AND exact_m.match_run_id <> %s
+                        AND lower(exact_m.match_type) IN ({placeholders})
+                        AND (exact_m.final_score IS NULL OR exact_m.final_score >= %s)
+                  )
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM "{schema}"."transaction" exact_t
+                      WHERE exact_t.lead_id = l.lead_id
+                        AND lower(exact_t.match_type) IN ({placeholders})
+                        AND (exact_t.match_score IS NULL OR exact_t.match_score >= %s)
+                  )
+              )
           )
         """,
-        (run_id, *types, min_score, *types, min_score),
+        (run_id, run_id, *types, run_id, *types, min_score, *types, min_score),
     )
     lead_updates = cursor.rowcount
     conn.commit()
@@ -992,105 +1006,60 @@ def run_exact_match():
         conn.close()
 
 
-def parse_gs_uri(uri):
-    if not uri.startswith("gs://"):
-        raise RuntimeError(f"Expected a gs:// URI, got {uri!r}")
-    bucket_and_name = uri[5:]
-    if "/" not in bucket_and_name:
-        raise RuntimeError(f"Expected gs://bucket/object URI, got {uri!r}")
-    bucket, name = bucket_and_name.split("/", 1)
-    if not bucket or not name:
-        raise RuntimeError(f"Expected gs://bucket/object URI, got {uri!r}")
-    return bucket, name
-
-
-def load_exact_handoff_rows(uri):
-    bucket_name, object_name = parse_gs_uri(uri)
-    client = storage.Client()
-    blob = client.bucket(bucket_name).blob(object_name)
-    if not blob.exists():
-        raise RuntimeError(f"Exact handoff file does not exist: {uri}")
-    content = blob.download_as_text()
-    reader = csv.DictReader(io.StringIO(content))
-    required = {"lead_id", "pos_id", "match_type", "similarity_score", "warehouse_number"}
-    missing = sorted(required - set(reader.fieldnames or []))
-    if missing:
-        raise RuntimeError(f"Exact handoff file missing required columns {missing}: {uri}")
-
-    rows = []
-    scope = warehouse_scope()
-    allowed_warehouses = None if scope.is_all else set(scope.values)
-    for row in reader:
-        lead_id = str(row.get("lead_id") or "").strip()
-        pos_id = str(row.get("pos_id") or "").strip()
-        match_type = str(row.get("match_type") or "").strip()
-        match_result = str(row.get("match_result") or "").strip()
-        if not lead_id or not pos_id or match_type.lower() != "exact":
-            continue
-        if match_result and match_result not in {
-            "Match",
-            "Potential",
-            "Closed - Match",
-            "Closed - Existing",
-        }:
-            continue
-        try:
-            score = float(row.get("similarity_score") or 0)
-        except (TypeError, ValueError):
-            score = 0.0
-        try:
-            warehouse_number = int(float(row.get("warehouse_number") or 0))
-        except (TypeError, ValueError):
-            warehouse_number = None
-        if allowed_warehouses is not None and warehouse_number not in allowed_warehouses:
-            continue
-        rows.append((lead_id, pos_id, warehouse_number, score))
-    return rows
-
-
 def _run_exact_match(conn, job_started):
     cursor = conn.cursor()
     schema = schema_name()
     run_id = os.environ.get("MATCH_RUN_ID") or f"workflow-{uuid.uuid4().hex[:12]}"
+    types = exact_match_types()
+    placeholders = _exact_type_placeholders(types)
+    min_score = exact_qualified_min_score()
+    warehouse_clause, warehouse_params = warehouse_sql_filter("t")
+    limit = optional_positive_int_env("MATCH_LEAD_LIMIT")
+    limit_clause = ""
+    params = [run_id, *types, min_score, *warehouse_params]
+    if limit is not None:
+        limit_clause = "LIMIT %s"
+        params.append(limit)
+
     print(f"Warehouse scope: {warehouse_scope_label()}")
-    print(f"Exact handoff ingest run: {run_id}; uri={EXACT_HANDOFF_URI or '<none>'}; dry_run={DRY_RUN}")
+    print(
+        f"Exact SQL handoff run: {run_id}; min_score={min_score}; "
+        f"match_lead_limit={limit or 'all'}; dry_run={DRY_RUN}"
+    )
 
-    if not EXACT_HANDOFF_URI:
-        print("No EXACT_HANDOFF_URI provided; skipping exact handoff ingest.")
-        return
-
-    handoff_rows = load_exact_handoff_rows(EXACT_HANDOFF_URI)
-    print(f"Exact handoff rows eligible for ingest: {len(handoff_rows)}")
-    insert_rows = [
-        (
-            run_id,
-            lead_id,
-            pos_id,
-            warehouse_number,
-            "Exact",
-            score,
-            score,
-            score,
-            score,
-            "canonical primary_matching.py exact handoff",
-            "primary-matching",
-        )
-        for lead_id, pos_id, warehouse_number, score in handoff_rows
-    ]
-    execute_many_values(
-        cursor,
+    cursor.execute(
         f"""
         INSERT INTO "{schema}"."match_decision_detail" (
             match_run_id, lead_id, pos_id, warehouse_number, match_type, final_score,
             combined_field_score, full_address_score, business_name_score,
             weight_formula, embedding_model, created_date
         )
+        SELECT
+            %s,
+            t.lead_id,
+            t.pos_id,
+            t.warehouse_number,
+            t.match_type,
+            COALESCE(t.match_score, 100),
+            COALESCE(t.match_score, 100),
+            COALESCE(t.match_score, 100),
+            COALESCE(t.match_score, 100),
+            'canonical primary exact match from transaction table',
+            'primary-matching',
+            CURRENT_TIMESTAMP
+        FROM "{schema}"."transaction" t
+        WHERE t.lead_id IS NOT NULL
+          AND t.pos_id IS NOT NULL
+          AND lower(t.match_type) IN ({placeholders})
+          AND (t.match_score IS NULL OR t.match_score >= %s)
+          {warehouse_clause}
+        ORDER BY t.lead_id, t.fiscal_year, t.fiscal_period, COALESCE(t.week, 0), t.pos_id
+        {limit_clause}
+        ON CONFLICT (match_run_id, lead_id, pos_id) DO NOTHING
         """,
-        insert_rows,
-        11,
-        conflict_clause="ON CONFLICT (match_run_id, lead_id, pos_id) DO NOTHING",
+        params,
     )
-    inserted = len(insert_rows)
+    inserted = cursor.rowcount
     conn.commit()
 
     cursor.execute(
@@ -1104,14 +1073,15 @@ def _run_exact_match(conn, job_started):
     )
     exact_leads, exact_pos = cursor.fetchone()
     print(
-        f"Inserted exact match decision rows: {inserted}; "
+        f"Copied exact match decision rows from transaction: {inserted}; "
         f"exact_leads={exact_leads}; exact_pos={exact_pos}; "
         f"duration_seconds={time.monotonic() - job_started:.2f}"
     )
-    if inserted > 0 and not DRY_RUN:
-        write_back_match_results(conn, cursor, schema, run_id)
-    elif inserted > 0:
-        print("Dry-run exact business table writeback skipped; match_decision_detail guards fuzzy.")
+    if inserted == 0:
+        print(
+            "No exact rows were copied from transaction. This is expected only if the "
+            "upstream exact update_cloud_sql stage has not populated transaction.match_type."
+        )
     conn.commit()
 
 
