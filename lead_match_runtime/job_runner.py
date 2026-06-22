@@ -42,6 +42,10 @@ MATCH_BATCH_SIZE = max(1, int(os.environ.get("MATCH_BATCH_SIZE", "100")))
 MATCH_STATEMENT_TIMEOUT_MS = int(os.environ.get("MATCH_STATEMENT_TIMEOUT_MS", "900000"))
 HNSW_EF_SEARCH = max(0, int(os.environ.get("HNSW_EF_SEARCH", "100")))
 DRY_RUN = os.environ.get("DRY_RUN", "false").strip().lower() in {"1", "true", "yes", "y"}
+DRY_RUN_MATCH_ROW_LIMIT = min(
+    10,
+    max(1, int(os.environ.get("DRY_RUN_MATCH_ROW_LIMIT", "10"))),
+)
 
 
 def optional_positive_int_env(name):
@@ -770,7 +774,8 @@ def _run_fuzzy_match(conn, job_started):
         f"Match lead limit: {limit}; match_batch_size: {MATCH_BATCH_SIZE}; "
         f"nearest_neighbor_limit: {nearest_neighbor_limit}; "
         f"statement_timeout_ms: {MATCH_STATEMENT_TIMEOUT_MS}; "
-        f"hnsw_ef_search: {HNSW_EF_SEARCH}; dry_run: {DRY_RUN}"
+        f"hnsw_ef_search: {HNSW_EF_SEARCH}; dry_run: {DRY_RUN}; "
+        f"dry_run_match_row_limit: {DRY_RUN_MATCH_ROW_LIMIT}"
     )
     configure_hnsw_search(conn, cursor)
     if MATCH_STATEMENT_TIMEOUT_MS > 0:
@@ -906,27 +911,24 @@ def _run_fuzzy_match(conn, job_started):
                 FROM ranked
             )
         """
+        insert_params = [*params]
+        insert_params.extend([
+            run_id,
+            ambiguity_delta,
+            EMBEDDING_MODEL,
+        ])
         if DRY_RUN:
-            cursor.execute(
-                f"""
-                {match_cte}
-                SELECT count(*)
-                FROM best_unique_pos
-                WHERE pos_rank = 1;
-                """,
-                params,
-            )
-            batch_inserted = int(cursor.fetchone()[0])
-            conn.rollback()
-        else:
-            params.extend([
-                run_id,
-                ambiguity_delta,
-                EMBEDDING_MODEL,
-            ])
-            cursor.execute(
-                f"""
-                {match_cte}
+            remaining_preview_rows = DRY_RUN_MATCH_ROW_LIMIT - inserted
+            if remaining_preview_rows <= 0:
+                print(
+                    f"Dry-run preview row limit reached: {DRY_RUN_MATCH_ROW_LIMIT}; "
+                    "skipping remaining candidate inserts"
+                )
+                break
+            insert_params.append(remaining_preview_rows)
+        cursor.execute(
+            f"""
+            {match_cte}
             INSERT INTO "{schema}"."match_decision_detail" (
                 match_run_id, lead_id, pos_id, warehouse_number, match_type, final_score,
                 combined_field_score, full_address_score, business_name_score,
@@ -952,30 +954,34 @@ def _run_fuzzy_match(conn, job_started):
                 CURRENT_TIMESTAMP
             FROM best_unique_pos
             WHERE pos_rank = 1
+            ORDER BY final_score DESC, lead_id, pos_id
+            {"LIMIT %s" if DRY_RUN else ""}
             ON CONFLICT (match_run_id, lead_id, pos_id) DO NOTHING;
             """,
-                params,
-            )
-            batch_inserted = cursor.rowcount
-            conn.commit()
+            insert_params,
+        )
+        batch_inserted = cursor.rowcount
+        conn.commit()
         inserted += batch_inserted
         query_duration = time.monotonic() - query_started
         print(
             f"Fuzzy match batch {batch_number}: leads={len(lead_ids)}; "
             f"processed_leads={processed_leads}; "
-            f"{'would_insert_rows' if DRY_RUN else 'inserted_rows'}={batch_inserted}; "
+            f"{'dry_run_preview_rows' if DRY_RUN else 'inserted_rows'}={batch_inserted}; "
             f"batch_duration_seconds={query_duration:.2f}"
         )
+        if DRY_RUN and inserted >= DRY_RUN_MATCH_ROW_LIMIT:
+            print(f"Dry-run preview row limit reached: {DRY_RUN_MATCH_ROW_LIMIT}")
+            break
 
-    if not DRY_RUN:
-        conn.commit()
+    conn.commit()
     if processed_leads == 0:
         print(
             "Warning: fuzzy match processed 0 leads after warehouse and exact-match filters",
             file=sys.stderr,
         )
     print(
-        f"{'Would insert' if DRY_RUN else 'Inserted'} match decision rows: {inserted}; "
+        f"{'Inserted dry-run preview' if DRY_RUN else 'Inserted'} match decision rows: {inserted}; "
         f"processed_leads={processed_leads}; "
         f"duration_seconds={time.monotonic() - job_started:.2f}"
     )
