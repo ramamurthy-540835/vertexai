@@ -46,6 +46,10 @@ DRY_RUN_MATCH_ROW_LIMIT = min(
     10,
     max(1, int(os.environ.get("DRY_RUN_MATCH_ROW_LIMIT", "10"))),
 )
+DRY_RUN_WRITEBACK_BUSINESS_TABLES = (
+    os.environ.get("DRY_RUN_WRITEBACK_BUSINESS_TABLES", "false").strip().lower()
+    in {"1", "true", "yes", "y"}
+)
 
 
 def optional_positive_int_env(name):
@@ -757,6 +761,144 @@ def run_fuzzy_match():
         conn.close()
 
 
+def write_back_match_results(conn, cursor, schema, run_id):
+    cursor.execute(
+        f"""
+        WITH base AS (
+            SELECT
+                m.match_run_id,
+                m.lead_id,
+                m.pos_id,
+                m.match_type,
+                m.final_score,
+                l.fiscal_year AS lead_fiscal_year,
+                l.fiscal_period AS lead_fiscal_period,
+                COALESCE(l.week, 0) AS lead_week,
+                t.fiscal_year AS pos_fiscal_year,
+                t.fiscal_period AS pos_fiscal_period,
+                COALESCE(t.week, 0) AS pos_week
+            FROM "{schema}"."match_decision_detail" m
+            JOIN "{schema}"."lead" l ON l.lead_id = m.lead_id
+            JOIN "{schema}"."transaction" t ON t.pos_id = m.pos_id
+            WHERE m.match_run_id = %s
+        ),
+        classified AS (
+            SELECT
+                *,
+                CASE
+                    WHEN match_type = 'Manual Review' THEN 'Potential'
+                    WHEN (
+                        pos_fiscal_year < lead_fiscal_year
+                        OR (pos_fiscal_year = lead_fiscal_year AND pos_fiscal_period < lead_fiscal_period)
+                        OR (
+                            pos_fiscal_year = lead_fiscal_year
+                            AND pos_fiscal_period = lead_fiscal_period
+                            AND pos_week < lead_week
+                        )
+                    ) THEN 'Closed - Existing'
+                    ELSE 'Closed - Match'
+                END AS lifecycle_state
+            FROM base
+        ),
+        primary_rows AS (
+            SELECT
+                *,
+                ROW_NUMBER() OVER (
+                    PARTITION BY lead_id
+                    ORDER BY pos_fiscal_year, pos_fiscal_period, pos_week, pos_id
+                ) AS primary_rank
+            FROM classified
+            WHERE lifecycle_state = 'Closed - Match'
+        ),
+        tx_updates AS (
+            SELECT
+                c.pos_id,
+                c.lead_id,
+                c.final_score,
+                c.match_type,
+                c.lifecycle_state,
+                COALESCE(p.primary_rank = 1, false) AS primary_transaction
+            FROM classified c
+            LEFT JOIN primary_rows p
+              ON p.match_run_id = c.match_run_id
+             AND p.lead_id = c.lead_id
+             AND p.pos_id = c.pos_id
+        )
+        UPDATE "{schema}"."transaction" t
+        SET
+            lead_id = tx.lead_id,
+            match_score = tx.final_score,
+            match_type = tx.match_type,
+            primary_transaction = tx.primary_transaction,
+            is_processed = true,
+            process_datetime = CURRENT_TIMESTAMP,
+            updated_by = 'lead_match_runtime',
+            updated_date = CURRENT_TIMESTAMP,
+            matching_comments = CONCAT(
+                'match_run_id=', %s,
+                '; lifecycle_state=', tx.lifecycle_state
+            )
+        FROM tx_updates tx
+        WHERE t.pos_id = tx.pos_id
+        """,
+        (run_id, run_id),
+    )
+    transaction_updates = cursor.rowcount
+
+    cursor.execute(
+        f"""
+        WITH classified AS (
+            SELECT
+                m.lead_id,
+                CASE
+                    WHEN m.match_type = 'Manual Review' THEN 'Potential'
+                    WHEN (
+                        t.fiscal_year < l.fiscal_year
+                        OR (t.fiscal_year = l.fiscal_year AND t.fiscal_period < l.fiscal_period)
+                        OR (
+                            t.fiscal_year = l.fiscal_year
+                            AND t.fiscal_period = l.fiscal_period
+                            AND COALESCE(t.week, 0) < COALESCE(l.week, 0)
+                        )
+                    ) THEN 'Closed - Existing'
+                    ELSE 'Closed - Match'
+                END AS match_result
+            FROM "{schema}"."match_decision_detail" m
+            JOIN "{schema}"."lead" l ON l.lead_id = m.lead_id
+            JOIN "{schema}"."transaction" t ON t.pos_id = m.pos_id
+            WHERE m.match_run_id = %s
+        ),
+        lead_states AS (
+            SELECT
+                lead_id,
+                CASE
+                    WHEN bool_or(match_result = 'Closed - Match') THEN 'Closed - Match'
+                    WHEN bool_or(match_result = 'Potential') THEN 'Potential'
+                    WHEN bool_or(match_result = 'Closed - Existing') THEN 'Closed - Existing'
+                    ELSE 'No Match'
+                END AS match_result
+            FROM classified
+            GROUP BY lead_id
+        )
+        UPDATE "{schema}"."lead" l
+        SET
+            match_result = lead_states.match_result,
+            updated_by = 'lead_match_runtime',
+            updated_date = CURRENT_TIMESTAMP
+        FROM lead_states
+        WHERE l.lead_id = lead_states.lead_id
+        """,
+        (run_id,),
+    )
+    lead_updates = cursor.rowcount
+    conn.commit()
+    print(
+        f"Business table writeback complete: "
+        f"transaction_updates={transaction_updates}; lead_updates={lead_updates}"
+    )
+    return transaction_updates, lead_updates
+
+
 def _run_fuzzy_match(conn, job_started):
     cursor = conn.cursor()
     schema = schema_name()
@@ -985,6 +1127,13 @@ def _run_fuzzy_match(conn, job_started):
         f"processed_leads={processed_leads}; "
         f"duration_seconds={time.monotonic() - job_started:.2f}"
     )
+    if inserted > 0 and (not DRY_RUN or DRY_RUN_WRITEBACK_BUSINESS_TABLES):
+        write_back_match_results(conn, cursor, schema, run_id)
+    elif DRY_RUN and inserted > 0:
+        print(
+            "Dry-run business table writeback skipped; "
+            "set DRY_RUN_WRITEBACK_BUSINESS_TABLES=true to test lead/transaction updates"
+        )
 
 
 def ensure_indexes():
