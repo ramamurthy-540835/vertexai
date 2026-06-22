@@ -28,11 +28,13 @@ EMBEDDING_DIMENSION = int(
 )
 DEFAULT_FISCAL_YEAR = int(os.environ.get("DEFAULT_FISCAL_YEAR", "2026"))
 DEFAULT_FISCAL_PERIOD = int(os.environ.get("DEFAULT_FISCAL_PERIOD", "10"))
-DEFAULT_BATCH_SIZE = int(os.environ.get("EMBEDDING_BATCH_SIZE", "25"))
+DEFAULT_BATCH_SIZE = int(os.environ.get("EMBEDDING_BATCH_SIZE", "100"))
 DEFAULT_MAX_WORKERS = max(1, int(os.environ.get("EMBEDDING_MAX_WORKERS", "3")))
 EMBEDDING_MAX_RETRIES = max(1, int(os.environ.get("EMBEDDING_MAX_RETRIES", "6")))
 EMBEDDING_RETRY_BASE_DELAY = float(os.environ.get("EMBEDDING_RETRY_BASE_DELAY", "1.5"))
 EMBEDDING_RETRY_MAX_DELAY = float(os.environ.get("EMBEDDING_RETRY_MAX_DELAY", "90"))
+MATCH_BATCH_SIZE = max(1, int(os.environ.get("MATCH_BATCH_SIZE", "100")))
+MATCH_STATEMENT_TIMEOUT_MS = int(os.environ.get("MATCH_STATEMENT_TIMEOUT_MS", "900000"))
 
 EXPECTED_PROJECT = os.environ.get("EXPECTED_PROJECT_ID", BUSINESS_RULES["environment"]["project_id"])
 EXPECTED_CLOUDSQL_CONNECTION_NAME = "ctoteam:us-central1:lead-mgmt-db"
@@ -479,139 +481,184 @@ def run_fuzzy_match():
     schema = schema_name()
     run_id = os.environ.get("MATCH_RUN_ID") or f"workflow-{uuid.uuid4().hex[:12]}"
     limit = int(os.environ.get("MATCH_LEAD_LIMIT", "1000000"))
-    params = []
-    warehouse_clause = warehouse_sql_filter("leads_embeddings", params).replace("leads_embeddings.", "")
     rules = BUSINESS_RULES
     recall_gate = float(rules["candidate_retrieval"]["recall_gate_min_similarity"])
     qualify_min = float(rules["confidence_bands"]["qualify_min_score"])
     ambiguity_delta = float(rules["resolution"]["ambiguity_delta"])
     nearest_neighbor_limit = int(rules["candidate_retrieval"]["nearest_neighbor_limit"])
-    params.extend([
-        limit,
-        recall_gate,
-        nearest_neighbor_limit,
-        qualify_min,
-        run_id,
-        ambiguity_delta,
-        EMBEDDING_MODEL,
-    ])
 
     print(f"Warehouse scope: {warehouse_scope_label()}")
     print(f"Match run: {run_id}")
-    print(f"Match lead limit: {limit}; nearest_neighbor_limit: {nearest_neighbor_limit}")
-    query_started = time.monotonic()
-    cursor.execute(
-        f"""
-        WITH lead_batch AS (
-            SELECT *
+    print(
+        f"Match lead limit: {limit}; match_batch_size: {MATCH_BATCH_SIZE}; "
+        f"nearest_neighbor_limit: {nearest_neighbor_limit}; "
+        f"statement_timeout_ms: {MATCH_STATEMENT_TIMEOUT_MS}"
+    )
+
+    processed_leads = 0
+    inserted = 0
+    last_lead_id = None
+    batch_number = 0
+
+    while processed_leads < limit:
+        fetch_params = []
+        warehouse_clause = warehouse_sql_filter("leads_embeddings", fetch_params).replace("leads_embeddings.", "")
+        lead_cursor_clause = ""
+        if last_lead_id is not None:
+            lead_cursor_clause = "AND lead_id > %s"
+            fetch_params.append(last_lead_id)
+        fetch_limit = min(MATCH_BATCH_SIZE, limit - processed_leads)
+        fetch_params.append(fetch_limit)
+        cursor.execute(
+            f"""
+            SELECT lead_id
             FROM "{schema}"."leads_embeddings"
             WHERE combined_embedding IS NOT NULL
               {warehouse_clause}
+              {lead_cursor_clause}
             ORDER BY lead_id
             LIMIT %s
-        ),
-        candidates AS (
-            SELECT
-                l.lead_id,
-                s.pos_id,
-                l.warehouse_number,
-                l.fiscal_year AS lead_fiscal_year,
-                l.fiscal_period AS lead_fiscal_period,
-                s.fiscal_year AS pos_fiscal_year,
-                s.fiscal_period AS pos_fiscal_period,
-                s.week AS pos_week,
-                (1 - (s.combined_embedding <=> l.combined_embedding)) * 100 AS combined_field_score,
-                (1 - (s.address_embedding <=> l.address_embedding)) * 100 AS full_address_score,
-                (1 - COALESCE(NULLIF(s.name_embedding <=> l.name_embedding, 'NaN'::float), 1)) * 100 AS business_name_score
-            FROM lead_batch l
-            CROSS JOIN LATERAL (
+            """,
+            fetch_params,
+        )
+        lead_ids = [row[0] for row in cursor.fetchall()]
+        if not lead_ids:
+            break
+
+        batch_number += 1
+        last_lead_id = lead_ids[-1]
+        processed_leads += len(lead_ids)
+        lead_placeholders = ", ".join(["%s"] * len(lead_ids))
+        params = [
+            *lead_ids,
+            recall_gate,
+            nearest_neighbor_limit,
+            qualify_min,
+            run_id,
+            ambiguity_delta,
+            EMBEDDING_MODEL,
+        ]
+        query_started = time.monotonic()
+        if MATCH_STATEMENT_TIMEOUT_MS > 0:
+            cursor.execute("SET LOCAL statement_timeout = %s", [MATCH_STATEMENT_TIMEOUT_MS])
+        cursor.execute(
+            f"""
+            WITH lead_batch AS (
                 SELECT *
-                FROM "{schema}"."pos_embeddings" s
-                WHERE s.combined_embedding IS NOT NULL
-                  AND s.warehouse_number = l.warehouse_number
-                  AND (1 - (s.combined_embedding <=> l.combined_embedding)) * 100 >= %s
-                ORDER BY s.combined_embedding <=> l.combined_embedding
-                LIMIT %s
-            ) s
-        ),
-        scored AS (
+                FROM "{schema}"."leads_embeddings"
+                WHERE combined_embedding IS NOT NULL
+                  AND lead_id IN ({lead_placeholders})
+            ),
+            candidates AS (
+                SELECT
+                    l.lead_id,
+                    s.pos_id,
+                    l.warehouse_number,
+                    l.fiscal_year AS lead_fiscal_year,
+                    l.fiscal_period AS lead_fiscal_period,
+                    s.fiscal_year AS pos_fiscal_year,
+                    s.fiscal_period AS pos_fiscal_period,
+                    s.week AS pos_week,
+                    (1 - (s.combined_embedding <=> l.combined_embedding)) * 100 AS combined_field_score,
+                    (1 - (s.address_embedding <=> l.address_embedding)) * 100 AS full_address_score,
+                    (1 - COALESCE(NULLIF(s.name_embedding <=> l.name_embedding, 'NaN'::float), 1)) * 100 AS business_name_score
+                FROM lead_batch l
+                CROSS JOIN LATERAL (
+                    SELECT *
+                    FROM "{schema}"."pos_embeddings" s
+                    WHERE s.combined_embedding IS NOT NULL
+                      AND s.warehouse_number = l.warehouse_number
+                      AND (1 - (s.combined_embedding <=> l.combined_embedding)) * 100 >= %s
+                    ORDER BY s.combined_embedding <=> l.combined_embedding
+                    LIMIT %s
+                ) s
+            ),
+            scored AS (
+                SELECT
+                    lead_id,
+                    pos_id,
+                    warehouse_number,
+                    pos_fiscal_year,
+                    pos_fiscal_period,
+                    pos_week,
+                    combined_field_score,
+                    full_address_score,
+                    business_name_score,
+                    (
+                        4 * full_address_score
+                        + 3 * business_name_score
+                    ) / 7 AS final_score,
+                    CASE
+                        WHEN (
+                            pos_fiscal_year > lead_fiscal_year
+                            OR (pos_fiscal_year = lead_fiscal_year AND pos_fiscal_period >= lead_fiscal_period)
+                        )
+                        THEN 'Closed - Match'
+                        ELSE 'Closed - Existing'
+                    END AS lifecycle_state
+                FROM candidates
+            ),
+            ranked AS (
+                SELECT *
+                FROM scored
+                WHERE final_score >= %s
+            ),
+            best_unique_pos AS (
+                SELECT *,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY pos_id
+                           ORDER BY final_score DESC, lead_id
+                       ) AS pos_rank,
+                       LEAD(final_score) OVER (
+                           PARTITION BY pos_id
+                           ORDER BY final_score DESC, lead_id
+                       ) AS next_pos_score
+                FROM ranked
+            )
+            INSERT INTO "{schema}"."match_decision_detail" (
+                match_run_id, lead_id, pos_id, warehouse_number, match_type, final_score,
+                combined_field_score, full_address_score, business_name_score,
+                weight_formula, embedding_model, created_date
+            )
             SELECT
+                %s,
                 lead_id,
                 pos_id,
                 warehouse_number,
-                pos_fiscal_year,
-                pos_fiscal_period,
-                pos_week,
+                CASE
+                    WHEN next_pos_score IS NOT NULL
+                     AND final_score - next_pos_score <= %s
+                    THEN 'Manual Review'
+                    ELSE 'Fuzzy'
+                END,
+                final_score,
                 combined_field_score,
                 full_address_score,
                 business_name_score,
-                (
-                    4 * full_address_score
-                    + 3 * business_name_score
-                ) / 7 AS final_score,
-                CASE
-                    WHEN (
-                        pos_fiscal_year > lead_fiscal_year
-                        OR (pos_fiscal_year = lead_fiscal_year AND pos_fiscal_period >= lead_fiscal_period)
-                    )
-                    THEN 'Closed - Match'
-                    ELSE 'Closed - Existing'
-                END AS lifecycle_state
-            FROM candidates
-        ),
-        ranked AS (
-            SELECT *
-            FROM scored
-            WHERE final_score >= %s
-        ),
-        best_unique_pos AS (
-            SELECT *,
-                   ROW_NUMBER() OVER (
-                       PARTITION BY pos_id
-                       ORDER BY final_score DESC, lead_id
-                   ) AS pos_rank,
-                   LEAD(final_score) OVER (
-                       PARTITION BY pos_id
-                       ORDER BY final_score DESC, lead_id
-                   ) AS next_pos_score
-            FROM ranked
+                '(4*address + 3*name)/7',
+                %s,
+                CURRENT_TIMESTAMP
+            FROM best_unique_pos
+            WHERE pos_rank = 1
+            ON CONFLICT (match_run_id, lead_id, pos_id) DO NOTHING;
+            """,
+            params,
         )
-        INSERT INTO "{schema}"."match_decision_detail" (
-            match_run_id, lead_id, pos_id, warehouse_number, match_type, final_score,
-            combined_field_score, full_address_score, business_name_score,
-            weight_formula, embedding_model, created_date
+        batch_inserted = cursor.rowcount
+        inserted += batch_inserted
+        conn.commit()
+        query_duration = time.monotonic() - query_started
+        print(
+            f"Fuzzy match batch {batch_number}: leads={len(lead_ids)}; "
+            f"processed_leads={processed_leads}; inserted_rows={batch_inserted}; "
+            f"batch_duration_seconds={query_duration:.2f}"
         )
-        SELECT
-            %s,
-            lead_id,
-            pos_id,
-            warehouse_number,
-            CASE
-                WHEN next_pos_score IS NOT NULL
-                 AND final_score - next_pos_score <= %s
-                THEN 'Manual Review'
-                ELSE 'Fuzzy'
-            END,
-            final_score,
-            combined_field_score,
-            full_address_score,
-            business_name_score,
-            '(4*address + 3*name)/7',
-            %s,
-            CURRENT_TIMESTAMP
-        FROM best_unique_pos
-        WHERE pos_rank = 1
-        ON CONFLICT (match_run_id, lead_id, pos_id) DO NOTHING;
-        """,
-        params,
-    )
-    query_duration = time.monotonic() - query_started
-    inserted = cursor.rowcount
+
     conn.commit()
     conn.close()
     print(
         f"Inserted match decision rows: {inserted}; "
-        f"query_duration_seconds={query_duration:.2f}; "
+        f"processed_leads={processed_leads}; "
         f"duration_seconds={time.monotonic() - job_started:.2f}"
     )
 
