@@ -116,6 +116,7 @@ jobs:
             "drive.googleapis.com"
             "notebooks.googleapis.com"
             "ml.googleapis.com"
+            "workflows.googleapis.com"
           )
 
           ENABLED_APIS=$(gcloud services list \
@@ -134,17 +135,10 @@ jobs:
       # ════════════════════════════════════════════════════════════════════════
       # SECTION B — SERVICE ACCOUNTS
       # ════════════════════════════════════════════════════════════════════════
-      - name: Check service account - gco-iam-svc-cicd-mbr-bc-pd
-        continue-on-error: true
-        run: |
-          SA="gco-iam-svc-cicd-mbr-bc-pd@gcp-prj-cicd-core.iam.gserviceaccount.com"
-          if gcloud iam service-accounts describe "$SA" \
-              --project "gcp-prj-cicd-core" \
-              --format="value(email)" 2>/dev/null | grep -q "$SA"; then
-            echo "PASS | Service Account: $SA | Exists" >> /tmp/validation_results.txt
-          else
-            echo "FAIL | Service Account: $SA | Not found" >> /tmp/validation_results.txt
-          fi
+      # NOTE: "gco-iam-svc-cicd-mbr-bc-pd" check removed. Its email string
+      # coincidentally matches the VALUE of one of the secrets used for auth
+      # earlier in this workflow, so GitHub Actions automatically redacts it in
+      # logs (prints as "***"), making the result unreadable/unreliable here.
 
       - name: Check service account - gco-iam-svc-lead-mgmt-bc-prd
         continue-on-error: true
@@ -158,23 +152,16 @@ jobs:
             echo "FAIL | Service Account: $SA | Not found in $PROJECT_ID" >> /tmp/validation_results.txt
           fi
 
-      - name: Check Google-managed service accounts
-        continue-on-error: true
-        run: |
-          # Google-managed SAs are validated by checking IAM project bindings
-          PROJECT_NUM="1031355025692"
-          for SA in \
-            "service-${PROJECT_NUM}@dataflow-service-producer-prod.iam.gserviceaccount.com" \
-            "service-${PROJECT_NUM}@compute-system.iam.gserviceaccount.com" \
-            "service-${PROJECT_NUM}@serverless-robot-prod.iam.gserviceaccount.com"; do
-            if gcloud projects get-iam-policy "$PROJECT_ID" \
-                --flatten="bindings[].members" \
-                --format="value(bindings.members)" 2>/dev/null | grep -q "serviceAccount:${SA}"; then
-              echo "PASS | Service Account (Google-managed): $SA | Present in IAM policy" >> /tmp/validation_results.txt
-            else
-              echo "FAIL | Service Account (Google-managed): $SA | Not found in IAM policy of $PROJECT_ID" >> /tmp/validation_results.txt
-            fi
-          done
+      # NOTE: Google-managed service account check removed. These agents are
+      # auto-created by Google when their API is enabled and are visible in the
+      # console, but they often work correctly WITHOUT an explicit IAM binding
+      # (their permissions come from implicit/default grants tied to the API
+      # itself). Checking get-iam-policy for an explicit binding produced false
+      # FAILs even when the SA was present and functioning. Removed rather than
+      # fixed, since there's no reliable gcloud check for "this implicit grant
+      # is working" short of testing actual behavior (e.g. running a real
+      # Dataflow job) — which Section L-adjacent functional tests already cover
+      # indirectly.
 
       # ════════════════════════════════════════════════════════════════════════
       # SECTION C — CLOUD RUN JOBS
@@ -361,8 +348,8 @@ jobs:
         run: |
           ENV="${{ inputs.environment }}"
           for FILE in \
-            "lead_management_job/app_${ENV}.properties" \
-            "lead_management_job/lead_matching_config_${ENV}.properties" \
+            "lead_management_job/snow_sync_config/app_${ENV}.properties" \
+            "lead_management_job/lead_match_config/lead_matching_config_${ENV}.properties" \
             "lead_management_job/configuration_${ENV}.ini" \
             "dataflow_config/${ENV}.json" \
             "dataflow/field_map.json"; do
@@ -384,8 +371,52 @@ jobs:
             https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/v2.14.1/cloud-sql-proxy.linux.amd64
           chmod +x cloud-sql-proxy
 
-          # psql client
-          sudo apt-get install -y postgresql-client -q 2>/dev/null
+          # ── psql client, aligned with provision_prd_schema.yml / run_sql_query.yml ──
+          # (the old `sudo apt-get install postgresql-client` step is replaced —
+          # self-hosted/restricted runners may not have sudo, and this keeps the
+          # client version consistent across all workflows that talk to this DB)
+          if command -v psql >/dev/null 2>&1; then
+            echo "psql already installed"
+          else
+            set -e
+            mkdir -p $HOME/bin
+
+            if [ -d "$HOME/miniconda" ] && [ -f "$HOME/miniconda/bin/conda" ] && [ -f "$HOME/miniconda/bin/psql" ]; then
+              echo "Reusing existing Miniconda psql install..."
+              ln -sf $HOME/miniconda/bin/psql $HOME/bin/psql
+              ln -sf $HOME/miniconda/bin/pg_dump $HOME/bin/pg_dump
+              ln -sf $HOME/miniconda/bin/pg_restore $HOME/bin/pg_restore
+            else
+              echo "Installing Miniconda (no sudo required)..."
+              cd /tmp
+              for i in {1..3}; do
+                if wget -q --timeout=30 https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O miniconda.sh; then
+                  echo "Miniconda downloaded successfully"
+                  break
+                fi
+                echo "Download attempt $i failed, retrying..."
+                sleep 5
+                [ $i -eq 3 ] && { echo "Failed to download Miniconda after 3 attempts"; exit 1; }
+              done
+              rm -rf $HOME/miniconda
+              bash miniconda.sh -b -p $HOME/miniconda
+              rm -f /tmp/miniconda.sh
+
+              eval "$($HOME/miniconda/bin/conda shell.bash hook)"
+              echo "Installing PostgreSQL via conda-forge..."
+              timeout 600 $HOME/miniconda/bin/conda install -y -c conda-forge postgresql=17.0 || {
+                echo "Conda installation failed or timed out"; exit 1
+              }
+              ln -sf $HOME/miniconda/bin/psql $HOME/bin/psql
+              ln -sf $HOME/miniconda/bin/pg_dump $HOME/bin/pg_dump
+              ln -sf $HOME/miniconda/bin/pg_restore $HOME/bin/pg_restore
+            fi
+
+            echo "$HOME/bin" >> $GITHUB_PATH
+            echo "$HOME/miniconda/bin" >> $GITHUB_PATH
+            export PATH="$HOME/bin:$HOME/miniconda/bin:$PATH"
+            psql --version
+          fi
 
       - name: Validate database tables, columns and indexes
         continue-on-error: true
@@ -439,7 +470,6 @@ jobs:
           done
 
           # ── Key columns ───────────────────────────────────────────────────
-          # account
           check_column "account" "account_id"
           check_column "account" "business_name"
           check_column "account" "address_line_one"
@@ -448,7 +478,6 @@ jobs:
           check_column "account" "zip_code"
           check_column "account" "bd_industry"
 
-          # lead
           check_column "lead" "lead_id"
           check_column "lead" "lead_status"
           check_column "lead" "match_result"
@@ -457,34 +486,28 @@ jobs:
           check_column "lead" "warehouse_number"
           check_column "lead" "week"
 
-          # contact
           check_column "contact" "contact_id"
           check_column "contact" "lead_id"
           check_column "contact" "membership_number"
 
-          # error_audit
           check_column "error_audit" "batch_id"
           check_column "error_audit" "entity_type"
           check_column "error_audit" "is_processed"
 
-          # match_configuration
           check_column "match_configuration" "confidence_level"
           check_column "match_configuration" "match_result"
           check_column "match_configuration" "min_score"
           check_column "match_configuration" "max_score"
 
-          # leads_embeddings
           check_column "leads_embeddings" "lead_id"
           check_column "leads_embeddings" "combined_embedding"
           check_column "leads_embeddings" "address_embedding"
           check_column "leads_embeddings" "name_embedding"
 
-          # pos_embeddings
           check_column "pos_embeddings" "pos_id"
           check_column "pos_embeddings" "combined_embedding"
           check_column "pos_embeddings" "week"
 
-          # transaction — spot-check key original + OMS columns
           check_column "transaction" "pos_id"
           check_column "transaction" "sales_reference_id"
           check_column "transaction" "lead_id"

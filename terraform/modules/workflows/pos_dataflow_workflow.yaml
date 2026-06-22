@@ -22,7 +22,10 @@ main:
           - gcs_event: '${json.decode(raw_json)}'
           - bucket: '${gcs_event.bucket}'
           - manifest_object: '${gcs_event.name}'
-          - run_snow_sync: '${default(map.get(event, "run_snow_sync"), true)}'
+          # run_snow_sync is now read from the MANIFEST (step 4b below), not the
+          # event — a GCS-trigger event only carries object metadata and can
+          # never carry this custom flag. Default true here only covers the
+          # case where the manifest itself omits the field (back-compat).
 
     # ── 2. Read env config from the same bucket ────────────────────────
     - read_config:
@@ -83,8 +86,11 @@ main:
           - all_files: '${manifest.files}'
           - file_count: '${len(all_files)}'
           - state_object: '${"state/" + run_id + ".json"}'
+          # 4b. run_snow_sync comes from the manifest now (set by create_manifest).
+          # Falls back to true if an older manifest doesn't have the field.
+          - run_snow_sync: '${default(map.get(manifest, "run_snow_sync"), true)}'
 
-    # ── 4b. CHECKPOINT — read state file if it exists ──────────────────
+    # ── 4c. CHECKPOINT — read state file if it exists ──────────────────
     - try_read_state:
         try:
           call: googleapis.storage.v1.objects.get
