@@ -762,6 +762,9 @@ def run_fuzzy_match():
 
 
 def write_back_match_results(conn, cursor, schema, run_id):
+    types = exact_match_types()
+    min_score = exact_qualified_min_score()
+    placeholders = _exact_type_placeholders(types)
     cursor.execute(
         f"""
         WITH base AS (
@@ -840,8 +843,19 @@ def write_back_match_results(conn, cursor, schema, run_id):
             )
         FROM tx_updates tx
         WHERE t.pos_id = tx.pos_id
+          AND NOT (
+              lower(t.match_type) IN ({placeholders})
+              AND (t.match_score IS NULL OR t.match_score >= %s)
+          )
+          AND NOT EXISTS (
+              SELECT 1
+              FROM "{schema}"."match_decision_detail" exact_m
+              WHERE exact_m.pos_id = t.pos_id
+                AND lower(exact_m.match_type) IN ({placeholders})
+                AND (exact_m.final_score IS NULL OR exact_m.final_score >= %s)
+          )
         """,
-        (run_id, run_id),
+        (run_id, run_id, *types, min_score, *types, min_score),
     )
     transaction_updates = cursor.rowcount
 
@@ -887,8 +901,22 @@ def write_back_match_results(conn, cursor, schema, run_id):
             updated_date = CURRENT_TIMESTAMP
         FROM lead_states
         WHERE l.lead_id = lead_states.lead_id
+          AND NOT EXISTS (
+              SELECT 1
+              FROM "{schema}"."match_decision_detail" exact_m
+              WHERE exact_m.lead_id = l.lead_id
+                AND lower(exact_m.match_type) IN ({placeholders})
+                AND (exact_m.final_score IS NULL OR exact_m.final_score >= %s)
+          )
+          AND NOT EXISTS (
+              SELECT 1
+              FROM "{schema}"."transaction" exact_t
+              WHERE exact_t.lead_id = l.lead_id
+                AND lower(exact_t.match_type) IN ({placeholders})
+                AND (exact_t.match_score IS NULL OR exact_t.match_score >= %s)
+          )
         """,
-        (run_id,),
+        (run_id, *types, min_score, *types, min_score),
     )
     lead_updates = cursor.rowcount
     conn.commit()
