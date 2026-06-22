@@ -9,7 +9,7 @@ main:
           - leadJob: ${default(map.get(args, "leadJob"), "lead-match-lead-embeddings")}
           - posJob: ${default(map.get(args, "posJob"), "lead-match-pos-embeddings")}
           - matchJob: ${default(map.get(args, "matchJob"), "lead-match-fuzzy-match")}
-          - indexJob: ${default(map.get(args, "indexJob"), "lead-match-fuzzy-match")}
+          - indexJob: ${default(map.get(args, "indexJob"), "lead-match-ensure-indexes")}
           - reportJob: ${default(map.get(args, "reportJob"), "lead-match-report")}
           - matchRunId: ${default(map.get(args, "matchRunId"), "")}
           - reportBucket: ${default(map.get(args, "reportBucket"), "lead-match-ctoteam")}
