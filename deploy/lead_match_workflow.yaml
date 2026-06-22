@@ -12,7 +12,7 @@ main:
           - reportJob: ${default(map.get(args, "reportJob"), "lead-match-report")}
           - matchRunId: ${default(map.get(args, "matchRunId"), "")}
           - reportBucket: ${default(map.get(args, "reportBucket"), "lead-match-ctoteam")}
-          - reportPrefix: ${default(map.get(args, "reportPrefix"), "reports/lead_match/" + project + "/" + warehouse + "/" + matchRunId)}
+          - reportPrefix: ${default(map.get(args, "reportPrefix",), "reports/lead_match/" + project + "/" + warehouse + "/" + matchRunId)}
           - leadResult: null
           - posResult: null
 
@@ -152,22 +152,38 @@ waitForRunJobExecution:
         args:
           name: ${executionName}
         result: execution
+    - extractCounts:
+        assign:
+          - executionStatus: ${default(map.get(execution, "status"), {})}
+          - executionSpec: ${default(map.get(execution, "spec"), {})}
+          - failedCount: ${default(map.get(execution, "failedCount"), default(map.get(executionStatus, "failedCount"), 0))}
+          - cancelledCount: ${default(map.get(execution, "cancelledCount"), default(map.get(executionStatus, "cancelledCount"), 0))}
+          - succeededCount: ${default(map.get(execution, "succeededCount"), default(map.get(executionStatus, "succeededCount"), 0))}
+          - taskCount: ${default(map.get(execution, "taskCount"), default(map.get(executionSpec, "taskCount"), 1))}
     - failOnFailedTask:
         switch:
-          - condition: ${default(map.get(execution, "failedCount"), 0) > 0}
+          - condition: ${failedCount > 0}
             next: fail
     - failOnCancelledTask:
         switch:
-          - condition: ${default(map.get(execution, "cancelledCount"), 0) > 0}
+          - condition: ${cancelledCount > 0}
             next: fail
     - returnWhenAllTasksSucceeded:
         switch:
-          - condition: ${default(map.get(execution, "succeededCount"), 0) >= default(map.get(execution, "taskCount"), 1)}
-            return: ${execution}
+          - condition: ${succeededCount >= taskCount}
+            next: returnSuccess
     - sleep:
         call: sys.sleep
         args:
           seconds: 15
         next: poll
+    - returnSuccess:
+        return:
+          executionName: ${executionName}
+          taskCount: ${taskCount}
+          succeededCount: ${succeededCount}
+          failedCount: ${failedCount}
+          cancelledCount: ${cancelledCount}
+          execution: ${execution}
     - fail:
         raise: '${"Cloud Run Job execution failed: " + executionName + " execution=" + json.encode_to_string(execution)}'
