@@ -121,10 +121,8 @@ def configure_hnsw_search(conn, cursor):
         return
     try:
         cursor.execute(f"SET hnsw.ef_search = {HNSW_EF_SEARCH}")
-        conn.commit()
         print(f"HNSW ef_search set to {HNSW_EF_SEARCH}")
     except Exception as exc:
-        conn.rollback()
         print(
             f"Warning: failed to set hnsw.ef_search={HNSW_EF_SEARCH}: {exc}",
             file=sys.stderr,
@@ -149,13 +147,12 @@ def warehouse_scope():
     return get_warehouse_scope(BUSINESS_RULES)
 
 
-def warehouse_sql_filter(alias, params):
+def warehouse_sql_filter(alias):
     scope = warehouse_scope()
     if scope.is_all:
-        return ""
+        return "", []
     placeholders = ", ".join(["%s"] * len(scope.values))
-    params.extend(scope.values)
-    return f"AND {alias}.warehouse_number IN ({placeholders})"
+    return f"AND {alias}.warehouse_number IN ({placeholders})", list(scope.values)
 
 
 def exact_match_types():
@@ -409,7 +406,8 @@ def execute_many_values(
 def lead_source_rows(cursor):
     schema = schema_name()
     params = [DEFAULT_FISCAL_YEAR, DEFAULT_FISCAL_PERIOD]
-    warehouse_clause = warehouse_sql_filter("l", params)
+    warehouse_clause, warehouse_params = warehouse_sql_filter("l")
+    params.extend(warehouse_params)
     exact_lead_clause = exact_lead_exclusion_clause(schema, "l.lead_id", params)
 
     cursor.execute(
@@ -441,7 +439,8 @@ def lead_source_rows(cursor):
 def pos_source_rows(cursor):
     schema = schema_name()
     params = []
-    warehouse_clause = warehouse_sql_filter("t", params)
+    warehouse_clause, warehouse_params = warehouse_sql_filter("t")
+    params.extend(warehouse_params)
     exact_pos_clause = exact_pos_exclusion_clause(schema, "t.pos_id", params)
 
     cursor.execute(
@@ -573,8 +572,12 @@ def process_embedding_batches(rows, build_insert_rows, insert_insert_rows, conn,
 
     def write_result(batch_number, insert_rows, batch_duration):
         nonlocal inserted, completed
-        insert_insert_rows(insert_rows)
-        conn.commit()
+        try:
+            insert_insert_rows(insert_rows)
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
         inserted += len(insert_rows)
         completed += 1
         if completed == 1 or completed % 10 == 0 or completed == total_batches:
@@ -740,7 +743,6 @@ def _run_fuzzy_match(conn, job_started):
     configure_hnsw_search(conn, cursor)
     if MATCH_STATEMENT_TIMEOUT_MS > 0:
         cursor.execute(f"SET statement_timeout = {MATCH_STATEMENT_TIMEOUT_MS}")
-        conn.commit()
         print(f"statement_timeout set to {MATCH_STATEMENT_TIMEOUT_MS}ms")
 
     processed_leads = 0
@@ -750,7 +752,9 @@ def _run_fuzzy_match(conn, job_started):
 
     while processed_leads < limit:
         fetch_params = []
-        warehouse_clause = warehouse_sql_filter("leads_embeddings", fetch_params).replace("leads_embeddings.", "")
+        warehouse_clause, warehouse_params = warehouse_sql_filter("leads_embeddings")
+        warehouse_clause = warehouse_clause.replace("leads_embeddings.", "")
+        fetch_params.extend(warehouse_params)
         exact_lead_clause = exact_lead_exclusion_clause(
             schema,
             "leads_embeddings.lead_id",
@@ -971,25 +975,6 @@ def _ensure_indexes(conn, job_started):
     if missing_tables:
         raise RuntimeError(f"Missing required embedding tables: {missing_tables}")
 
-    for table in required_tables:
-        for column in vector_columns:
-            bad_dims = [
-                row
-                for row in fetchall(
-                    f"""
-                    SELECT vector_dims({quote_ident(column)}), count(*)
-                    FROM {qualified_name(schema, table)}
-                    WHERE {quote_ident(column)} IS NOT NULL
-                    GROUP BY vector_dims({quote_ident(column)})
-                    """,
-                )
-                if int(row[0]) != dimension
-            ]
-            if bad_dims:
-                raise RuntimeError(
-                    f"{schema}.{table}.{column} has non-{dimension} vectors: {bad_dims}"
-                )
-
     invalid_indexes = fetchall(
         """
         SELECT c.relname
@@ -1029,6 +1014,15 @@ def _ensure_indexes(conn, job_started):
                 (schema, table),
             )
         }
+        missing_columns = [
+            column
+            for column in vector_columns
+            if column not in current_types
+        ]
+        if missing_columns:
+            raise RuntimeError(
+                f"{schema}.{table} is missing vector columns: {missing_columns}"
+            )
         if any(current_types.get(column) != f"vector({dimension})" for column in vector_columns):
             execute(
                 f"dimension {table} vector columns",
