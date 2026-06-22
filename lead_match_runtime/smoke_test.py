@@ -47,6 +47,37 @@ def check_safety_env():
         raise RuntimeError(f"Refusing to start: ALLOW_PRODUCTION is {allow_prod!r}, expected 'false'")
 
 
+def check_hnsw_combined_indexes(cursor, schema: str, results: dict):
+    try:
+        cursor.execute(
+            """
+            SELECT tablename, indexname
+            FROM pg_indexes
+            WHERE schemaname = %s
+              AND tablename IN ('leads_embeddings', 'pos_embeddings')
+              AND lower(indexdef) LIKE '%%using hnsw%%'
+              AND lower(indexdef) LIKE '%%combined_embedding%%'
+            """,
+            (schema,),
+        )
+        found_tables = {row[0] for row in cursor.fetchall()}
+        missing_tables = sorted(
+            {"leads_embeddings", "pos_embeddings"} - found_tables
+        )
+        if missing_tables:
+            results["optional_checks"]["hnsw_combined_indexes"] = "FAIL"
+            results["errors"].append(
+                "Missing combined_embedding HNSW indexes for tables: "
+                + ", ".join(missing_tables)
+            )
+            return
+        results["optional_checks"]["hnsw_combined_indexes"] = "PASS"
+        print("[INFO] combined_embedding HNSW indexes are present")
+    except Exception as e:
+        results["optional_checks"]["hnsw_combined_indexes"] = "FAIL"
+        results["errors"].append(f"Failed to check HNSW indexes: {e}")
+
+
 def run_smoke_test(warehouse: str, fiscal_year: int = None, fiscal_period: int = None):
     # Safety Check first
     check_safety_env()
@@ -72,7 +103,8 @@ def run_smoke_test(warehouse: str, fiscal_year: int = None, fiscal_period: int =
         "optional_checks": {
             "lead_embeddings": "SKIPPED",
             "pos_embeddings": "SKIPPED",
-            "match_audit": "SKIPPED"
+            "match_audit": "SKIPPED",
+            "hnsw_combined_indexes": "SKIPPED"
         },
         "errors": []
     }
@@ -273,6 +305,8 @@ def run_smoke_test(warehouse: str, fiscal_year: int = None, fiscal_period: int =
         except Exception as e:
             results["optional_checks"]["match_audit"] = "FAIL"
             results["errors"].append(f"Failed to check match_audit existence: {e}")
+
+        check_hnsw_combined_indexes(cursor, schema, results)
 
     finally:
         if conn:
