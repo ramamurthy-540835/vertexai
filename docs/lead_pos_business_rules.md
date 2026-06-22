@@ -2,6 +2,8 @@
 
 This matcher is driven by `config/lead_pos_business_rules.json`.
 
+For the fuzzy-match algorithm scope, score formula, and penalty policy, see `docs/lead_match_fuzzy_scope_and_scoring.md`.
+
 Warehouse `115` is only a runtime test scope. It is not a business rule. The business rule is always:
 
 ```text
