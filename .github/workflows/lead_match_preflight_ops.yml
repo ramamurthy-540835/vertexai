@@ -23,6 +23,21 @@ on:
         required: false
         default: "leadmgmt"
         type: string
+      db_name_secret:
+        description: "Optional Secret Manager secret for DB name; falls back to GitHub secret DB_NAME or postgres"
+        required: false
+        default: ""
+        type: string
+      db_user_secret:
+        description: "Optional Secret Manager secret for DB user; falls back to GitHub secret DB_USER or postgres"
+        required: false
+        default: ""
+        type: string
+      db_password_secret:
+        description: "Optional Secret Manager secret for DB password; falls back to GitHub secret DB_PASSWORD"
+        required: false
+        default: ""
+        type: string
       warehouse:
         description: "Warehouse number, comma-separated warehouses, blank, or all"
         required: false
@@ -81,6 +96,9 @@ jobs:
       DB_NAME: ${{ secrets.DB_NAME }}
       DB_USER: ${{ secrets.DB_USER }}
       DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+      DB_NAME_SECRET: ${{ github.event.inputs.db_name_secret }}
+      DB_USER_SECRET: ${{ github.event.inputs.db_user_secret }}
+      DB_PASSWORD_SECRET: ${{ github.event.inputs.db_password_secret }}
       EMBEDDING_DIMENSION: "768"
       WORKFLOW_YAML_STATUS: FAIL
       VERTEX_PATH_STATUS: FAIL
@@ -258,6 +276,26 @@ jobs:
         run: |
           set -euo pipefail
           gcloud config set project "${PROJECT_ID}"
+
+          read_secret() {
+            local secret_name="$1"
+            if [[ -z "${secret_name}" ]]; then
+              return 1
+            fi
+            gcloud secrets versions access latest \
+              --project="${PROJECT_ID}" \
+              --secret="${secret_name}"
+          }
+
+          if [[ -z "${DB_NAME:-}" && -n "${DB_NAME_SECRET:-}" ]]; then
+            DB_NAME="$(read_secret "${DB_NAME_SECRET}")"
+          fi
+          if [[ -z "${DB_USER:-}" && -n "${DB_USER_SECRET:-}" ]]; then
+            DB_USER="$(read_secret "${DB_USER_SECRET}")"
+          fi
+          if [[ -z "${DB_PASSWORD:-}" && -n "${DB_PASSWORD_SECRET:-}" ]]; then
+            DB_PASSWORD="$(read_secret "${DB_PASSWORD_SECRET}")"
+          fi
 
           if [[ -z "${DB_NAME:-}" ]]; then
             DB_NAME="postgres"
