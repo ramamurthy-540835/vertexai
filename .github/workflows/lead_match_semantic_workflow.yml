@@ -112,10 +112,21 @@ jobs:
           fi
           echo "Runtime Cloud Build ID: ${BUILD_ID}"
           echo "RUNTIME_BUILD_ID=${BUILD_ID}" >> "$GITHUB_ENV"
+          BUILD_STARTED_AT="$(date +%s)"
+          BUILD_MAX_WAIT_SECONDS=3600
           while true; do
+            NOW="$(date +%s)"
+            if (( NOW - BUILD_STARTED_AT > BUILD_MAX_WAIT_SECONDS )); then
+              echo "Timed out waiting for Cloud Build ${BUILD_ID} after ${BUILD_MAX_WAIT_SECONDS}s" >&2
+              exit 1
+            fi
             BUILD_STATUS="$(gcloud builds describe "${BUILD_ID}" \
               --project="${PROJECT_ID}" \
-              --format='value(status)')"
+              --format='value(status)' 2>/dev/null)" || {
+              echo "Transient error polling Cloud Build ${BUILD_ID}; retrying..."
+              sleep 10
+              continue
+            }
             echo "Cloud Build ${BUILD_ID}: ${BUILD_STATUS}"
             case "${BUILD_STATUS}" in
               SUCCESS)
@@ -139,28 +150,23 @@ jobs:
           for JOB in \
             lead-match-lead-embeddings \
             lead-match-pos-embeddings \
-            lead-match-ensure-indexes \
             lead-match-fuzzy-match \
             lead-match-report; do
-            if gcloud run jobs describe "${JOB}" --project="${PROJECT_ID}" --region="${REGION}" >/dev/null 2>&1; then
-              gcloud run jobs update "${JOB}" \
-                --project="${PROJECT_ID}" \
-                --region="${REGION}" \
-                --image="${RUNTIME_IMAGE}" \
-                --update-env-vars="${ENV_VARS}"
-            else
-              gcloud run jobs create "${JOB}" \
-                --project="${PROJECT_ID}" \
-                --region="${REGION}" \
-                --image="${RUNTIME_IMAGE}" \
-                --set-env-vars="${ENV_VARS}" \
-                --max-retries=0 \
-                --task-timeout=1800
+            if ! gcloud run jobs describe "${JOB}" --project="${PROJECT_ID}" --region="${REGION}" >/dev/null 2>&1; then
+              echo "Required Cloud Run Job ${JOB} is missing." >&2
+              echo "Create it once with the DB connector and DB secrets before updating runtime images." >&2
+              exit 1
             fi
+            gcloud run jobs update "${JOB}" \
+              --project="${PROJECT_ID}" \
+              --region="${REGION}" \
+              --image="${RUNTIME_IMAGE}" \
+              --update-env-vars="${ENV_VARS}"
           done
 
       - name: Deploy Cloud Workflow definition
         if: github.event.inputs.deploy_workflow == 'true'
+        continue-on-error: true
         run: |
           set -euo pipefail
           gcloud config set project "${PROJECT_ID}"
@@ -326,10 +332,14 @@ jobs:
         run: |
           set -euo pipefail
           while true; do
-            STATE=$(gcloud workflows executions describe "${EXECUTION_NAME}" \
+            STATE="$(gcloud workflows executions describe "${EXECUTION_NAME}" \
               --project="${PROJECT_ID}" \
               --location="${REGION}" \
-              --format="value(state)")
+              --format="value(state)" 2>/dev/null)" || {
+              echo "Transient error polling workflow execution; retrying..."
+              sleep 5
+              continue
+            }
             echo "Current state: ${STATE}"
             case "${STATE}" in
               SUCCEEDED)
@@ -339,7 +349,7 @@ jobs:
                 gcloud workflows executions describe "${EXECUTION_NAME}" \
                   --project="${PROJECT_ID}" \
                   --location="${REGION}" \
-                  --format="value(error)"
+                  --format="value(error)" || true
                 exit 1
                 ;;
               *)
