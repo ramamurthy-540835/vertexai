@@ -9,7 +9,7 @@ main:
           - leadJob: ${default(map.get(args, "leadJob"), "lead-match-lead-embeddings")}
           - posJob: ${default(map.get(args, "posJob"), "lead-match-pos-embeddings")}
           - matchJob: ${default(map.get(args, "matchJob"), "lead-match-fuzzy-match")}
-          - indexJob: ${default(map.get(args, "indexJob"), "lead-match-ensure-indexes")}
+          - indexJob: ${default(map.get(args, "indexJob"), "lead-match-fuzzy-match")}
           - reportJob: ${default(map.get(args, "reportJob"), "lead-match-report")}
           - matchRunId: ${default(map.get(args, "matchRunId"), "")}
           - reportBucket: ${default(map.get(args, "reportBucket"), "lead-match-ctoteam")}
@@ -29,6 +29,7 @@ main:
                         project: ${project}
                         region: ${region}
                         jobName: ${leadJob}
+                        containerArgs: []
                         envVars:
                           - name: WAREHOUSE
                             value: ${warehouse}
@@ -45,6 +46,7 @@ main:
                         project: ${project}
                         region: ${region}
                         jobName: ${posJob}
+                        containerArgs: []
                         envVars:
                           - name: WAREHOUSE
                             value: ${warehouse}
@@ -60,6 +62,8 @@ main:
           project: ${project}
           region: ${region}
           jobName: ${indexJob}
+          containerArgs:
+            - ensure-indexes
           envVars:
             - name: WAREHOUSE
               value: ${warehouse}
@@ -73,6 +77,7 @@ main:
           project: ${project}
           region: ${region}
           jobName: ${matchJob}
+          containerArgs: []
           envVars:
             - name: WAREHOUSE
               value: ${warehouse}
@@ -88,6 +93,7 @@ main:
           project: ${project}
           region: ${region}
           jobName: ${reportJob}
+          containerArgs: []
           envVars:
             - name: WAREHOUSE
               value: ${warehouse}
@@ -115,7 +121,7 @@ main:
           report: ${reportResult}
 
 runCloudRunJob:
-  params: [project, region, jobName, envVars]
+  params: [project, region, jobName, envVars, containerArgs]
   steps:
     - init:
         assign:
@@ -126,14 +132,21 @@ runCloudRunJob:
           severity: INFO
           text: ${"Starting Cloud Run Job " + jobName}
     - runJob:
-        call: googleapis.run.v2.projects.locations.jobs.run
-        args:
-          name: ${"projects/" + project + "/locations/" + region + "/jobs/" + jobName}
-          body:
-            overrides:
-              containerOverrides:
-                - env: ${envVars}
-        result: jobExecution
+        try:
+          call: googleapis.run.v2.projects.locations.jobs.run
+          args:
+            name: ${"projects/" + project + "/locations/" + region + "/jobs/" + jobName}
+            body:
+              overrides:
+                containerOverrides:
+                  - args: ${containerArgs}
+                    env: ${envVars}
+          result: jobExecution
+        except:
+          as: e
+          steps:
+            - failRunJobStart:
+                raise: '${"Failed to start Cloud Run Job " + jobName + ": " + json.encode_to_string(e)}'
     - waitJob:
         call: waitForRunJobExecution
         args:
@@ -162,6 +175,10 @@ runCloudRunJob:
 waitForRunJobExecution:
   params: [executionName]
   steps:
+    - initWait:
+        assign:
+          - pollStartedAt: ${sys.now()}
+          - maxWaitSeconds: 3600
     - poll:
         call: googleapis.run.v2.projects.locations.jobs.executions.get
         args:
@@ -175,18 +192,18 @@ waitForRunJobExecution:
           - cancelledCount: ${default(map.get(execution, "cancelledCount"), default(map.get(executionStatus, "cancelledCount"), 0))}
           - succeededCount: ${default(map.get(execution, "succeededCount"), default(map.get(executionStatus, "succeededCount"), 0))}
           - taskCount: ${default(map.get(execution, "taskCount"), default(map.get(executionSpec, "taskCount"), 1))}
-    - failOnFailedTask:
+    - checkTimeout:
         switch:
+          - condition: ${sys.now() - pollStartedAt > maxWaitSeconds}
+            next: timeout
+    - checkCompletion:
+        switch:
+          - condition: ${taskCount > 0 AND succeededCount >= taskCount}
+            next: returnSuccess
           - condition: ${failedCount > 0}
             next: fail
-    - failOnCancelledTask:
-        switch:
           - condition: ${cancelledCount > 0}
             next: fail
-    - returnWhenAllTasksSucceeded:
-        switch:
-          - condition: ${succeededCount >= taskCount}
-            next: returnSuccess
     - sleep:
         call: sys.sleep
         args:
@@ -195,10 +212,12 @@ waitForRunJobExecution:
     - returnSuccess:
         return:
           executionName: ${executionName}
+          execution: ${execution}
           taskCount: ${taskCount}
           succeededCount: ${succeededCount}
           failedCount: ${failedCount}
           cancelledCount: ${cancelledCount}
-          execution: ${execution}
+    - timeout:
+        raise: '${"Timed out waiting for Cloud Run Job execution after " + json.encode_to_string(maxWaitSeconds) + " seconds: " + executionName + " last_execution=" + json.encode_to_string(execution)}'
     - fail:
         raise: '${"Cloud Run Job execution failed: " + executionName + " execution=" + json.encode_to_string(execution)}'
