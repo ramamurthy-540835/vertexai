@@ -176,7 +176,7 @@ jobs:
                 --project="${PROJECT_ID}" \
                 --region="${REGION}" \
                 --image="${RUNTIME_IMAGE}" \
-                --add-cloudsql-instances="${CLOUDSQL_CONNECTION_NAME}" \
+                --set-cloudsql-instances="${CLOUDSQL_CONNECTION_NAME}" \
                 --set-env-vars="${ENV_VARS}" \
                 --set-secrets="DB_PASSWORD=lead-match-db-password:latest" \
                 --task-timeout=3600 \
