@@ -4,7 +4,7 @@ This document is the simple operating guide for the semantic fuzzy matcher. The 
 
 ## Scope
 
-Fuzzy matching is a recall step for leads and POS rows that were not already claimed by exact or deterministic matching.
+Fuzzy matching is a recall step for leads and POS rows that were not already claimed by exact or deterministic matching. Exact matching is the primary layer. Fuzzy matching is the secondary layer and must only process the residual population that did not qualify in exact matching.
 
 It is scoped by warehouse:
 
@@ -44,6 +44,25 @@ The exact-match guard checks both:
 
 - `match_decision_detail.match_type IN ('Exact', 'Deterministic')`
 - `transaction.match_type IN ('Exact', 'Deterministic')`
+
+The default exact-type list also includes common primary-layer labels:
+
+```text
+Exact
+Deterministic
+Exact Match
+Direct Match
+Close Match
+```
+
+The minimum exact qualification score defaults to `80`.
+
+This guard applies in two places:
+
+- Before embeddings are generated, so exact-qualified leads/POS are not newly embedded for fuzzy matching.
+- Before fuzzy scoring, so any previously embedded exact-qualified records are still excluded from fuzzy candidate selection.
+
+The guard is global across match runs. It does not depend on the current fuzzy `match_run_id`.
 
 ## Score Formula
 
