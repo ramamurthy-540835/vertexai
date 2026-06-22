@@ -30,7 +30,7 @@ DEFAULT_FISCAL_YEAR = int(os.environ.get("DEFAULT_FISCAL_YEAR", "2026"))
 DEFAULT_FISCAL_PERIOD = int(os.environ.get("DEFAULT_FISCAL_PERIOD", "10"))
 DEFAULT_BATCH_SIZE = int(os.environ.get("EMBEDDING_BATCH_SIZE", "100"))
 DEFAULT_MAX_WORKERS = max(1, int(os.environ.get("EMBEDDING_MAX_WORKERS", "3")))
-EMBEDDING_BATCH_WORKERS = max(1, int(os.environ.get("EMBEDDING_BATCH_WORKERS", "1")))
+EMBEDDING_BATCH_WORKERS = max(1, int(os.environ.get("EMBEDDING_BATCH_WORKERS", "3")))
 EMBEDDING_MAX_RETRIES = max(1, int(os.environ.get("EMBEDDING_MAX_RETRIES", "6")))
 EMBEDDING_RETRY_BASE_DELAY = float(os.environ.get("EMBEDDING_RETRY_BASE_DELAY", "1.5"))
 EMBEDDING_RETRY_MAX_DELAY = float(os.environ.get("EMBEDDING_RETRY_MAX_DELAY", "90"))
@@ -142,6 +142,69 @@ def warehouse_sql_filter(alias, params):
     return f"AND {alias}.warehouse_number IN ({placeholders})"
 
 
+def exact_match_types():
+    raw_types = os.environ.get("EXACT_MATCH_TYPES", "Exact,Deterministic")
+    return tuple(
+        value.strip().lower()
+        for value in raw_types.split(",")
+        if value.strip()
+    )
+
+
+def _exact_type_placeholders(types):
+    return ", ".join(["%s"] * len(types))
+
+
+def _append_exact_guard_params(params, run_id, types):
+    params.extend([run_id, *types, *types])
+
+
+def exact_lead_exclusion_clause(schema, lead_expr, params, run_id):
+    types = exact_match_types()
+    if not types:
+        return ""
+    placeholders = _exact_type_placeholders(types)
+    _append_exact_guard_params(params, run_id, types)
+    return f"""
+      AND NOT EXISTS (
+          SELECT 1
+          FROM "{schema}"."match_decision_detail" exact_m
+          WHERE exact_m.match_run_id = %s
+            AND exact_m.lead_id = {lead_expr}
+            AND lower(exact_m.match_type) IN ({placeholders})
+      )
+      AND NOT EXISTS (
+          SELECT 1
+          FROM "{schema}"."transaction" exact_t
+          WHERE exact_t.lead_id = {lead_expr}
+            AND lower(exact_t.match_type) IN ({placeholders})
+      )
+    """
+
+
+def exact_pos_exclusion_clause(schema, pos_expr, params, run_id):
+    types = exact_match_types()
+    if not types:
+        return ""
+    placeholders = _exact_type_placeholders(types)
+    _append_exact_guard_params(params, run_id, types)
+    return f"""
+      AND NOT EXISTS (
+          SELECT 1
+          FROM "{schema}"."match_decision_detail" exact_m
+          WHERE exact_m.match_run_id = %s
+            AND exact_m.pos_id = {pos_expr}
+            AND lower(exact_m.match_type) IN ({placeholders})
+      )
+      AND NOT EXISTS (
+          SELECT 1
+          FROM "{schema}"."transaction" exact_t
+          WHERE exact_t.pos_id = {pos_expr}
+            AND lower(exact_t.match_type) IN ({placeholders})
+      )
+    """
+
+
 def warehouse_scope_label():
     scope = warehouse_scope()
     return "ALL" if scope.is_all else ",".join(str(value) for value in scope.values)
@@ -192,8 +255,6 @@ def is_retryable_embedding_error(exc):
 def embedding_request_size():
     if EMBEDDING_MAX_TEXTS_PER_REQUEST > 0:
         return EMBEDDING_MAX_TEXTS_PER_REQUEST
-    if EMBEDDING_MODEL == "gemini-embedding-001":
-        return 1
     return min(DEFAULT_BATCH_SIZE, 250)
 
 
@@ -619,6 +680,12 @@ def run_fuzzy_match():
     while processed_leads < limit:
         fetch_params = []
         warehouse_clause = warehouse_sql_filter("leads_embeddings", fetch_params).replace("leads_embeddings.", "")
+        exact_lead_clause = exact_lead_exclusion_clause(
+            schema,
+            "leads_embeddings.lead_id",
+            fetch_params,
+            run_id,
+        )
         lead_cursor_clause = ""
         if last_lead_id is not None:
             lead_cursor_clause = "AND lead_id > %s"
@@ -631,6 +698,7 @@ def run_fuzzy_match():
             FROM "{schema}"."leads_embeddings"
             WHERE combined_embedding IS NOT NULL
               {warehouse_clause}
+              {exact_lead_clause}
               {lead_cursor_clause}
             ORDER BY lead_id
             LIMIT %s
@@ -645,15 +713,21 @@ def run_fuzzy_match():
         last_lead_id = lead_ids[-1]
         processed_leads += len(lead_ids)
         lead_placeholders = ", ".join(["%s"] * len(lead_ids))
-        params = [
-            *lead_ids,
+        params = [*lead_ids]
+        exact_pos_clause = exact_pos_exclusion_clause(
+            schema,
+            "s.pos_id",
+            params,
+            run_id,
+        )
+        params.extend([
             recall_gate,
             nearest_neighbor_limit,
             qualify_min,
             run_id,
             ambiguity_delta,
             EMBEDDING_MODEL,
-        ]
+        ])
         query_started = time.monotonic()
         if MATCH_STATEMENT_TIMEOUT_MS > 0:
             cursor.execute("SET LOCAL statement_timeout = %s", [MATCH_STATEMENT_TIMEOUT_MS])
@@ -684,6 +758,7 @@ def run_fuzzy_match():
                     FROM "{schema}"."pos_embeddings" s
                     WHERE s.combined_embedding IS NOT NULL
                       AND s.warehouse_number = l.warehouse_number
+                      {exact_pos_clause}
                       AND (1 - (s.combined_embedding <=> l.combined_embedding)) * 100 >= %s
                     ORDER BY s.combined_embedding <=> l.combined_embedding
                     LIMIT %s
@@ -779,6 +854,66 @@ def run_fuzzy_match():
     )
 
 
+def ensure_indexes():
+    job_started = time.monotonic()
+    conn = connect()
+    conn.autocommit = True
+    cursor = conn.cursor()
+    schema = schema_name()
+    print(f"Schema: {schema}")
+
+    index_defs = [
+        (
+            "idx_leads_embeddings_lead_id_unique",
+            "leads_embeddings",
+            f'CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS idx_leads_embeddings_lead_id_unique ON "{schema}"."leads_embeddings" (lead_id)',
+        ),
+        (
+            "idx_pos_embeddings_pos_id_unique",
+            "pos_embeddings",
+            f'CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS idx_pos_embeddings_pos_id_unique ON "{schema}"."pos_embeddings" (pos_id)',
+        ),
+        (
+            "idx_leads_embeddings_combined_hnsw",
+            "leads_embeddings",
+            f'CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_leads_embeddings_combined_hnsw ON "{schema}"."leads_embeddings" USING hnsw (combined_embedding vector_cosine_ops) WITH (m = 16, ef_construction = 128)',
+        ),
+        (
+            "idx_pos_embeddings_combined_hnsw",
+            "pos_embeddings",
+            f'CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_pos_embeddings_combined_hnsw ON "{schema}"."pos_embeddings" USING hnsw (combined_embedding vector_cosine_ops) WITH (m = 16, ef_construction = 128)',
+        ),
+    ]
+
+    cursor.execute(
+        "SELECT indexname FROM pg_indexes WHERE schemaname = %s",
+        [schema],
+    )
+    existing = {row[0] for row in cursor.fetchall()}
+
+    created = 0
+    for index_name, table_name, ddl in index_defs:
+        if index_name in existing:
+            print(f"Index already exists: {index_name} on {table_name}")
+            continue
+        print(f"Creating index: {index_name} on {table_name} ...")
+        started = time.monotonic()
+        cursor.execute(ddl)
+        duration = time.monotonic() - started
+        print(f"Created {index_name} in {duration:.2f}s")
+        created += 1
+
+    for table in ("leads_embeddings", "pos_embeddings"):
+        cursor.execute(f'ANALYZE "{schema}"."{table}"')
+        print(f"ANALYZE {schema}.{table}")
+
+    conn.close()
+    print(
+        f"Ensure indexes complete: created={created} skipped={len(index_defs) - created} "
+        f"duration_seconds={time.monotonic() - job_started:.2f}"
+    )
+
+
 def print_summary():
     conn = connect()
     cursor = conn.cursor()
@@ -802,7 +937,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "task",
-        choices=("summary", "smoke", "lead-embeddings", "pos-embeddings", "fuzzy-match", "report"),
+        choices=("summary", "smoke", "lead-embeddings", "pos-embeddings", "fuzzy-match", "report", "ensure-indexes"),
     )
     args, remaining = parser.parse_known_args()
 
@@ -821,6 +956,8 @@ def main():
     elif args.task == "report":
         from lead_match_runtime.report import run_report
         run_report()
+    elif args.task == "ensure-indexes":
+        ensure_indexes()
     else:
         raise AssertionError(args.task)
 
