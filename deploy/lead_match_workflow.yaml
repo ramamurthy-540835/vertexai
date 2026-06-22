@@ -157,24 +157,38 @@ runCloudRunJob:
           text: ${"Starting Cloud Run Job " + jobName}
     - runJob:
         try:
-          call: googleapis.run.v2.projects.locations.jobs.run
+          call: http.post
           args:
-            name: ${"projects/" + project + "/locations/" + region + "/jobs/" + jobName}
+            url: ${"https://run.googleapis.com/v2/projects/" + project + "/locations/" + region + "/jobs/" + jobName + ":run"}
+            auth:
+              type: OAuth2
             body:
               overrides:
                 containerOverrides:
                   - args: ${containerArgs}
                     env: ${envVars}
-          result: jobExecution
+          result: jobOperation
         except:
           as: e
           steps:
             - failRunJobStart:
                 raise: '${"Failed to start Cloud Run Job " + jobName + ": " + json.encode_to_string(e)}'
+    - extractExecutionName:
+        assign:
+          - jobOperationBody: ${jobOperation.body}
+          - jobOperationMetadata: ${map.get(jobOperationBody, "metadata")}
+          - jobExecutionName: ${map.get(jobOperationMetadata, "name")}
+    - validateExecutionName:
+        switch:
+          - condition: ${jobExecutionName == null}
+            next: failMissingExecutionName
+        next: waitJob
+    - failMissingExecutionName:
+        raise: '${"Failed to find Cloud Run Job execution name for " + jobName + ": operation=" + json.encode_to_string(jobOperationBody)}'
     - waitJob:
         call: waitForRunJobExecution
         args:
-          executionName: ${jobExecution.name}
+          executionName: ${jobExecutionName}
         result: jobResult
     - finish:
         assign:
@@ -183,7 +197,7 @@ runCloudRunJob:
         call: sys.log
         args:
           severity: INFO
-          text: ${"Completed Cloud Run Job " + jobName + " execution " + jobExecution.name}
+          text: ${"Completed Cloud Run Job " + jobName + " execution " + jobExecutionName}
     - returnResult:
         return:
           job: ${jobName}
