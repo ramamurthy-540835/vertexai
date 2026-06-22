@@ -242,11 +242,12 @@ def vertex_client():
     location = os.environ.get("VERTEX_LOCATION", "us-central1")
     if not project:
         raise RuntimeError("Missing VERTEX_PROJECT_ID or GOOGLE_CLOUD_PROJECT")
+    timeout = float(os.environ.get("VERTEX_TIMEOUT_SECONDS", "120.0"))
     return genai.Client(
         vertexai=True,
         project=project,
         location=location,
-        http_options=types.HttpOptions(api_version="v1"),
+        http_options=types.HttpOptions(api_version="v1", timeout=timeout),
     )
 
 
