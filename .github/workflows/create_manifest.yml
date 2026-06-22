@@ -18,6 +18,11 @@ on:
         required: true
         default: false
         type: boolean
+      run_snow_sync:
+        description: 'Trigger downstream snow_sync after Dataflow completes'
+        required: true
+        default: true
+        type: boolean
 
   workflow_call:
     inputs:
@@ -35,6 +40,11 @@ on:
         required: false
         type: string
         default: 'false'
+      run_snow_sync:
+        description: 'If "true", downstream snow_sync runs after Dataflow completes'
+        required: false
+        type: string
+        default: 'true'
     secrets:
       GCP_WORKLOAD_IDENTITY_PROVIDER_ID:
         required: true
@@ -88,10 +98,17 @@ jobs:
           printf '%s\n' "${FILES[@]}" | jq -R . | jq -s -c . > /tmp/files.json
           cat /tmp/files.json
 
+      # run_snow_sync is embedded directly INTO the manifest JSON, since this is
+      # a GCS-upload-triggered workflow downstream (pos_dataflow_workflow) — the
+      # Eventarc/Pub-Sub event that fires it only carries GCS object metadata, it
+      # has no way to carry this flag. The manifest file is the only artifact
+      # this workflow controls that the downstream workflow actually reads, so
+      # that's where the choice has to live.
       - name: "2. Build manifest"
         id: build
         env:
           RUN_LABEL: ${{ inputs.run_label }}
+          RUN_SNOW_SYNC: ${{ inputs.run_snow_sync }}
         run: |
           if [ -z "$RUN_LABEL" ]; then
             RUN_ID="run-$(date -u +%Y%m%d-%H%M%S)"
@@ -106,12 +123,14 @@ jobs:
             --arg submitted_by "github-actions-${GITHUB_ACTOR}" \
             --arg submitted_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             --arg github_run_url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            --argjson run_snow_sync "$RUN_SNOW_SYNC" \
             --argjson files "$(cat /tmp/files.json)" \
             '{
               run_id: $run_id,
               submitted_by: $submitted_by,
               submitted_at: $submitted_at,
               github_run_url: $github_run_url,
+              run_snow_sync: $run_snow_sync,
               files: $files
             }' > /tmp/manifest.json
 
@@ -145,6 +164,7 @@ jobs:
             echo "- **Run ID:** \`${{ steps.build.outputs.RUN_ID }}\`"
             echo "- **Files in manifest:** $(jq '.files | length' /tmp/manifest.json 2>/dev/null || echo '0')"
             echo "- **Dry run:** ${{ inputs.dry_run }}"
+            echo "- **run_snow_sync:** ${{ inputs.run_snow_sync }}"
             echo ""
             echo "### Manifest content"
             echo '```json'
