@@ -899,6 +899,58 @@ def write_back_match_results(conn, cursor, schema, run_id):
     return transaction_updates, lead_updates
 
 
+def write_match_audit(cursor, schema, run_id, lead_count, match_count, status, comments):
+    cursor.execute(
+        f"""
+        SELECT COUNT(DISTINCT pos_id)
+        FROM "{schema}"."match_decision_detail"
+        WHERE match_run_id = %s
+        """,
+        (run_id,),
+    )
+    pos_count = int(cursor.fetchone()[0])
+    stats = json.dumps(
+        {
+            "match_run_id": run_id,
+            "dry_run": DRY_RUN,
+            "processed_leads": lead_count,
+            "matched_pos": pos_count,
+            "match_rows": match_count,
+        },
+        sort_keys=True,
+    )
+    cursor.execute(
+        f"""
+        INSERT INTO "{schema}"."match_audit" (
+            match_id,
+            lead_count,
+            pos_count,
+            match_count,
+            stats,
+            status,
+            start_date,
+            end_date,
+            update_date,
+            comments
+        )
+        VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, %s)
+        """,
+        (
+            str(uuid.uuid4()),
+            lead_count,
+            pos_count,
+            match_count,
+            stats,
+            status,
+            comments,
+        ),
+    )
+    print(
+        f"Match audit inserted: status={status}; lead_count={lead_count}; "
+        f"pos_count={pos_count}; match_count={match_count}"
+    )
+
+
 def _run_fuzzy_match(conn, job_started):
     cursor = conn.cursor()
     schema = schema_name()
@@ -1134,6 +1186,23 @@ def _run_fuzzy_match(conn, job_started):
             "Dry-run business table writeback skipped; "
             "set DRY_RUN_WRITEBACK_BUSINESS_TABLES=true to test lead/transaction updates"
         )
+    audit_status = "DRY_RUN" if DRY_RUN else "COMPLETED"
+    audit_comments = (
+        f"match_run_id={run_id}; "
+        f"warehouse_scope={warehouse_scope_label()}; "
+        f"dry_run={DRY_RUN}; "
+        f"business_writeback={'enabled' if (not DRY_RUN or DRY_RUN_WRITEBACK_BUSINESS_TABLES) else 'skipped'}"
+    )
+    write_match_audit(
+        cursor,
+        schema,
+        run_id,
+        processed_leads,
+        inserted,
+        audit_status,
+        audit_comments,
+    )
+    conn.commit()
 
 
 def ensure_indexes():
