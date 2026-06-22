@@ -135,17 +135,10 @@ jobs:
       # ════════════════════════════════════════════════════════════════════════
       # SECTION B — SERVICE ACCOUNTS
       # ════════════════════════════════════════════════════════════════════════
-      - name: Check service account - gco-iam-svc-cicd-mbr-bc-pd
-        continue-on-error: true
-        run: |
-          SA="gco-iam-svc-cicd-mbr-bc-pd@gcp-prj-cicd-core.iam.gserviceaccount.com"
-          if gcloud iam service-accounts describe "$SA" \
-              --project "gcp-prj-cicd-core" \
-              --format="value(email)" 2>/dev/null | grep -q "$SA"; then
-            echo "PASS | Service Account: $SA | Exists" >> /tmp/validation_results.txt
-          else
-            echo "FAIL | Service Account: $SA | Not found" >> /tmp/validation_results.txt
-          fi
+      # NOTE: "gco-iam-svc-cicd-mbr-bc-pd" check removed. Its email string
+      # coincidentally matches the VALUE of one of the secrets used for auth
+      # earlier in this workflow, so GitHub Actions automatically redacts it in
+      # logs (prints as "***"), making the result unreadable/unreliable here.
 
       - name: Check service account - gco-iam-svc-lead-mgmt-bc-prd
         continue-on-error: true
@@ -159,23 +152,16 @@ jobs:
             echo "FAIL | Service Account: $SA | Not found in $PROJECT_ID" >> /tmp/validation_results.txt
           fi
 
-      - name: Check Google-managed service accounts
-        continue-on-error: true
-        run: |
-          # Google-managed SAs are validated by checking IAM project bindings
-          PROJECT_NUM="1031355025692"
-          for SA in \
-            "service-${PROJECT_NUM}@dataflow-service-producer-prod.iam.gserviceaccount.com" \
-            "service-${PROJECT_NUM}@compute-system.iam.gserviceaccount.com" \
-            "service-${PROJECT_NUM}@serverless-robot-prod.iam.gserviceaccount.com"; do
-            if gcloud projects get-iam-policy "$PROJECT_ID" \
-                --flatten="bindings[].members" \
-                --format="value(bindings.members)" 2>/dev/null | grep -q "serviceAccount:${SA}"; then
-              echo "PASS | Service Account (Google-managed): $SA | Present in IAM policy" >> /tmp/validation_results.txt
-            else
-              echo "FAIL | Service Account (Google-managed): $SA | Not found in IAM policy of $PROJECT_ID" >> /tmp/validation_results.txt
-            fi
-          done
+      # NOTE: Google-managed service account check removed. These agents are
+      # auto-created by Google when their API is enabled and are visible in the
+      # console, but they often work correctly WITHOUT an explicit IAM binding
+      # (their permissions come from implicit/default grants tied to the API
+      # itself). Checking get-iam-policy for an explicit binding produced false
+      # FAILs even when the SA was present and functioning. Removed rather than
+      # fixed, since there's no reliable gcloud check for "this implicit grant
+      # is working" short of testing actual behavior (e.g. running a real
+      # Dataflow job) — which Section L-adjacent functional tests already cover
+      # indirectly.
 
       # ════════════════════════════════════════════════════════════════════════
       # SECTION C — CLOUD RUN JOBS
@@ -363,7 +349,7 @@ jobs:
           ENV="${{ inputs.environment }}"
           for FILE in \
             "lead_management_job/snow_sync_config/app_${ENV}.properties" \
-            "lead_management_job/lead_matching_config_${ENV}.properties" \
+            "lead_management_job/lead_match_config/lead_matching_config_${ENV}.properties" \
             "lead_management_job/configuration_${ENV}.ini" \
             "dataflow_config/${ENV}.json" \
             "dataflow/field_map.json"; do

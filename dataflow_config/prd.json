@@ -15,7 +15,7 @@
     "machine_type":    "n2d-standard-2",
     "max_workers":     5,
     "subnetwork":      "https://www.googleapis.com/compute/v1/projects/gcp-prj-transit-hub/regions/us-central1/subnetworks/gcp-snt-pd-usc1-601-cloudrunjobs-pd",
-    "chunk_size":      2,
+    "chunk_size":      5,
     "batch_size":      "2000"
   },
 
