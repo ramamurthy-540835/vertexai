@@ -3,6 +3,26 @@ name: lead_match_preflight_ops.yml
 on:
   workflow_dispatch:
     inputs:
+      project_id:
+        description: "GCP project ID"
+        required: false
+        default: "ctoteam"
+        type: string
+      region:
+        description: "GCP region"
+        required: false
+        default: "us-central1"
+        type: string
+      instance_name:
+        description: "Cloud SQL instance name"
+        required: false
+        default: "lead-mgmt-db"
+        type: string
+      schema_name:
+        description: "Cloud SQL schema containing lead match tables"
+        required: false
+        default: "leadmgmt"
+        type: string
       warehouse:
         description: "Warehouse number, comma-separated warehouses, blank, or all"
         required: false
@@ -29,6 +49,14 @@ on:
         options:
           - "true"
           - "false"
+      run_cloud_sql_index_maintenance:
+        description: "Create/check embedding vector indexes in Cloud SQL?"
+        required: true
+        default: "false"
+        type: choice
+        options:
+          - "true"
+          - "false"
 
 jobs:
   preflight:
@@ -40,19 +68,24 @@ jobs:
       contents: read
 
     env:
-      PROJECT_ID: ctoteam
-      REGION: us-central1
-      SCHEMA_NAME: leadmgmt
-      INSTANCE_NAME: lead-mgmt-db
+      PROJECT_ID: ${{ github.event.inputs.project_id }}
+      REGION: ${{ github.event.inputs.region }}
+      SCHEMA_NAME: ${{ github.event.inputs.schema_name }}
+      INSTANCE_NAME: ${{ github.event.inputs.instance_name }}
       WORKFLOW_NAME: lead_match_workflow
       LEAD_JOB: lead-match-lead-embeddings
       POS_JOB: lead-match-pos-embeddings
       MATCH_JOB: lead-match-fuzzy-match
       SMOKE_JOB: lead-match-warehouse-smoke
       BUCKET_NAME: ${{ github.event.inputs.bucket }}
+      DB_NAME: ${{ secrets.DB_NAME }}
+      DB_USER: ${{ secrets.DB_USER }}
+      DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+      EMBEDDING_DIMENSION: "768"
       WORKFLOW_YAML_STATUS: FAIL
       VERTEX_PATH_STATUS: FAIL
       CLOUD_SQL_SMOKE_STATUS: SKIPPED
+      CLOUD_SQL_INDEX_STATUS: SKIPPED
       OPTIONAL_CHECKS_JSON: '{}'
 
     steps:
@@ -71,19 +104,21 @@ jobs:
         uses: google-github-actions/setup-gcloud@v2
 
       - name: Set up Python
-        if: github.event.inputs.run_smoke_tests == 'true'
+        if: github.event.inputs.run_smoke_tests == 'true' || github.event.inputs.run_cloud_sql_index_maintenance == 'true'
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
       - name: Install smoke-test dependencies
-        if: github.event.inputs.run_smoke_tests == 'true'
+        if: github.event.inputs.run_smoke_tests == 'true' || github.event.inputs.run_cloud_sql_index_maintenance == 'true'
         run: |
           set -euo pipefail
           python -m pip install --upgrade pip
           python -m pip install \
+            "cloud-sql-python-connector[pg8000]" \
             google-genai \
-            google-auth
+            google-auth \
+            pg8000
 
       - name: Resolve inputs
         env:
@@ -133,6 +168,7 @@ jobs:
             echo "- Cloud Run Jobs: \`${LEAD_JOB}\`, \`${POS_JOB}\`, \`${MATCH_JOB}\`"
             echo "- Warehouse: \`${WAREHOUSE_LABEL}\`"
             echo "- Smoke tests: \`${{ github.event.inputs.run_smoke_tests }}\`"
+            echo "- Cloud SQL index maintenance: \`${{ github.event.inputs.run_cloud_sql_index_maintenance }}\`"
             echo "- READY URI: \`${READY_URI}\`"
             echo "- Report URI: \`${REPORT_URI}\`"
             echo "- Result URI: \`${RESULT_URI}\`"
@@ -215,6 +251,353 @@ jobs:
             echo '```'
             echo ""
           } >> "${REPORT_FILE}"
+
+      - name: Ensure Cloud SQL embedding indexes
+        if: github.event.inputs.run_cloud_sql_index_maintenance == 'true'
+        timeout-minutes: 45
+        run: |
+          set -euo pipefail
+          gcloud config set project "${PROJECT_ID}"
+
+          if [[ -z "${DB_NAME:-}" ]]; then
+            DB_NAME="postgres"
+          fi
+          if [[ -z "${DB_USER:-}" ]]; then
+            DB_USER="postgres"
+          fi
+          if [[ -z "${DB_PASSWORD:-}" ]]; then
+            echo "DB_PASSWORD secret is required for Cloud SQL index maintenance" >&2
+            echo "CLOUD_SQL_INDEX_STATUS=FAIL" >> "$GITHUB_ENV"
+            exit 1
+          fi
+
+          CONNECTION_NAME="$(gcloud sql instances describe "${INSTANCE_NAME}" \
+            --project="${PROJECT_ID}" \
+            --format='value(connectionName)')"
+          if [[ -z "${CONNECTION_NAME}" ]]; then
+            echo "Could not resolve Cloud SQL connection name for ${INSTANCE_NAME}" >&2
+            echo "CLOUD_SQL_INDEX_STATUS=FAIL" >> "$GITHUB_ENV"
+            exit 1
+          fi
+
+          export CONNECTION_NAME DB_NAME DB_USER DB_PASSWORD
+          export INDEX_RESULT_FILE="${RUNNER_TEMP}/cloud_sql_index_maintenance.json"
+
+          set +e
+          python - <<'PY'
+          import json
+          import os
+          import re
+          import time
+          from pathlib import Path
+
+          from google.cloud.sql.connector import Connector
+
+          IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+          schema = os.environ["SCHEMA_NAME"]
+          dimension = int(os.environ.get("EMBEDDING_DIMENSION", "768"))
+          result_path = Path(os.environ["INDEX_RESULT_FILE"])
+
+          def quote_ident(identifier: str) -> str:
+              if not IDENT_RE.match(identifier):
+                  raise RuntimeError(f"Unsafe SQL identifier: {identifier!r}")
+              return '"' + identifier.replace('"', '""') + '"'
+
+          def qualified_index(index_name: str) -> str:
+              return f"{quote_ident(schema)}.{quote_ident(index_name)}"
+
+          def qualified_table(table_name: str) -> str:
+              return f"{quote_ident(schema)}.{quote_ident(table_name)}"
+
+          def execute_step(cursor, label: str, sql: str, params=None, steps=None):
+              started = time.monotonic()
+              print(f"start: {label}")
+              cursor.execute(sql, params or ())
+              duration = round(time.monotonic() - started, 2)
+              print(f"done: {label}; seconds={duration}")
+              if steps is not None:
+                  steps.append({"step": label, "seconds": duration})
+
+          def fetchall(cursor, sql: str, params=None):
+              cursor.execute(sql, params or ())
+              return cursor.fetchall()
+
+          connector = Connector()
+          conn = None
+          steps = []
+          try:
+              conn = connector.connect(
+                  os.environ["CONNECTION_NAME"],
+                  "pg8000",
+                  user=os.environ["DB_USER"],
+                  password=os.environ["DB_PASSWORD"],
+                  db=os.environ["DB_NAME"],
+              )
+              conn.autocommit = True
+              cursor = conn.cursor()
+
+              execute_step(cursor, "create pgvector extension", "CREATE EXTENSION IF NOT EXISTS vector", steps=steps)
+
+              required_tables = ("leads_embeddings", "pos_embeddings")
+              missing_tables = [
+                  table
+                  for table in required_tables
+                  if not fetchall(
+                      cursor,
+                      """
+                      SELECT 1
+                      FROM information_schema.tables
+                      WHERE table_schema = %s AND table_name = %s
+                      """,
+                      (schema, table),
+                  )
+              ]
+              if missing_tables:
+                  raise RuntimeError(f"Missing required embedding tables: {missing_tables}")
+
+              vector_columns = ("combined_embedding", "address_embedding", "name_embedding")
+              for table in required_tables:
+                  for column in vector_columns:
+                      rows = fetchall(
+                          cursor,
+                          f"""
+                          SELECT vector_dims({quote_ident(column)}), count(*)
+                          FROM {qualified_table(table)}
+                          WHERE {quote_ident(column)} IS NOT NULL
+                          GROUP BY vector_dims({quote_ident(column)})
+                          """,
+                      )
+                      bad_dims = [row for row in rows if int(row[0]) != dimension]
+                      if bad_dims:
+                          raise RuntimeError(
+                              f"{schema}.{table}.{column} has non-{dimension} vectors: {bad_dims}"
+                          )
+
+              invalid_indexes = fetchall(
+                  cursor,
+                  """
+                  SELECT c.relname
+                  FROM pg_index i
+                  JOIN pg_class c ON c.oid = i.indexrelid
+                  JOIN pg_namespace n ON n.oid = c.relnamespace
+                  WHERE n.nspname = %s
+                    AND c.relname IN (
+                      'idx_leads_embeddings_combined_hnsw',
+                      'idx_pos_embeddings_combined_hnsw',
+                      'idx_leads_embeddings_lead_id_unique',
+                      'idx_pos_embeddings_pos_id_unique'
+                    )
+                    AND (NOT i.indisvalid OR NOT i.indisready)
+                  """,
+                  (schema,),
+              )
+              for (index_name,) in invalid_indexes:
+                  execute_step(
+                      cursor,
+                      f"drop invalid index {index_name}",
+                      f"DROP INDEX CONCURRENTLY IF EXISTS {qualified_index(index_name)}",
+                      steps=steps,
+                  )
+
+              for table in required_tables:
+                  current_types = {
+                      row[0]: row[1]
+                      for row in fetchall(
+                          cursor,
+                          """
+                          SELECT a.attname, format_type(a.atttypid, a.atttypmod)
+                          FROM pg_attribute a
+                          JOIN pg_class c ON c.oid = a.attrelid
+                          JOIN pg_namespace n ON n.oid = c.relnamespace
+                          WHERE n.nspname = %s
+                            AND c.relname = %s
+                            AND a.attname IN ('combined_embedding', 'address_embedding', 'name_embedding')
+                          """,
+                          (schema, table),
+                      )
+                  }
+                  if any(current_types.get(column) != f"vector({dimension})" for column in vector_columns):
+                      execute_step(
+                          cursor,
+                          f"dimension {table} vector columns",
+                          f"""
+                          ALTER TABLE {qualified_table(table)}
+                              ALTER COLUMN combined_embedding TYPE vector({dimension}) USING combined_embedding::vector({dimension}),
+                              ALTER COLUMN address_embedding TYPE vector({dimension}) USING address_embedding::vector({dimension}),
+                              ALTER COLUMN name_embedding TYPE vector({dimension}) USING name_embedding::vector({dimension})
+                          """,
+                          steps=steps,
+                      )
+
+              duplicate_checks = (
+                  ("leads_embeddings", "lead_id"),
+                  ("pos_embeddings", "pos_id"),
+              )
+              for table, key_column in duplicate_checks:
+                  duplicates = fetchall(
+                      cursor,
+                      f"""
+                      SELECT {quote_ident(key_column)}, count(*)
+                      FROM {qualified_table(table)}
+                      WHERE {quote_ident(key_column)} IS NOT NULL
+                      GROUP BY {quote_ident(key_column)}
+                      HAVING count(*) > 1
+                      LIMIT 10
+                      """,
+                  )
+                  if duplicates:
+                      raise RuntimeError(
+                          f"Cannot create unique index on {schema}.{table}.{key_column}; duplicates={duplicates}"
+                      )
+
+              execute_step(
+                  cursor,
+                  "create lead embedding unique index",
+                  f"""
+                  CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS idx_leads_embeddings_lead_id_unique
+                  ON {qualified_table("leads_embeddings")} (lead_id)
+                  """,
+                  steps=steps,
+              )
+              execute_step(
+                  cursor,
+                  "create POS embedding unique index",
+                  f"""
+                  CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS idx_pos_embeddings_pos_id_unique
+                  ON {qualified_table("pos_embeddings")} (pos_id)
+                  """,
+                  steps=steps,
+              )
+              execute_step(
+                  cursor,
+                  "create lead combined HNSW index",
+                  f"""
+                  CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_leads_embeddings_combined_hnsw
+                  ON {qualified_table("leads_embeddings")}
+                  USING hnsw (combined_embedding vector_cosine_ops)
+                  WITH (m = 16, ef_construction = 128)
+                  """,
+                  steps=steps,
+              )
+              execute_step(
+                  cursor,
+                  "create POS combined HNSW index",
+                  f"""
+                  CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_pos_embeddings_combined_hnsw
+                  ON {qualified_table("pos_embeddings")}
+                  USING hnsw (combined_embedding vector_cosine_ops)
+                  WITH (m = 16, ef_construction = 128)
+                  """,
+                  steps=steps,
+              )
+              execute_step(cursor, "analyze leads_embeddings", f"ANALYZE {qualified_table('leads_embeddings')}", steps=steps)
+              execute_step(cursor, "analyze pos_embeddings", f"ANALYZE {qualified_table('pos_embeddings')}", steps=steps)
+
+              index_states = [
+                  {
+                      "index_name": row[0],
+                      "unique": bool(row[1]),
+                      "valid": bool(row[2]),
+                      "ready": bool(row[3]),
+                      "definition": row[4],
+                  }
+                  for row in fetchall(
+                      cursor,
+                      """
+                      SELECT c.relname, i.indisunique, i.indisvalid, i.indisready, pg_get_indexdef(i.indexrelid)
+                      FROM pg_index i
+                      JOIN pg_class c ON c.oid = i.indexrelid
+                      JOIN pg_namespace n ON n.oid = c.relnamespace
+                      WHERE n.nspname = %s
+                        AND c.relname IN (
+                          'idx_leads_embeddings_combined_hnsw',
+                          'idx_pos_embeddings_combined_hnsw',
+                          'idx_leads_embeddings_lead_id_unique',
+                          'idx_pos_embeddings_pos_id_unique'
+                        )
+                      ORDER BY c.relname
+                      """,
+                      (schema,),
+                  )
+              ]
+              if len(index_states) != 4 or not all(row["valid"] and row["ready"] for row in index_states):
+                  raise RuntimeError(f"Index verification failed: {index_states}")
+
+              column_types = [
+                  {"table": row[0], "column": row[1], "type": row[2]}
+                  for row in fetchall(
+                      cursor,
+                      """
+                      SELECT c.relname, a.attname, format_type(a.atttypid, a.atttypmod)
+                      FROM pg_attribute a
+                      JOIN pg_class c ON c.oid = a.attrelid
+                      JOIN pg_namespace n ON n.oid = c.relnamespace
+                      WHERE n.nspname = %s
+                        AND c.relname IN ('leads_embeddings', 'pos_embeddings')
+                        AND a.attname IN ('combined_embedding', 'address_embedding', 'name_embedding')
+                      ORDER BY c.relname, a.attname
+                      """,
+                      (schema,),
+                  )
+              ]
+              result = {
+                  "status": "PASS",
+                  "project": os.environ["PROJECT_ID"],
+                  "connection_name": os.environ["CONNECTION_NAME"],
+                  "database": os.environ["DB_NAME"],
+                  "schema": schema,
+                  "embedding_dimension": dimension,
+                  "steps": steps,
+                  "column_types": column_types,
+                  "index_states": index_states,
+              }
+              result_path.write_text(json.dumps(result, indent=2) + "\n")
+              print(json.dumps(result, indent=2))
+          except Exception as exc:
+              result = {
+                  "status": "FAIL",
+                  "project": os.environ.get("PROJECT_ID"),
+                  "connection_name": os.environ.get("CONNECTION_NAME"),
+                  "database": os.environ.get("DB_NAME"),
+                  "schema": schema,
+                  "embedding_dimension": dimension,
+                  "steps": steps,
+                  "error": str(exc),
+              }
+              result_path.write_text(json.dumps(result, indent=2) + "\n")
+              print(json.dumps(result, indent=2))
+              raise
+          finally:
+              if conn is not None:
+                  conn.close()
+              connector.close()
+          PY
+          INDEX_RC=$?
+          set -e
+
+          if [[ ${INDEX_RC} -eq 0 ]]; then
+            echo "CLOUD_SQL_INDEX_STATUS=PASS" >> "$GITHUB_ENV"
+          else
+            echo "CLOUD_SQL_INDEX_STATUS=FAIL" >> "$GITHUB_ENV"
+          fi
+
+          {
+            echo "## Cloud SQL Embedding Index Maintenance"
+            echo ""
+            echo "- Instance: \`${INSTANCE_NAME}\`"
+            echo "- Connection: \`${CONNECTION_NAME}\`"
+            echo "- Database: \`${DB_NAME}\`"
+            echo "- Schema: \`${SCHEMA_NAME}\`"
+            echo "- Status: \`$(python -c 'import json,os; print(json.load(open(os.environ["INDEX_RESULT_FILE"]))["status"])')\`"
+            echo ""
+            echo '```json'
+            cat "${INDEX_RESULT_FILE}"
+            echo '```'
+            echo ""
+          } >> "${REPORT_FILE}"
+
+          exit "${INDEX_RC}"
 
       - name: Run Vertex AI embedding smoke test
         if: github.event.inputs.run_smoke_tests == 'true'
@@ -338,6 +721,12 @@ jobs:
           if [[ "${CLOUD_SQL_SMOKE_STATUS}" == "FAIL" ]]; then
             OVERALL_STATUS="FAIL"
           fi
+          if [[ "${CLOUD_SQL_INDEX_STATUS}" == "FAIL" ]]; then
+            OVERALL_STATUS="FAIL"
+          fi
+          if [[ "${OVERALL_STATUS}" != "PASS" ]]; then
+            READY="false"
+          fi
           export REQUIRED_STATUS READY OVERALL_STATUS
 
           rm -f "${READY_FILE}"
@@ -359,9 +748,11 @@ jobs:
                   "workflow_yaml": os.environ.get("WORKFLOW_YAML_STATUS", "FAIL"),
                   "vertex_path": os.environ.get("VERTEX_PATH_STATUS", "FAIL"),
                   "cloud_sql_smoke": os.environ.get("CLOUD_SQL_SMOKE_STATUS", "SKIPPED"),
+                  "cloud_sql_indexes": os.environ.get("CLOUD_SQL_INDEX_STATUS", "SKIPPED"),
               },
               "optional_checks": {
                   "cloud_sql_smoke": os.environ.get("CLOUD_SQL_SMOKE_STATUS", "SKIPPED"),
+                  "cloud_sql_indexes": os.environ.get("CLOUD_SQL_INDEX_STATUS", "SKIPPED"),
               },
               "report_uri": os.environ["REPORT_URI"],
               "ready_uri": os.environ["READY_URI"],
@@ -373,6 +764,7 @@ jobs:
             echo "## Readiness Contract"
             echo ""
             echo "- Required checks status: \`${REQUIRED_STATUS}\`"
+            echo "- Cloud SQL index status: \`${CLOUD_SQL_INDEX_STATUS}\`"
             echo "- Overall status: \`${OVERALL_STATUS}\`"
             echo "- Ready: \`${READY}\`"
             echo "- Result URI: \`${RESULT_URI}\`"
