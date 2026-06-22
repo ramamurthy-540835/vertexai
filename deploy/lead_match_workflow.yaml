@@ -192,26 +192,26 @@ waitForRunJobExecution:
         assign:
           - executionStatus: ${map.get(execution, "status")}
           - executionSpec: ${map.get(execution, "spec")}
-          - taskCount: ${default(map.get(execution, "taskCount"), 1)}
-          - succeededCount: ${default(map.get(execution, "succeededCount"), 0)}
-          - failedCount: ${default(map.get(execution, "failedCount"), 0)}
-          - cancelledCount: ${default(map.get(execution, "cancelledCount"), 0)}
+          - taskCount: ${int(default(map.get(execution, "taskCount"), 1))}
+          - succeededCount: ${int(default(map.get(execution, "succeededCount"), 0))}
+          - failedCount: ${int(default(map.get(execution, "failedCount"), 0))}
+          - cancelledCount: ${int(default(map.get(execution, "cancelledCount"), 0))}
     - extractNestedSpec:
         switch:
           - condition: ${executionSpec != null}
             steps:
               - applyNestedSpec:
                   assign:
-                    - taskCount: ${default(map.get(executionSpec, "taskCount"), taskCount)}
+                    - taskCount: ${int(default(map.get(executionSpec, "taskCount"), taskCount))}
     - extractNestedStatus:
         switch:
           - condition: ${executionStatus != null}
             steps:
               - applyNestedStatus:
                   assign:
-                    - succeededCount: ${default(map.get(executionStatus, "succeededCount"), succeededCount)}
-                    - failedCount: ${default(map.get(executionStatus, "failedCount"), failedCount)}
-                    - cancelledCount: ${default(map.get(executionStatus, "cancelledCount"), cancelledCount)}
+                    - succeededCount: ${int(default(map.get(executionStatus, "succeededCount"), succeededCount))}
+                    - failedCount: ${int(default(map.get(executionStatus, "failedCount"), failedCount))}
+                    - cancelledCount: ${int(default(map.get(executionStatus, "cancelledCount"), cancelledCount))}
     - checkCompletion:
         switch:
           - condition: ${succeededCount >= taskCount}
