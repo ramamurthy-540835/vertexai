@@ -265,9 +265,15 @@ jobs:
           READY_URI="gs://${BUCKET_NAME}/${HANDOFF_PREFIX}/READY"
           PREFLIGHT_REPORT_URI="gs://${BUCKET_NAME}/${HANDOFF_PREFIX}/report.md"
           PREFLIGHT_RESULT_URI="gs://${BUCKET_NAME}/${HANDOFF_PREFIX}/result.json"
-          FINAL_SUMMARY_URI="gs://${BUCKET_NAME}/${FINAL_REPORT_PREFIX}/summary.json"
-          FINAL_MATCHES_URI="gs://${BUCKET_NAME}/${FINAL_REPORT_PREFIX}/matches.csv"
-          FINAL_REPORT_URI="gs://${BUCKET_NAME}/${FINAL_REPORT_PREFIX}/report.md"
+          if [[ "${DRY_RUN}" == "true" ]]; then
+            FINAL_SUMMARY_URI="gs://${BUCKET_NAME}/${FINAL_REPORT_PREFIX}/dryrun_summary.json"
+            FINAL_MATCHES_URI="gs://${BUCKET_NAME}/${FINAL_REPORT_PREFIX}/dryrun_matches.csv"
+            FINAL_REPORT_URI="gs://${BUCKET_NAME}/${FINAL_REPORT_PREFIX}/dryrun_report.md"
+          else
+            FINAL_SUMMARY_URI="gs://${BUCKET_NAME}/${FINAL_REPORT_PREFIX}/summary.json"
+            FINAL_MATCHES_URI="gs://${BUCKET_NAME}/${FINAL_REPORT_PREFIX}/matches.csv"
+            FINAL_REPORT_URI="gs://${BUCKET_NAME}/${FINAL_REPORT_PREFIX}/report.md"
+          fi
           echo "PAYLOAD=${PAYLOAD}" >> "$GITHUB_ENV"
           echo "MATCH_RUN_ID=${MATCH_RUN_ID}" >> "$GITHUB_ENV"
           echo "WAREHOUSE_LABEL=${WAREHOUSE_LABEL}" >> "$GITHUB_ENV"
