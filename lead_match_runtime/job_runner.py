@@ -1,6 +1,8 @@
 import argparse
+import json
 import os
 import random
+import re
 import sys
 import time
 import uuid
@@ -41,7 +43,11 @@ MATCH_STATEMENT_TIMEOUT_MS = int(os.environ.get("MATCH_STATEMENT_TIMEOUT_MS", "9
 HNSW_EF_SEARCH = max(0, int(os.environ.get("HNSW_EF_SEARCH", "100")))
 
 EXPECTED_PROJECT = os.environ.get("EXPECTED_PROJECT_ID", BUSINESS_RULES["environment"]["project_id"])
-EXPECTED_CLOUDSQL_CONNECTION_NAME = "ctoteam:us-central1:lead-mgmt-db"
+EXPECTED_CLOUDSQL_CONNECTION_NAME = os.environ.get(
+    "EXPECTED_CLOUDSQL_CONNECTION_NAME",
+    "ctoteam:us-central1:lead-mgmt-db",
+)
+IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 def _require_env(name, expected):
@@ -60,10 +66,10 @@ def assert_isolated_runtime():
             f"expected {EXPECTED_PROJECT!r}"
         )
     conn = os.environ.get("CLOUDSQL_CONNECTION_NAME")
-    if conn and conn not in (EXPECTED_CLOUDSQL_CONNECTION_NAME, "ctoteam:us-central1"):
+    if conn and conn != EXPECTED_CLOUDSQL_CONNECTION_NAME:
         raise RuntimeError(
             f"Refusing to start: CLOUDSQL_CONNECTION_NAME={conn!r}, "
-            f"expected {EXPECTED_CLOUDSQL_CONNECTION_NAME!r} or 'ctoteam:us-central1'"
+            f"expected {EXPECTED_CLOUDSQL_CONNECTION_NAME!r}"
         )
     _require_env("ALLOW_CLIENT_GCP", "false")
     _require_env("ALLOW_PRODUCTION", "false")
@@ -127,6 +133,16 @@ def configure_hnsw_search(conn, cursor):
 
 def schema_name():
     return get_schema(BUSINESS_RULES)
+
+
+def quote_ident(identifier):
+    if not IDENT_RE.match(identifier):
+        raise RuntimeError(f"Unsafe SQL identifier: {identifier!r}")
+    return '"' + identifier.replace('"', '""') + '"'
+
+
+def qualified_name(schema, name):
+    return f"{quote_ident(schema)}.{quote_ident(name)}"
 
 
 def warehouse_scope():
@@ -860,57 +876,205 @@ def ensure_indexes():
     conn.autocommit = True
     cursor = conn.cursor()
     schema = schema_name()
+    dimension = EMBEDDING_DIMENSION
     print(f"Schema: {schema}")
 
-    index_defs = [
-        (
-            "idx_leads_embeddings_lead_id_unique",
-            "leads_embeddings",
-            f'CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS idx_leads_embeddings_lead_id_unique ON "{schema}"."leads_embeddings" (lead_id)',
-        ),
-        (
-            "idx_pos_embeddings_pos_id_unique",
-            "pos_embeddings",
-            f'CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS idx_pos_embeddings_pos_id_unique ON "{schema}"."pos_embeddings" (pos_id)',
-        ),
-        (
-            "idx_leads_embeddings_combined_hnsw",
-            "leads_embeddings",
-            f'CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_leads_embeddings_combined_hnsw ON "{schema}"."leads_embeddings" USING hnsw (combined_embedding vector_cosine_ops) WITH (m = 16, ef_construction = 128)',
-        ),
-        (
-            "idx_pos_embeddings_combined_hnsw",
-            "pos_embeddings",
-            f'CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_pos_embeddings_combined_hnsw ON "{schema}"."pos_embeddings" USING hnsw (combined_embedding vector_cosine_ops) WITH (m = 16, ef_construction = 128)',
-        ),
-    ]
-
-    cursor.execute(
-        "SELECT indexname FROM pg_indexes WHERE schemaname = %s",
-        [schema],
-    )
-    existing = {row[0] for row in cursor.fetchall()}
-
-    created = 0
-    for index_name, table_name, ddl in index_defs:
-        if index_name in existing:
-            print(f"Index already exists: {index_name} on {table_name}")
-            continue
-        print(f"Creating index: {index_name} on {table_name} ...")
+    def execute(label, sql, params=None):
+        print(f"start: {label}")
         started = time.monotonic()
-        cursor.execute(ddl)
+        cursor.execute(sql, params or ())
         duration = time.monotonic() - started
-        print(f"Created {index_name} in {duration:.2f}s")
-        created += 1
+        print(f"done: {label}; seconds={duration:.2f}")
 
-    for table in ("leads_embeddings", "pos_embeddings"):
-        cursor.execute(f'ANALYZE "{schema}"."{table}"')
-        print(f"ANALYZE {schema}.{table}")
+    def fetchall(sql, params=None):
+        cursor.execute(sql, params or ())
+        return cursor.fetchall()
+
+    execute("create pgvector extension", "CREATE EXTENSION IF NOT EXISTS vector")
+
+    required_tables = ("leads_embeddings", "pos_embeddings")
+    vector_columns = ("combined_embedding", "address_embedding", "name_embedding")
+    missing_tables = [
+        table
+        for table in required_tables
+        if not fetchall(
+            """
+            SELECT 1
+            FROM information_schema.tables
+            WHERE table_schema = %s AND table_name = %s
+            """,
+            (schema, table),
+        )
+    ]
+    if missing_tables:
+        raise RuntimeError(f"Missing required embedding tables: {missing_tables}")
+
+    for table in required_tables:
+        for column in vector_columns:
+            bad_dims = [
+                row
+                for row in fetchall(
+                    f"""
+                    SELECT vector_dims({quote_ident(column)}), count(*)
+                    FROM {qualified_name(schema, table)}
+                    WHERE {quote_ident(column)} IS NOT NULL
+                    GROUP BY vector_dims({quote_ident(column)})
+                    """,
+                )
+                if int(row[0]) != dimension
+            ]
+            if bad_dims:
+                raise RuntimeError(
+                    f"{schema}.{table}.{column} has non-{dimension} vectors: {bad_dims}"
+                )
+
+    invalid_indexes = fetchall(
+        """
+        SELECT c.relname
+        FROM pg_index i
+        JOIN pg_class c ON c.oid = i.indexrelid
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = %s
+          AND c.relname IN (
+            'idx_leads_embeddings_combined_hnsw',
+            'idx_pos_embeddings_combined_hnsw',
+            'idx_leads_embeddings_lead_id_unique',
+            'idx_pos_embeddings_pos_id_unique'
+          )
+          AND (NOT i.indisvalid OR NOT i.indisready)
+        """,
+        (schema,),
+    )
+    for (index_name,) in invalid_indexes:
+        execute(
+            f"drop invalid index {index_name}",
+            f"DROP INDEX CONCURRENTLY IF EXISTS {qualified_name(schema, index_name)}",
+        )
+
+    for table in required_tables:
+        current_types = {
+            row[0]: row[1]
+            for row in fetchall(
+                """
+                SELECT a.attname, format_type(a.atttypid, a.atttypmod)
+                FROM pg_attribute a
+                JOIN pg_class c ON c.oid = a.attrelid
+                JOIN pg_namespace n ON n.oid = c.relnamespace
+                WHERE n.nspname = %s
+                  AND c.relname = %s
+                  AND a.attname IN ('combined_embedding', 'address_embedding', 'name_embedding')
+                """,
+                (schema, table),
+            )
+        }
+        if any(current_types.get(column) != f"vector({dimension})" for column in vector_columns):
+            execute(
+                f"dimension {table} vector columns",
+                f"""
+                ALTER TABLE {qualified_name(schema, table)}
+                    ALTER COLUMN combined_embedding TYPE vector({dimension}) USING combined_embedding::vector({dimension}),
+                    ALTER COLUMN address_embedding TYPE vector({dimension}) USING address_embedding::vector({dimension}),
+                    ALTER COLUMN name_embedding TYPE vector({dimension}) USING name_embedding::vector({dimension})
+                """,
+            )
+
+    duplicate_checks = (
+        ("leads_embeddings", "lead_id"),
+        ("pos_embeddings", "pos_id"),
+    )
+    for table, key_column in duplicate_checks:
+        duplicates = fetchall(
+            f"""
+            SELECT {quote_ident(key_column)}, count(*)
+            FROM {qualified_name(schema, table)}
+            WHERE {quote_ident(key_column)} IS NOT NULL
+            GROUP BY {quote_ident(key_column)}
+            HAVING count(*) > 1
+            LIMIT 10
+            """,
+        )
+        if duplicates:
+            raise RuntimeError(
+                f"Cannot create unique index on {schema}.{table}.{key_column}; "
+                f"duplicates={duplicates}"
+            )
+
+    execute(
+        "create lead embedding unique index",
+        f"""
+        CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS idx_leads_embeddings_lead_id_unique
+        ON {qualified_name(schema, "leads_embeddings")} (lead_id)
+        """,
+    )
+    execute(
+        "create POS embedding unique index",
+        f"""
+        CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS idx_pos_embeddings_pos_id_unique
+        ON {qualified_name(schema, "pos_embeddings")} (pos_id)
+        """,
+    )
+    execute(
+        "create lead combined HNSW index",
+        f"""
+        CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_leads_embeddings_combined_hnsw
+        ON {qualified_name(schema, "leads_embeddings")}
+        USING hnsw (combined_embedding vector_cosine_ops)
+        WITH (m = 16, ef_construction = 128)
+        """,
+    )
+    execute(
+        "create POS combined HNSW index",
+        f"""
+        CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_pos_embeddings_combined_hnsw
+        ON {qualified_name(schema, "pos_embeddings")}
+        USING hnsw (combined_embedding vector_cosine_ops)
+        WITH (m = 16, ef_construction = 128)
+        """,
+    )
+
+    for table in required_tables:
+        execute(f"analyze {table}", f"ANALYZE {qualified_name(schema, table)}")
+
+    index_states = [
+        {
+            "index_name": row[0],
+            "unique": bool(row[1]),
+            "valid": bool(row[2]),
+            "ready": bool(row[3]),
+        }
+        for row in fetchall(
+            """
+            SELECT c.relname, i.indisunique, i.indisvalid, i.indisready
+            FROM pg_index i
+            JOIN pg_class c ON c.oid = i.indexrelid
+            JOIN pg_namespace n ON n.oid = c.relnamespace
+            WHERE n.nspname = %s
+              AND c.relname IN (
+                'idx_leads_embeddings_combined_hnsw',
+                'idx_pos_embeddings_combined_hnsw',
+                'idx_leads_embeddings_lead_id_unique',
+                'idx_pos_embeddings_pos_id_unique'
+              )
+            ORDER BY c.relname
+            """,
+            (schema,),
+        )
+    ]
+    if len(index_states) != 4 or not all(row["valid"] and row["ready"] for row in index_states):
+        raise RuntimeError(f"Index verification failed: {index_states}")
 
     conn.close()
     print(
-        f"Ensure indexes complete: created={created} skipped={len(index_defs) - created} "
-        f"duration_seconds={time.monotonic() - job_started:.2f}"
+        json.dumps(
+            {
+                "status": "PASS",
+                "schema": schema,
+                "embedding_dimension": dimension,
+                "index_states": index_states,
+                "duration_seconds": round(time.monotonic() - job_started, 2),
+            },
+            indent=2,
+        )
     )
 
 
