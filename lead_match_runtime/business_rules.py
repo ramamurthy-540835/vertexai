@@ -20,8 +20,32 @@ class WarehouseScope:
 
 def load_business_rules(path: str | os.PathLike[str] | None = None) -> dict[str, Any]:
     rules_path = Path(path or os.environ.get("LEAD_POS_RULES_PATH", DEFAULT_RULES_PATH))
-    with rules_path.open() as file:
-        return json.load(file)
+    if not rules_path.exists():
+        raise FileNotFoundError(
+            f"Business rules file not found: {rules_path}. "
+            "Set LEAD_POS_RULES_PATH or restore the default rules file."
+        )
+
+    try:
+        with rules_path.open(encoding="utf-8") as file:
+            rules = json.load(file)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Invalid JSON in business rules file {rules_path}: {exc}") from exc
+
+    required_keys = {
+        "candidate_retrieval",
+        "confidence_bands",
+        "embeddings",
+        "environment",
+        "override_policy",
+        "resolution",
+        "scoring",
+        "warehouse_scope",
+    }
+    missing = sorted(required_keys - set(rules))
+    if missing:
+        raise ValueError(f"Business rules config missing required keys: {missing}")
+    return rules
 
 
 def get_schema(config: dict[str, Any]) -> str:
@@ -65,7 +89,10 @@ def normalize_zip(value: Any) -> str:
 
 
 def normalize_phone(value: Any) -> str:
-    return re.sub(r"\D", "", str(value or ""))
+    digits = re.sub(r"\D", "", str(value or ""))
+    if len(digits) == 11 and digits.startswith("1"):
+        digits = digits[1:]
+    return digits if len(digits) == 10 else ""
 
 
 def normalize_text(value: Any, uppercase: bool = False) -> str:
@@ -156,10 +183,21 @@ def apply_deterministic_boost(
 
 
 def assign_confidence_band(score: float, config: dict[str, Any]) -> dict[str, Any]:
-    for band in config["confidence_bands"]["bands"]:
-        if band["min_score"] <= score <= band["max_score"]:
+    bands = sorted(
+        config["confidence_bands"]["bands"],
+        key=lambda band: float(band["min_score"]),
+        reverse=True,
+    )
+    if not bands:
+        raise ValueError("Business rules config has no confidence bands")
+
+    numeric_score = float(score)
+    for band in bands:
+        if float(band["min_score"]) <= numeric_score <= float(band["max_score"]):
             return band
-    return config["confidence_bands"]["bands"][-1]
+    if numeric_score > max(float(band["max_score"]) for band in bands):
+        return bands[0]
+    return bands[-1]
 
 
 def resolve_pos_to_single_lead(
@@ -185,11 +223,14 @@ def resolve_pos_to_single_lead(
 
 def select_primary_transaction(matches: list[dict[str, Any]], config: dict[str, Any]) -> list[dict[str, Any]]:
     qualify_min = config["resolution"]["primary_transaction"]["qualifying_min_score"]
+    results = []
     grouped: dict[Any, list[dict[str, Any]]] = {}
     for match in matches:
-        match["primary_transaction"] = False
-        if match.get("final_score", 0) >= qualify_min:
-            grouped.setdefault(match["lead_id"], []).append(match)
+        record = dict(match)
+        record["primary_transaction"] = False
+        results.append(record)
+        if record.get("final_score", 0) >= qualify_min:
+            grouped.setdefault(record["lead_id"], []).append(record)
 
     for rows in grouped.values():
         ordered = sorted(
@@ -201,7 +242,15 @@ def select_primary_transaction(matches: list[dict[str, Any]], config: dict[str, 
             ),
         )
         ordered[0]["primary_transaction"] = True
-    return matches
+    return results
+
+
+def _result_score(result: dict[str, Any]) -> float:
+    for key in ("score", "final_score", "similarity_score", "match_score"):
+        value = result.get(key)
+        if value is not None:
+            return float(value)
+    return 0.0
 
 
 def apply_override_policy(
@@ -209,7 +258,7 @@ def apply_override_policy(
     semantic_result: dict[str, Any] | None,
     config: dict[str, Any],
 ) -> dict[str, Any] | None:
-    if exact_result and exact_result.get("score", 0) >= config["override_policy"]["exact_qualified_min_score"]:
+    if exact_result and _result_score(exact_result) >= config["override_policy"]["exact_qualified_min_score"]:
         return exact_result
     return semantic_result or exact_result
 
