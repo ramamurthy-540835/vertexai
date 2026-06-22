@@ -190,15 +190,31 @@ waitForRunJobExecution:
             next: timeout
     - extractCounts:
         assign:
-          - executionStatus: ${default(map.get(execution, "status"), map.new())}
-          - executionSpec: ${default(map.get(execution, "spec"), map.new())}
-          - failedCount: ${default(map.get(execution, "failedCount"), default(map.get(executionStatus, "failedCount"), 0))}
-          - cancelledCount: ${default(map.get(execution, "cancelledCount"), default(map.get(executionStatus, "cancelledCount"), 0))}
-          - succeededCount: ${default(map.get(execution, "succeededCount"), default(map.get(executionStatus, "succeededCount"), 0))}
-          - taskCount: ${default(map.get(execution, "taskCount"), default(map.get(executionSpec, "taskCount"), 1))}
+          - executionStatus: ${map.get(execution, "status")}
+          - executionSpec: ${map.get(execution, "spec")}
+          - taskCount: ${default(map.get(execution, "taskCount"), 1)}
+          - succeededCount: ${default(map.get(execution, "succeededCount"), 0)}
+          - failedCount: ${default(map.get(execution, "failedCount"), 0)}
+          - cancelledCount: ${default(map.get(execution, "cancelledCount"), 0)}
+    - extractNestedSpec:
+        switch:
+          - condition: ${executionSpec != null}
+            steps:
+              - applyNestedSpec:
+                  assign:
+                    - taskCount: ${default(map.get(executionSpec, "taskCount"), taskCount)}
+    - extractNestedStatus:
+        switch:
+          - condition: ${executionStatus != null}
+            steps:
+              - applyNestedStatus:
+                  assign:
+                    - succeededCount: ${default(map.get(executionStatus, "succeededCount"), succeededCount)}
+                    - failedCount: ${default(map.get(executionStatus, "failedCount"), failedCount)}
+                    - cancelledCount: ${default(map.get(executionStatus, "cancelledCount"), cancelledCount)}
     - checkCompletion:
         switch:
-          - condition: ${taskCount > 0 AND succeededCount >= taskCount}
+          - condition: ${succeededCount >= taskCount}
             next: returnSuccess
           - condition: ${failedCount > 0}
             next: fail
