@@ -159,7 +159,10 @@ def warehouse_sql_filter(alias, params):
 
 
 def exact_match_types():
-    raw_types = os.environ.get("EXACT_MATCH_TYPES", "Exact,Deterministic")
+    raw_types = os.environ.get(
+        "EXACT_MATCH_TYPES",
+        "Exact,Deterministic,Exact Match,Direct Match,Close Match",
+    )
     return tuple(
         value.strip().lower()
         for value in raw_types.split(",")
@@ -167,56 +170,67 @@ def exact_match_types():
     )
 
 
+def exact_qualified_min_score():
+    configured = BUSINESS_RULES.get("override_policy", {}).get(
+        "exact_qualified_min_score",
+        BUSINESS_RULES.get("exact_match_engine", {}).get("minimum_score", 80),
+    )
+    return float(os.environ.get("EXACT_MATCH_MIN_SCORE", configured))
+
+
 def _exact_type_placeholders(types):
     return ", ".join(["%s"] * len(types))
 
 
-def _append_exact_guard_params(params, run_id, types):
-    params.extend([run_id, *types, *types])
+def _append_exact_guard_params(params, types):
+    min_score = exact_qualified_min_score()
+    params.extend([*types, min_score, *types, min_score])
 
 
-def exact_lead_exclusion_clause(schema, lead_expr, params, run_id):
+def exact_lead_exclusion_clause(schema, lead_expr, params):
     types = exact_match_types()
     if not types:
         return ""
     placeholders = _exact_type_placeholders(types)
-    _append_exact_guard_params(params, run_id, types)
+    _append_exact_guard_params(params, types)
     return f"""
       AND NOT EXISTS (
           SELECT 1
           FROM "{schema}"."match_decision_detail" exact_m
-          WHERE exact_m.match_run_id = %s
-            AND exact_m.lead_id = {lead_expr}
+          WHERE exact_m.lead_id = {lead_expr}
             AND lower(exact_m.match_type) IN ({placeholders})
+            AND (exact_m.final_score IS NULL OR exact_m.final_score >= %s)
       )
       AND NOT EXISTS (
           SELECT 1
           FROM "{schema}"."transaction" exact_t
           WHERE exact_t.lead_id = {lead_expr}
             AND lower(exact_t.match_type) IN ({placeholders})
+            AND (exact_t.match_score IS NULL OR exact_t.match_score >= %s)
       )
     """
 
 
-def exact_pos_exclusion_clause(schema, pos_expr, params, run_id):
+def exact_pos_exclusion_clause(schema, pos_expr, params):
     types = exact_match_types()
     if not types:
         return ""
     placeholders = _exact_type_placeholders(types)
-    _append_exact_guard_params(params, run_id, types)
+    _append_exact_guard_params(params, types)
     return f"""
       AND NOT EXISTS (
           SELECT 1
           FROM "{schema}"."match_decision_detail" exact_m
-          WHERE exact_m.match_run_id = %s
-            AND exact_m.pos_id = {pos_expr}
+          WHERE exact_m.pos_id = {pos_expr}
             AND lower(exact_m.match_type) IN ({placeholders})
+            AND (exact_m.final_score IS NULL OR exact_m.final_score >= %s)
       )
       AND NOT EXISTS (
           SELECT 1
           FROM "{schema}"."transaction" exact_t
           WHERE exact_t.pos_id = {pos_expr}
             AND lower(exact_t.match_type) IN ({placeholders})
+            AND (exact_t.match_score IS NULL OR exact_t.match_score >= %s)
       )
     """
 
@@ -396,6 +410,7 @@ def lead_source_rows(cursor):
     schema = schema_name()
     params = [DEFAULT_FISCAL_YEAR, DEFAULT_FISCAL_PERIOD]
     warehouse_clause = warehouse_sql_filter("l", params)
+    exact_lead_clause = exact_lead_exclusion_clause(schema, "l.lead_id", params)
 
     cursor.execute(
         f"""
@@ -415,6 +430,7 @@ def lead_source_rows(cursor):
             SELECT 1 FROM "{schema}"."leads_embeddings" e WHERE e.lead_id = l.lead_id
         )
           {warehouse_clause}
+          {exact_lead_clause}
         ORDER BY l.lead_id;
         """,
         params,
@@ -426,6 +442,7 @@ def pos_source_rows(cursor):
     schema = schema_name()
     params = []
     warehouse_clause = warehouse_sql_filter("t", params)
+    exact_pos_clause = exact_pos_exclusion_clause(schema, "t.pos_id", params)
 
     cursor.execute(
         f"""
@@ -446,6 +463,7 @@ def pos_source_rows(cursor):
             SELECT 1 FROM "{schema}"."pos_embeddings" e WHERE e.pos_id = t.pos_id
         )
           {warehouse_clause}
+          {exact_pos_clause}
         ORDER BY t.pos_id;
         """,
         params,
@@ -737,7 +755,6 @@ def _run_fuzzy_match(conn, job_started):
             schema,
             "leads_embeddings.lead_id",
             fetch_params,
-            run_id,
         )
         lead_cursor_clause = ""
         if last_lead_id is not None:
@@ -771,7 +788,6 @@ def _run_fuzzy_match(conn, job_started):
             schema,
             "s.pos_id",
             params,
-            run_id,
         )
         params.extend([
             recall_gate,
