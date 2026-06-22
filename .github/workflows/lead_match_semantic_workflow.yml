@@ -70,6 +70,7 @@ jobs:
       REGION: us-central1
       ARTIFACT_REPO: cloud-run-repo
       BUCKET_NAME: ${{ github.event.inputs.bucket }}
+      CLOUDSQL_CONNECTION_NAME: ctoteam:us-central1:lead-mgmt-db
 
     steps:
       - name: Checkout
@@ -146,8 +147,11 @@ jobs:
         run: |
           set -euo pipefail
           gcloud config set project "${PROJECT_ID}"
-          ENV_VARS="EMBEDDING_BATCH_SIZE=100,EMBEDDING_MAX_WORKERS=3,EMBEDDING_BATCH_WORKERS=3,EMBEDDING_MAX_RETRIES=6,EMBEDDING_REQUEST_LOG_EVERY=100,MATCH_BATCH_SIZE=100,MATCH_STATEMENT_TIMEOUT_MS=900000,HNSW_EF_SEARCH=100"
+          BASE_ENV_VARS="DB_NAME=postgres,DB_SCHEMA=leadmgmt,DB_USER=postgres,VERTEX_PROJECT_ID=${PROJECT_ID},GOOGLE_CLOUD_PROJECT=${PROJECT_ID},VERTEX_LOCATION=${REGION},DEFAULT_FISCAL_YEAR=2026,DEFAULT_FISCAL_PERIOD=10,MATCH_MIN_SCORE=78,CLOUDSQL_CONNECTION_NAME=${CLOUDSQL_CONNECTION_NAME},CLOUDSQL_SOCKET_DIR=/cloudsql,ALLOW_CLIENT_GCP=false,ALLOW_PRODUCTION=false,EXPECTED_PROJECT_ID=${PROJECT_ID},WAREHOUSE_SCOPE=ALL"
+          PERF_ENV_VARS="EMBEDDING_BATCH_SIZE=100,EMBEDDING_MAX_WORKERS=3,EMBEDDING_BATCH_WORKERS=3,EMBEDDING_MAX_RETRIES=6,EMBEDDING_REQUEST_LOG_EVERY=100,MATCH_BATCH_SIZE=100,MATCH_STATEMENT_TIMEOUT_MS=900000,HNSW_EF_SEARCH=100"
+          ENV_VARS="${BASE_ENV_VARS},${PERF_ENV_VARS}"
           for JOB in \
+            lead-match-ensure-indexes \
             lead-match-lead-embeddings \
             lead-match-pos-embeddings \
             lead-match-fuzzy-match \
@@ -161,12 +165,13 @@ jobs:
               --project="${PROJECT_ID}" \
               --region="${REGION}" \
               --image="${RUNTIME_IMAGE}" \
-              --update-env-vars="${ENV_VARS}"
+              --add-cloudsql-instances="${CLOUDSQL_CONNECTION_NAME}" \
+              --update-env-vars="${ENV_VARS}" \
+              --update-secrets="DB_PASSWORD=lead-match-db-password:latest"
           done
 
       - name: Deploy Cloud Workflow definition
         if: github.event.inputs.deploy_workflow == 'true'
-        continue-on-error: true
         run: |
           set -euo pipefail
           gcloud config set project "${PROJECT_ID}"
