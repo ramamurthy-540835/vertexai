@@ -76,7 +76,8 @@ jobs:
       LEAD_JOB: lead-match-lead-embeddings
       POS_JOB: lead-match-pos-embeddings
       MATCH_JOB: lead-match-fuzzy-match
-      INDEX_JOB: lead-match-ensure-indexes
+      # Reuse the DB-wired fuzzy job and override args to run index maintenance.
+      INDEX_JOB: lead-match-fuzzy-match
       SMOKE_JOB: lead-match-warehouse-smoke
       BUCKET_NAME: ${{ github.event.inputs.bucket }}
       EMBEDDING_DIMENSION: "768"
@@ -283,7 +284,7 @@ jobs:
             --project="${PROJECT_ID}" \
             --region="${REGION}" \
             --args=ensure-indexes \
-            --update-env-vars="WAREHOUSE=${WAREHOUSE_LABEL},WAREHOUSE_SCOPE=${WAREHOUSE_LABEL},DB_SCHEMA=${SCHEMA_NAME},GOOGLE_CLOUD_PROJECT=${PROJECT_ID},EXPECTED_PROJECT_ID=${PROJECT_ID},CLOUDSQL_CONNECTION_NAME=${CONNECTION_NAME},EXPECTED_CLOUDSQL_CONNECTION_NAME=${CONNECTION_NAME},EMBEDDING_DIMENSION=${EMBEDDING_DIMENSION}" \
+            --update-env-vars="WAREHOUSE=${WAREHOUSE_LABEL},WAREHOUSE_SCOPE=${WAREHOUSE_LABEL},DB_SCHEMA=${SCHEMA_NAME},GOOGLE_CLOUD_PROJECT=${PROJECT_ID},EXPECTED_PROJECT_ID=${PROJECT_ID},CLOUDSQL_CONNECTION_NAME=${CONNECTION_NAME},EXPECTED_CLOUDSQL_CONNECTION_NAME=${CONNECTION_NAME},ALLOW_CLIENT_GCP=false,ALLOW_PRODUCTION=false,EMBEDDING_DIMENSION=${EMBEDDING_DIMENSION}" \
             --wait \
             --format='value(metadata.name)')"
           INDEX_RC=$?
