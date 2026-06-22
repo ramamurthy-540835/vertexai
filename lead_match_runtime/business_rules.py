@@ -249,7 +249,10 @@ def _result_score(result: dict[str, Any]) -> float:
     for key in ("score", "final_score", "similarity_score", "match_score"):
         value = result.get(key)
         if value is not None:
-            return float(value)
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                continue
     return 0.0
 
 
