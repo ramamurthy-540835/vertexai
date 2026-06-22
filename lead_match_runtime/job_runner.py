@@ -33,6 +33,7 @@ DEFAULT_MAX_WORKERS = max(1, int(os.environ.get("EMBEDDING_MAX_WORKERS", "3")))
 EMBEDDING_MAX_RETRIES = max(1, int(os.environ.get("EMBEDDING_MAX_RETRIES", "6")))
 EMBEDDING_RETRY_BASE_DELAY = float(os.environ.get("EMBEDDING_RETRY_BASE_DELAY", "1.5"))
 EMBEDDING_RETRY_MAX_DELAY = float(os.environ.get("EMBEDDING_RETRY_MAX_DELAY", "90"))
+EMBEDDING_MAX_TEXTS_PER_REQUEST = int(os.environ.get("EMBEDDING_MAX_TEXTS_PER_REQUEST", "0"))
 MATCH_BATCH_SIZE = max(1, int(os.environ.get("MATCH_BATCH_SIZE", "100")))
 MATCH_STATEMENT_TIMEOUT_MS = int(os.environ.get("MATCH_STATEMENT_TIMEOUT_MS", "900000"))
 
@@ -169,17 +170,21 @@ def is_retryable_embedding_error(exc):
     return any(marker in error for marker in retryable_markers)
 
 
-def embed_texts(client, texts, label="embedding"):
-    normalized = [(text or "").strip() for text in texts]
-    if not any(normalized):
-        return [None] * len(normalized)
+def embedding_request_size():
+    if EMBEDDING_MAX_TEXTS_PER_REQUEST > 0:
+        return EMBEDDING_MAX_TEXTS_PER_REQUEST
+    if EMBEDDING_MODEL == "gemini-embedding-001":
+        return 1
+    return min(DEFAULT_BATCH_SIZE, 250)
 
+
+def embed_text_request(client, texts, label):
     started = time.monotonic()
     for attempt in range(1, EMBEDDING_MAX_RETRIES + 1):
         try:
             response = client.models.embed_content(
                 model=EMBEDDING_MODEL,
-                contents=normalized,
+                contents=texts,
                 config=types.EmbedContentConfig(
                     task_type="SEMANTIC_SIMILARITY",
                     output_dimensionality=EMBEDDING_DIMENSION,
@@ -187,14 +192,14 @@ def embed_texts(client, texts, label="embedding"):
             )
             duration = time.monotonic() - started
             print(
-                f"Embedded {label}: rows={len(normalized)} attempt={attempt} "
+                f"Embedded {label}: rows={len(texts)} attempt={attempt} "
                 f"duration_seconds={duration:.2f}"
             )
             return [vector_literal(embedding.values) for embedding in response.embeddings]
         except Exception as exc:
             if attempt >= EMBEDDING_MAX_RETRIES or not is_retryable_embedding_error(exc):
                 print(
-                    f"Embedding failed for {label}: rows={len(normalized)} "
+                    f"Embedding failed for {label}: rows={len(texts)} "
                     f"attempt={attempt} error={exc}",
                     file=sys.stderr,
                 )
@@ -204,12 +209,32 @@ def embed_texts(client, texts, label="embedding"):
                 EMBEDDING_RETRY_MAX_DELAY,
             )
             print(
-                f"Retrying {label}: rows={len(normalized)} attempt={attempt} "
+                f"Retrying {label}: rows={len(texts)} attempt={attempt} "
                 f"delay_seconds={delay:.2f} error={exc}"
             )
             time.sleep(delay)
 
     raise RuntimeError(f"Embedding failed for {label}")
+
+
+def embed_texts(client, texts, label="embedding"):
+    normalized = [(text or "").strip() for text in texts]
+    results = [None] * len(normalized)
+    pending = [(idx, text) for idx, text in enumerate(normalized) if text]
+    if not pending:
+        return results
+
+    request_size = embedding_request_size()
+    for request_number, request_items in enumerate(chunks(pending, request_size), start=1):
+        request_texts = [text for _, text in request_items]
+        request_vectors = embed_text_request(
+            client,
+            request_texts,
+            f"{label}_request_{request_number}",
+        )
+        for (idx, _), vector in zip(request_items, request_vectors):
+            results[idx] = vector
+    return results
 
 
 def embed_field_batches(client, field_texts):
