@@ -24,7 +24,6 @@ on:
     paths:
       - 'dataflow_config/**'
       - 'dataflow/field_map.json'
-      - '.github/workflows/deploy_workflow_config.yml'
 
 concurrency:
   group: deploy-config
@@ -54,57 +53,93 @@ jobs:
           fi
           echo "target_env=$TARGET" >> $GITHUB_OUTPUT
 
-  # ────────────────────────────────────────────────
-  # Detect which files actually changed in this push
-  # ────────────────────────────────────────────────
+  # ────────────────────────────────────────────────────────────────────
+  # This job authenticates and compares LOCAL files against what's
+  # CURRENTLY in GCS for the resolved target_env — not git diff. That
+  # makes it correct regardless of commit history depth, whether this is
+  # a tag push, or a first-ever deploy to an environment (missing remote
+  # object = automatically "changed" = upload).
+  # ────────────────────────────────────────────────────────────────────
   detect-changes:
-    name: Detect changed files
-    runs-on: ubuntu-latest
+    name: "Detect changes for ${{ needs.determine-target.outputs.target_env }}"
+    needs: determine-target
+    runs-on: ${{ needs.determine-target.outputs.target_env == 'prd' && 'cw-gcp-us-west1-pd' || 'cw-gcp-us-west1-np' }}
+    permissions:
+      id-token: write
+      contents: read
+    env:
+      ENV_NAME: ${{ needs.determine-target.outputs.target_env }}
     outputs:
-      config_changed:    ${{ steps.changes.outputs.config }}
-      field_map_changed: ${{ steps.changes.outputs.field_map }}
+      config_changed:    ${{ steps.diff.outputs.config }}
+      field_map_changed: ${{ steps.diff.outputs.field_map }}
+      project_id:         ${{ steps.resolve.outputs.project_id }}
+      bucket_name:        ${{ steps.resolve.outputs.bucket_name }}
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 2     # need previous commit to diff against
 
-      - id: changes
+      - name: Resolve project/bucket for target env
+        id: resolve
         run: |
-          # On manual dispatch, treat both as changed (the user explicitly chose)
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            echo "config=true"   >> $GITHUB_OUTPUT
-            echo "field_map=${{ github.event.inputs.include_field_map }}" >> $GITHUB_OUTPUT
-            exit 0
+          if [[ "${ENV_NAME}" == "prd" ]]; then
+            echo "PROJECT_ID=p-601-pd-bcleadsmgmt-prd" >> $GITHUB_ENV
+            echo "BUCKET_NAME=gcp-gcs-lead-mgmt-us-prd-pos-raw" >> $GITHUB_ENV
+            echo "project_id=p-601-pd-bcleadsmgmt-prd" >> $GITHUB_OUTPUT
+            echo "bucket_name=gcp-gcs-lead-mgmt-us-prd-pos-raw" >> $GITHUB_OUTPUT
+          else
+            echo "PROJECT_ID=p-601-np-bcleadsmgmt-${ENV_NAME}" >> $GITHUB_ENV
+            echo "BUCKET_NAME=gcp-gcs-lead-mgmt-us-${ENV_NAME}-pos-raw" >> $GITHUB_ENV
+            echo "project_id=p-601-np-bcleadsmgmt-${ENV_NAME}" >> $GITHUB_OUTPUT
+            echo "bucket_name=gcp-gcs-lead-mgmt-us-${ENV_NAME}-pos-raw" >> $GITHUB_OUTPUT
           fi
 
-          # On push, diff against the previous commit
-          # github.event.before is the SHA before this push
-          BEFORE="${{ github.event.before }}"
-          AFTER="${{ github.sha }}"
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
+          service_account: ${{ env.ENV_NAME == 'prd' && secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL_PRD || secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
 
-          # Tag pushes don't have a meaningful 'before', use HEAD~1
-          if [[ "$BEFORE" == "0000000000000000000000000000000000000000" ]] || [[ -z "$BEFORE" ]]; then
-            BEFORE="HEAD~1"
-          fi
+      - uses: google-github-actions/setup-gcloud@v2
 
-          CHANGED_FILES=$(git diff --name-only "$BEFORE" "$AFTER" 2>/dev/null || git diff --name-only HEAD~1)
-
-          echo "Changed files in this push:"
-          echo "$CHANGED_FILES" | sed 's/^/  /'
+      - name: Compare local vs GCS content
+        id: diff
+        run: |
+          set -uo pipefail
+          unset CLOUDSDK_CORE_PROJECT CLOUDSDK_PROJECT GCLOUD_PROJECT GCP_PROJECT GOOGLE_CLOUD_PROJECT
 
           CONFIG_CHANGED=false
           FIELD_MAP_CHANGED=false
 
-          if echo "$CHANGED_FILES" | grep -q '^dataflow_config/'; then
-            CONFIG_CHANGED=true
-          fi
-          if echo "$CHANGED_FILES" | grep -q '^dataflow/field_map.json$'; then
-            FIELD_MAP_CHANGED=true
+          # --- config: only this env's specific file, never another env's ---
+          LOCAL_CONFIG="dataflow_config/${ENV_NAME}.json"
+          if [[ -f "$LOCAL_CONFIG" ]]; then
+            gcloud storage cat "gs://${BUCKET_NAME}/config/workflow-config.json" \
+              --project="${PROJECT_ID}" > /tmp/remote-config.json 2>/dev/null || true
+            if ! diff -q "$LOCAL_CONFIG" /tmp/remote-config.json >/dev/null 2>&1; then
+              CONFIG_CHANGED=true
+              echo "Config differs (or remote missing) for ${ENV_NAME} -> will upload"
+            else
+              echo "Config unchanged for ${ENV_NAME} -> skipping"
+            fi
+          else
+            echo "::warning::dataflow_config/${ENV_NAME}.json not found locally — skipping config upload"
           fi
 
-          echo ""
-          echo "config_changed:    $CONFIG_CHANGED"
-          echo "field_map_changed: $FIELD_MAP_CHANGED"
+          # --- field_map: shared across envs, same content-diff approach ---
+          # On manual dispatch, honor include_field_map as an explicit override.
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ github.event.inputs.include_field_map }}" == "false" ]]; then
+            echo "field_map upload explicitly disabled for this manual run"
+          elif [[ -f "dataflow/field_map.json" ]]; then
+            gcloud storage cat "gs://${BUCKET_NAME}/config/field_map.json" \
+              --project="${PROJECT_ID}" > /tmp/remote-field-map.json 2>/dev/null || true
+            if ! diff -q "dataflow/field_map.json" /tmp/remote-field-map.json >/dev/null 2>&1; then
+              FIELD_MAP_CHANGED=true
+              echo "field_map differs (or remote missing) -> will upload"
+            else
+              echo "field_map unchanged -> skipping"
+            fi
+          else
+            echo "::warning::dataflow/field_map.json not found locally — skipping field_map upload"
+          fi
 
           echo "config=$CONFIG_CHANGED"       >> $GITHUB_OUTPUT
           echo "field_map=$FIELD_MAP_CHANGED" >> $GITHUB_OUTPUT
@@ -112,46 +147,31 @@ jobs:
   deploy:
     name: "Deploy to ${{ needs.determine-target.outputs.target_env }}"
     needs: [determine-target, detect-changes]
-    # Skip the job entirely if nothing relevant changed
     if: needs.detect-changes.outputs.config_changed == 'true' || needs.detect-changes.outputs.field_map_changed == 'true'
     runs-on: ${{ needs.determine-target.outputs.target_env == 'prd' && 'cw-gcp-us-west1-pd' || 'cw-gcp-us-west1-np' }}
     permissions:
       id-token: write
       contents: read
-
     env:
-      ENV_NAME: ${{ needs.determine-target.outputs.target_env }}
-
+      ENV_NAME:    ${{ needs.determine-target.outputs.target_env }}
+      PROJECT_ID:  ${{ needs.detect-changes.outputs.project_id }}
+      BUCKET_NAME: ${{ needs.detect-changes.outputs.bucket_name }}
     steps:
       - uses: actions/checkout@v4
-
-      - name: Set ENV early for auth
-        run: |
-          if [[ "${ENV_NAME}" == "prd" ]]; then
-            echo "ENV=prd" >> $GITHUB_ENV
-            echo "PROJECT_ID=p-601-pd-bcleadsmgmt-prd" >> $GITHUB_ENV
-            echo "BUCKET_NAME=gcp-gcs-lead-mgmt-us-prd-pos-raw" >> $GITHUB_ENV
-          else
-            echo "ENV=non-prd" >> $GITHUB_ENV
-            echo "PROJECT_ID=p-601-np-bcleadsmgmt-${ENV_NAME}" >> $GITHUB_ENV
-            echo "BUCKET_NAME=gcp-gcs-lead-mgmt-us-${ENV_NAME}-pos-raw" >> $GITHUB_ENV
-          fi
 
       - id: auth
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
-          service_account: ${{ env.ENV == 'prd' && secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL_PRD || secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
+          service_account: ${{ env.ENV_NAME == 'prd' && secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL_PRD || secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
 
       - uses: google-github-actions/setup-gcloud@v2
 
-      # ── Upload config (only if config changed) ──
       - name: Upload workflow-config.json
         if: needs.detect-changes.outputs.config_changed == 'true'
         run: |
           set -euo pipefail
           unset CLOUDSDK_CORE_PROJECT CLOUDSDK_PROJECT GCLOUD_PROJECT GCP_PROJECT GOOGLE_CLOUD_PROJECT
-
           if [ ! -f "dataflow_config/${ENV_NAME}.json" ]; then
             echo "❌ dataflow_config/${ENV_NAME}.json not found"
             exit 1
@@ -162,21 +182,18 @@ jobs:
           fi
           DECLARED=$(jq -r .environment "dataflow_config/${ENV_NAME}.json")
           if [ "$DECLARED" != "${ENV_NAME}" ]; then
-            echo "❌ env field mismatch"
+            echo "❌ env field mismatch: file says '${DECLARED}', target is '${ENV_NAME}'"
             exit 1
           fi
-
           DEST="gs://${BUCKET_NAME}/config/workflow-config.json"
           gcloud storage cp "dataflow_config/${ENV_NAME}.json" "${DEST}" --project="${PROJECT_ID}"
-          echo "✅ workflow-config.json uploaded"
+          echo "✅ workflow-config.json uploaded to ${ENV_NAME}"
 
-      # ── Upload field_map (only if field_map changed) ──
       - name: Upload field_map.json
         if: needs.detect-changes.outputs.field_map_changed == 'true'
         run: |
           set -euo pipefail
           unset CLOUDSDK_CORE_PROJECT CLOUDSDK_PROJECT GCLOUD_PROJECT GCP_PROJECT GOOGLE_CLOUD_PROJECT
-
           if [ ! -f "dataflow/field_map.json" ]; then
             echo "❌ dataflow/field_map.json not found"
             exit 1
@@ -185,10 +202,9 @@ jobs:
             echo "❌ Invalid JSON in field_map.json"
             exit 1
           fi
-
           DEST="gs://${BUCKET_NAME}/config/field_map.json"
           gcloud storage cp "dataflow/field_map.json" "${DEST}" --project="${PROJECT_ID}"
-          echo "✅ field_map.json uploaded"
+          echo "✅ field_map.json uploaded to ${ENV_NAME}"
 
       - name: Summary
         if: always()

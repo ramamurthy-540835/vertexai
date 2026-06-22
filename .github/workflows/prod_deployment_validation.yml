@@ -1,0 +1,569 @@
+name: validate-prod-deployment
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Validates all services, jobs, workflows, infrastructure, config files,
+# service accounts, APIs, and database schema are correctly deployed in PRD.
+#
+# Trigger manually from the Actions tab. Results appear in the job Summary tab.
+# The job fails with a non-zero exit code if any component is missing or broken.
+#
+# Excluded (next release):
+#   - Cloud Run Service: lead-mgmt-service (pending load balancer)
+#   - Cloud Run Job: pos-validation-job
+#   - Cloud Scheduler: lead-mgmt-scheduler
+#   - GAR Image: pos-validation
+#   - GAR Image: cloud-run-service
+# ──────────────────────────────────────────────────────────────────────────────
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to validate'
+        required: true
+        default: 'prd'
+        type: choice
+        options: [prd, spt]
+
+jobs:
+  validate:
+    name: Validate ${{ inputs.environment }} Deployment
+    runs-on: ${{ inputs.environment == 'prd' && 'cw-gcp-us-west1-pd' || 'cw-gcp-us-west1-np' }}
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      # ── 1. Checkout ────────────────────────────────────────────────────────
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # ── 2. Resolve env-specific values ────────────────────────────────────
+      - name: Set environment variables
+        run: |
+          ENV="${{ inputs.environment }}"
+          if [[ "$ENV" == "prd" ]]; then
+            echo "PROJECT_ID=p-601-pd-bcleadsmgmt-prd"                                                              >> $GITHUB_ENV
+            echo "REGION=us-central1"                                                                                >> $GITHUB_ENV
+            echo "GAR_PROJECT=gcp-prj-images"                                                                       >> $GITHUB_ENV
+            echo "GAR_REPO=gcp-gar-repo-mbrshp"                                                                     >> $GITHUB_ENV
+            echo "BUCKET_MAIN=gcp-gcs-lead-mgmt-us-prd"                                                             >> $GITHUB_ENV
+            echo "BUCKET_LOGS=gcp-gcs-lead-mgmt-us-prd-logs"                                                        >> $GITHUB_ENV
+            echo "BUCKET_POS=gcp-gcs-lead-mgmt-us-prd-pos-raw"                                                      >> $GITHUB_ENV
+            echo "SQL_INSTANCE=lead-mgmt-prd"                                                                       >> $GITHUB_ENV
+            echo "SQL_CONN_NAME=p-601-pd-bcleadsmgmt-prd:us-central1:lead-mgmt-prd"                                 >> $GITHUB_ENV
+            echo "DB_NAME=lead-mgmt-db"                                                                             >> $GITHUB_ENV
+            echo "DB_SCHEMA=lead_mgmt_prd"                                                                          >> $GITHUB_ENV
+            echo "DB_USER=gco-iam-svc-lead-mgmt-bc-prd@p-601-pd-bcleadsmgmt-prd.iam"                               >> $GITHUB_ENV
+            echo "DATAFLOW_TEMPLATE_GCS=gs://gcp-gcs-lead-mgmt-us-prd-pos-raw/templates/pos-pipeline-flex-prd.json" >> $GITHUB_ENV
+            echo "WORKFLOW_CONFIG_GCS=gs://gcp-gcs-lead-mgmt-us-prd-pos-raw/config/workflow-config.json"            >> $GITHUB_ENV
+            echo "FIELD_MAP_GCS=gs://gcp-gcs-lead-mgmt-us-prd-pos-raw/config/field_map.json"                        >> $GITHUB_ENV
+          else
+            echo "PROJECT_ID=p-601-np-bcleadsmgmt-spt"                                                              >> $GITHUB_ENV
+            echo "REGION=us-central1"                                                                                >> $GITHUB_ENV
+            echo "GAR_PROJECT=gcp-prj-images"                                                                       >> $GITHUB_ENV
+            echo "GAR_REPO=gcp-gar-repo-mbrshp"                                                                     >> $GITHUB_ENV
+            echo "BUCKET_MAIN=gcp-gcs-lead-mgmt-us-spt"                                                             >> $GITHUB_ENV
+            echo "BUCKET_LOGS=gcp-gcs-lead-mgmt-us-spt-logs"                                                        >> $GITHUB_ENV
+            echo "BUCKET_POS=gcp-gcs-lead-mgmt-us-spt-pos-raw"                                                      >> $GITHUB_ENV
+            echo "SQL_INSTANCE=lead-mgmt-spt"                                                                       >> $GITHUB_ENV
+            echo "SQL_CONN_NAME=p-601-np-bcleadsmgmt-spt:us-central1:lead-mgmt-spt"                                 >> $GITHUB_ENV
+            echo "DB_NAME=lead-mgmt-db"                                                                             >> $GITHUB_ENV
+            echo "DB_SCHEMA=lead_mgmt_spt"                                                                          >> $GITHUB_ENV
+            echo "DB_USER=gco-iam-svc-lead-mgmt-bc-spt@p-601-np-bcleadsmgmt-spt.iam"                               >> $GITHUB_ENV
+            echo "DATAFLOW_TEMPLATE_GCS=gs://gcp-gcs-lead-mgmt-us-spt-pos-raw/templates/pos-pipeline-flex-spt.json" >> $GITHUB_ENV
+            echo "WORKFLOW_CONFIG_GCS=gs://gcp-gcs-lead-mgmt-us-spt-pos-raw/config/workflow-config.json"            >> $GITHUB_ENV
+            echo "FIELD_MAP_GCS=gs://gcp-gcs-lead-mgmt-us-spt-pos-raw/config/field_map.json"                        >> $GITHUB_ENV
+          fi
+
+      # ── 3. Authenticate to GCP ─────────────────────────────────────────────
+      - name: Auth to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
+          service_account: ${{ inputs.environment == 'prd' && secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL_PRD || secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      # ── 4. Initialise result tracking ──────────────────────────────────────
+      - name: Initialise result file
+        run: echo "" > /tmp/validation_results.txt
+
+      # ════════════════════════════════════════════════════════════════════════
+      # SECTION A — GCP APIs
+      # ════════════════════════════════════════════════════════════════════════
+      - name: Check required APIs are enabled
+        continue-on-error: true
+        run: |
+          REQUIRED_APIS=(
+            "cloudresourcemanager.googleapis.com"
+            "pubsub.googleapis.com"
+            "monitoring.googleapis.com"
+            "sqladmin.googleapis.com"
+            "secretmanager.googleapis.com"
+            "artifactregistry.googleapis.com"
+            "cloudfunctions.googleapis.com"
+            "storage.googleapis.com"
+            "cloudscheduler.googleapis.com"
+            "servicenetworking.googleapis.com"
+            "run.googleapis.com"
+            "containerthreatdetection.googleapis.com"
+            "logging.googleapis.com"
+            "aiplatform.googleapis.com"
+            "eventarc.googleapis.com"
+            "dataflow.googleapis.com"
+            "drive.googleapis.com"
+            "notebooks.googleapis.com"
+            "ml.googleapis.com"
+          )
+
+          ENABLED_APIS=$(gcloud services list \
+            --project "$PROJECT_ID" \
+            --enabled \
+            --format="value(config.name)" 2>/dev/null)
+
+          for API in "${REQUIRED_APIS[@]}"; do
+            if echo "$ENABLED_APIS" | grep -q "^${API}$"; then
+              echo "PASS | API: $API | Enabled" >> /tmp/validation_results.txt
+            else
+              echo "FAIL | API: $API | NOT enabled in $PROJECT_ID" >> /tmp/validation_results.txt
+            fi
+          done
+
+      # ════════════════════════════════════════════════════════════════════════
+      # SECTION B — SERVICE ACCOUNTS
+      # ════════════════════════════════════════════════════════════════════════
+      - name: Check service account - gco-iam-svc-cicd-mbr-bc-pd
+        continue-on-error: true
+        run: |
+          SA="gco-iam-svc-cicd-mbr-bc-pd@gcp-prj-cicd-core.iam.gserviceaccount.com"
+          if gcloud iam service-accounts describe "$SA" \
+              --project "gcp-prj-cicd-core" \
+              --format="value(email)" 2>/dev/null | grep -q "$SA"; then
+            echo "PASS | Service Account: $SA | Exists" >> /tmp/validation_results.txt
+          else
+            echo "FAIL | Service Account: $SA | Not found" >> /tmp/validation_results.txt
+          fi
+
+      - name: Check service account - gco-iam-svc-lead-mgmt-bc-prd
+        continue-on-error: true
+        run: |
+          SA="gco-iam-svc-lead-mgmt-bc-prd@p-601-pd-bcleadsmgmt-prd.iam.gserviceaccount.com"
+          if gcloud iam service-accounts describe "$SA" \
+              --project "$PROJECT_ID" \
+              --format="value(email)" 2>/dev/null | grep -q "$SA"; then
+            echo "PASS | Service Account: $SA | Exists" >> /tmp/validation_results.txt
+          else
+            echo "FAIL | Service Account: $SA | Not found in $PROJECT_ID" >> /tmp/validation_results.txt
+          fi
+
+      - name: Check Google-managed service accounts
+        continue-on-error: true
+        run: |
+          # Google-managed SAs are validated by checking IAM project bindings
+          PROJECT_NUM="1031355025692"
+          for SA in \
+            "service-${PROJECT_NUM}@dataflow-service-producer-prod.iam.gserviceaccount.com" \
+            "service-${PROJECT_NUM}@compute-system.iam.gserviceaccount.com" \
+            "service-${PROJECT_NUM}@serverless-robot-prod.iam.gserviceaccount.com"; do
+            if gcloud projects get-iam-policy "$PROJECT_ID" \
+                --flatten="bindings[].members" \
+                --format="value(bindings.members)" 2>/dev/null | grep -q "serviceAccount:${SA}"; then
+              echo "PASS | Service Account (Google-managed): $SA | Present in IAM policy" >> /tmp/validation_results.txt
+            else
+              echo "FAIL | Service Account (Google-managed): $SA | Not found in IAM policy of $PROJECT_ID" >> /tmp/validation_results.txt
+            fi
+          done
+
+      # ════════════════════════════════════════════════════════════════════════
+      # SECTION C — CLOUD RUN JOBS
+      # ════════════════════════════════════════════════════════════════════════
+      - name: Check Cloud Run Job - snow-sync-job
+        continue-on-error: true
+        run: |
+          if gcloud run jobs describe snow-sync-job \
+              --region "$REGION" \
+              --project "$PROJECT_ID" \
+              --format="value(metadata.name)" 2>/dev/null | grep -q "snow-sync-job"; then
+            echo "PASS | Cloud Run Job: snow-sync-job | Deployed" >> /tmp/validation_results.txt
+          else
+            echo "FAIL | Cloud Run Job: snow-sync-job | Not found in $PROJECT_ID" >> /tmp/validation_results.txt
+          fi
+
+      - name: Check Cloud Run Job - lead-match-job
+        continue-on-error: true
+        run: |
+          if gcloud run jobs describe lead-match-job \
+              --region "$REGION" \
+              --project "$PROJECT_ID" \
+              --format="value(metadata.name)" 2>/dev/null | grep -q "lead-match-job"; then
+            echo "PASS | Cloud Run Job: lead-match-job | Deployed" >> /tmp/validation_results.txt
+          else
+            echo "FAIL | Cloud Run Job: lead-match-job | Not found in $PROJECT_ID" >> /tmp/validation_results.txt
+          fi
+
+      # ════════════════════════════════════════════════════════════════════════
+      # SECTION D — GCP WORKFLOWS
+      # ════════════════════════════════════════════════════════════════════════
+      - name: Check GCP Workflow - snow_sync_workflow
+        continue-on-error: true
+        run: |
+          STATE=$(gcloud workflows describe snow_sync_workflow \
+              --location "$REGION" \
+              --project "$PROJECT_ID" \
+              --format="value(state)" 2>/dev/null)
+          if [[ "$STATE" == "ACTIVE" ]]; then
+            echo "PASS | GCP Workflow: snow_sync_workflow | ACTIVE" >> /tmp/validation_results.txt
+          else
+            echo "FAIL | GCP Workflow: snow_sync_workflow | State='${STATE:-NOT FOUND}'" >> /tmp/validation_results.txt
+          fi
+
+      - name: Check GCP Workflow - lead_match_workflow
+        continue-on-error: true
+        run: |
+          STATE=$(gcloud workflows describe lead_match_workflow \
+              --location "$REGION" \
+              --project "$PROJECT_ID" \
+              --format="value(state)" 2>/dev/null)
+          if [[ "$STATE" == "ACTIVE" ]]; then
+            echo "PASS | GCP Workflow: lead_match_workflow | ACTIVE" >> /tmp/validation_results.txt
+          else
+            echo "FAIL | GCP Workflow: lead_match_workflow | State='${STATE:-NOT FOUND}'" >> /tmp/validation_results.txt
+          fi
+
+      - name: Check GCP Workflow - pos_ingestion_workflow
+        continue-on-error: true
+        run: |
+          STATE=$(gcloud workflows describe pos_ingestion_workflow \
+              --location "$REGION" \
+              --project "$PROJECT_ID" \
+              --format="value(state)" 2>/dev/null)
+          if [[ "$STATE" == "ACTIVE" ]]; then
+            echo "PASS | GCP Workflow: pos_ingestion_workflow | ACTIVE" >> /tmp/validation_results.txt
+          else
+            echo "FAIL | GCP Workflow: pos_ingestion_workflow | State='${STATE:-NOT FOUND}'" >> /tmp/validation_results.txt
+          fi
+
+      # ════════════════════════════════════════════════════════════════════════
+      # SECTION E — CLOUD SQL
+      # ════════════════════════════════════════════════════════════════════════
+      - name: Check Cloud SQL Instance
+        continue-on-error: true
+        run: |
+          STATE=$(gcloud sql instances describe "$SQL_INSTANCE" \
+              --project "$PROJECT_ID" \
+              --format="value(state)" 2>/dev/null)
+          if [[ "$STATE" == "RUNNABLE" ]]; then
+            echo "PASS | Cloud SQL: $SQL_INSTANCE | RUNNABLE" >> /tmp/validation_results.txt
+          else
+            echo "FAIL | Cloud SQL: $SQL_INSTANCE | State='${STATE:-NOT FOUND}'" >> /tmp/validation_results.txt
+          fi
+
+      # ════════════════════════════════════════════════════════════════════════
+      # SECTION F — GCS BUCKETS
+      # ════════════════════════════════════════════════════════════════════════
+      - name: Check GCS Buckets
+        continue-on-error: true
+        run: |
+          for BUCKET in "$BUCKET_MAIN" "$BUCKET_LOGS" "$BUCKET_POS"; do
+            if gcloud storage buckets describe "gs://$BUCKET" \
+                --project "$PROJECT_ID" \
+                --format="value(name)" 2>/dev/null | grep -q "$BUCKET"; then
+              echo "PASS | GCS Bucket: $BUCKET | Exists" >> /tmp/validation_results.txt
+            else
+              echo "FAIL | GCS Bucket: $BUCKET | Not found" >> /tmp/validation_results.txt
+            fi
+          done
+
+      # ════════════════════════════════════════════════════════════════════════
+      # SECTION G — DATAFLOW & GCS CONFIG FILES
+      # ════════════════════════════════════════════════════════════════════════
+      - name: Check Dataflow Flex Template in GCS
+        continue-on-error: true
+        run: |
+          if gcloud storage ls "$DATAFLOW_TEMPLATE_GCS" \
+              --project "$PROJECT_ID" 2>/dev/null | grep -q "pos-pipeline-flex"; then
+            echo "PASS | Dataflow Template: $(basename $DATAFLOW_TEMPLATE_GCS) | Exists in GCS" >> /tmp/validation_results.txt
+          else
+            echo "FAIL | Dataflow Template: $(basename $DATAFLOW_TEMPLATE_GCS) | Not found at $DATAFLOW_TEMPLATE_GCS" >> /tmp/validation_results.txt
+          fi
+
+      - name: Check config files in GCS
+        continue-on-error: true
+        run: |
+          for GCS_PATH in "$WORKFLOW_CONFIG_GCS" "$FIELD_MAP_GCS"; do
+            FNAME=$(basename "$GCS_PATH")
+            if gcloud storage ls "$GCS_PATH" \
+                --project "$PROJECT_ID" 2>/dev/null | grep -q "$FNAME"; then
+              echo "PASS | GCS Config: $FNAME | Exists" >> /tmp/validation_results.txt
+            else
+              echo "FAIL | GCS Config: $FNAME | Not found at $GCS_PATH" >> /tmp/validation_results.txt
+            fi
+          done
+
+      # ════════════════════════════════════════════════════════════════════════
+      # SECTION H — ARTIFACT REGISTRY (lead-mgmt image only)
+      # ════════════════════════════════════════════════════════════════════════
+      - name: Check GAR Image - lead-mgmt
+        continue-on-error: true
+        run: |
+          if gcloud artifacts docker images list \
+              "us-docker.pkg.dev/$GAR_PROJECT/$GAR_REPO/lead-mgmt" \
+              --project "$GAR_PROJECT" \
+              --format="value(IMAGE)" \
+              --limit=1 2>/dev/null | grep -q "lead-mgmt"; then
+            echo "PASS | GAR Image: lead-mgmt | Image exists in $GAR_PROJECT/$GAR_REPO" >> /tmp/validation_results.txt
+          else
+            echo "FAIL | GAR Image: lead-mgmt | Not found in $GAR_PROJECT/$GAR_REPO" >> /tmp/validation_results.txt
+          fi
+
+      # ════════════════════════════════════════════════════════════════════════
+      # SECTION I — SECRET MANAGER
+      # ════════════════════════════════════════════════════════════════════════
+      - name: Check Secret Manager secrets
+        continue-on-error: true
+        run: |
+          for SECRET in \
+            lead_mgmt_snow_user \
+            lead_mgmt_snow_password \
+            service_now_client_id \
+            service_now_client_secret; do
+            if gcloud secrets describe "$SECRET" \
+                --project "$PROJECT_ID" \
+                --format="value(name)" 2>/dev/null | grep -q "$SECRET"; then
+              echo "PASS | Secret: $SECRET | Exists" >> /tmp/validation_results.txt
+            else
+              echo "FAIL | Secret: $SECRET | Not found in $PROJECT_ID" >> /tmp/validation_results.txt
+            fi
+          done
+
+      # ════════════════════════════════════════════════════════════════════════
+      # SECTION J — EVENTARC TRIGGER
+      # ════════════════════════════════════════════════════════════════════════
+      - name: Check Eventarc Trigger - pos-manifest-trigger
+        continue-on-error: true
+        run: |
+          STATE=$(gcloud eventarc triggers describe pos-manifest-trigger \
+              --location "$REGION" \
+              --project "$PROJECT_ID" \
+              --format="value(state)" 2>/dev/null)
+          if [[ "$STATE" == "ACTIVE" ]]; then
+            echo "PASS | Eventarc Trigger: pos-manifest-trigger | ACTIVE" >> /tmp/validation_results.txt
+          else
+            echo "FAIL | Eventarc Trigger: pos-manifest-trigger | State='${STATE:-NOT FOUND}'" >> /tmp/validation_results.txt
+          fi
+
+      # ════════════════════════════════════════════════════════════════════════
+      # SECTION K — REPO CONFIG FILES
+      # ════════════════════════════════════════════════════════════════════════
+      - name: Check config files present in repo
+        run: |
+          ENV="${{ inputs.environment }}"
+          for FILE in \
+            "lead_management_job/app_${ENV}.properties" \
+            "lead_management_job/lead_matching_config_${ENV}.properties" \
+            "lead_management_job/configuration_${ENV}.ini" \
+            "dataflow_config/${ENV}.json" \
+            "dataflow/field_map.json"; do
+            if [ -f "$FILE" ]; then
+              echo "PASS | Repo Config: $FILE | Present" >> /tmp/validation_results.txt
+            else
+              echo "FAIL | Repo Config: $FILE | MISSING from repository" >> /tmp/validation_results.txt
+            fi
+          done
+
+      # ════════════════════════════════════════════════════════════════════════
+      # SECTION L — DATABASE: TABLES, COLUMNS & INDEXES
+      # All 11 tables validated via Cloud SQL Auth Proxy + psql
+      # ════════════════════════════════════════════════════════════════════════
+      - name: Install Cloud SQL Auth Proxy and psql
+        run: |
+          # Cloud SQL Auth Proxy
+          curl -fsSL -o cloud-sql-proxy \
+            https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/v2.14.1/cloud-sql-proxy.linux.amd64
+          chmod +x cloud-sql-proxy
+
+          # psql client
+          sudo apt-get install -y postgresql-client -q 2>/dev/null
+
+      - name: Validate database tables, columns and indexes
+        continue-on-error: true
+        run: |
+          # Start Cloud SQL Auth Proxy in background
+          ./cloud-sql-proxy "$SQL_CONN_NAME" --port=5432 --quiet &
+          PROXY_PID=$!
+          sleep 8
+
+          # IAM token as password
+          TOKEN=$(gcloud auth print-access-token)
+          PSQL="PGPASSWORD=$TOKEN psql -h 127.0.0.1 -p 5432 -U $DB_USER -d $DB_NAME -t -A -q"
+
+          run_sql() {
+            PGPASSWORD="$TOKEN" psql -h 127.0.0.1 -p 5432 -U "$DB_USER" -d "$DB_NAME" -t -A -q -c "$1" 2>/dev/null
+          }
+
+          check_table() {
+            local TABLE=$1
+            COUNT=$(run_sql "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='$DB_SCHEMA' AND table_name='$TABLE';")
+            if [[ "$COUNT" == "1" ]]; then
+              echo "PASS | DB Table: $TABLE | Exists in schema $DB_SCHEMA" >> /tmp/validation_results.txt
+            else
+              echo "FAIL | DB Table: $TABLE | NOT found in schema $DB_SCHEMA" >> /tmp/validation_results.txt
+            fi
+          }
+
+          check_column() {
+            local TABLE=$1; local COLUMN=$2
+            COUNT=$(run_sql "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema='$DB_SCHEMA' AND table_name='$TABLE' AND column_name='$COLUMN';")
+            if [[ "$COUNT" == "1" ]]; then
+              echo "PASS | DB Column: $TABLE.$COLUMN | Exists" >> /tmp/validation_results.txt
+            else
+              echo "FAIL | DB Column: $TABLE.$COLUMN | MISSING" >> /tmp/validation_results.txt
+            fi
+          }
+
+          check_index() {
+            local INDEX=$1
+            COUNT=$(run_sql "SELECT COUNT(*) FROM pg_indexes WHERE schemaname='$DB_SCHEMA' AND indexname='$INDEX';")
+            if [[ "$COUNT" == "1" ]]; then
+              echo "PASS | DB Index: $INDEX | Exists" >> /tmp/validation_results.txt
+            else
+              echo "FAIL | DB Index: $INDEX | MISSING" >> /tmp/validation_results.txt
+            fi
+          }
+
+          # ── Table existence (all 11) ──────────────────────────────────────
+          for TABLE in account lead contact batch_audit match_audit error_audit api_audit leads_embeddings pos_embeddings match_configuration transaction; do
+            check_table "$TABLE"
+          done
+
+          # ── Key columns ───────────────────────────────────────────────────
+          # account
+          check_column "account" "account_id"
+          check_column "account" "business_name"
+          check_column "account" "address_line_one"
+          check_column "account" "city"
+          check_column "account" "state"
+          check_column "account" "zip_code"
+          check_column "account" "bd_industry"
+
+          # lead
+          check_column "lead" "lead_id"
+          check_column "lead" "lead_status"
+          check_column "lead" "match_result"
+          check_column "lead" "fiscal_year"
+          check_column "lead" "fiscal_period"
+          check_column "lead" "warehouse_number"
+          check_column "lead" "week"
+
+          # contact
+          check_column "contact" "contact_id"
+          check_column "contact" "lead_id"
+          check_column "contact" "membership_number"
+
+          # error_audit
+          check_column "error_audit" "batch_id"
+          check_column "error_audit" "entity_type"
+          check_column "error_audit" "is_processed"
+
+          # match_configuration
+          check_column "match_configuration" "confidence_level"
+          check_column "match_configuration" "match_result"
+          check_column "match_configuration" "min_score"
+          check_column "match_configuration" "max_score"
+
+          # leads_embeddings
+          check_column "leads_embeddings" "lead_id"
+          check_column "leads_embeddings" "combined_embedding"
+          check_column "leads_embeddings" "address_embedding"
+          check_column "leads_embeddings" "name_embedding"
+
+          # pos_embeddings
+          check_column "pos_embeddings" "pos_id"
+          check_column "pos_embeddings" "combined_embedding"
+          check_column "pos_embeddings" "week"
+
+          # transaction — spot-check key original + OMS columns
+          check_column "transaction" "pos_id"
+          check_column "transaction" "sales_reference_id"
+          check_column "transaction" "lead_id"
+          check_column "transaction" "match_score"
+          check_column "transaction" "primary_transaction"
+          check_column "transaction" "industry_description"
+          check_column "transaction" "oms_company"
+          check_column "transaction" "oms_email_1"
+          check_column "transaction" "matching_comments"
+          check_column "transaction" "is_processed"
+          check_column "transaction" "process_datetime"
+
+          # ── Indexes ────────────────────────────────────────────────────────
+          check_index "lead_status_index"
+          check_index "lead_fiscal_year_idx"
+          check_index "account_unique_with_nulls_as_value"
+          check_index "contact_lead_id_idx"
+          check_index "transaction_lead_id_idx"
+          check_index "txn_uniq_sales_reference_id_idx"
+          check_index "txn_fiscal_year_period_idx"
+          check_index "idx_transaction_unprocessed"
+          check_index "leads_combined_embedding_idx"
+          check_index "pos_combined_embedding_idx"
+          check_index "warehouse_index_leads"
+          check_index "warehouse_index_pos"
+          check_index "lead_id_indx"
+          check_index "pos_id_indx"
+          check_index "pos_embeddings_warehouse_fiscal_idx"
+
+          # ── pgvector extension ─────────────────────────────────────────────
+          EXT=$(run_sql "SELECT COUNT(*) FROM pg_extension WHERE extname='vector';")
+          if [[ "$EXT" == "1" ]]; then
+            echo "PASS | DB Extension: pgvector | Installed" >> /tmp/validation_results.txt
+          else
+            echo "FAIL | DB Extension: pgvector | NOT installed" >> /tmp/validation_results.txt
+          fi
+
+          kill $PROXY_PID 2>/dev/null || true
+
+      # ════════════════════════════════════════════════════════════════════════
+      # SECTION M — SUMMARY REPORT
+      # ════════════════════════════════════════════════════════════════════════
+      - name: Generate Summary Report
+        if: always()
+        run: |
+          ENV="${{ inputs.environment }}"
+          PASS_COUNT=$(grep -c "^PASS" /tmp/validation_results.txt 2>/dev/null || echo 0)
+          FAIL_COUNT=$(grep -c "^FAIL" /tmp/validation_results.txt 2>/dev/null || echo 0)
+          TOTAL=$((PASS_COUNT + FAIL_COUNT))
+
+          {
+            echo "## Deployment Validation Report — \`${ENV^^}\`"
+            echo ""
+            echo "> **Run:** $(date -u '+%Y-%m-%d %H:%M UTC')"
+            echo "> **Project:** \`${PROJECT_ID}\`"
+            echo "> **Total:** $TOTAL | :white_check_mark: Passed: $PASS_COUNT | :x: Failed: $FAIL_COUNT"
+            echo ""
+            echo "| Status | Component | Details |"
+            echo "|--------|-----------|---------|"
+            while IFS='|' read -r status component details; do
+              STATUS_ICON=$([ "$(echo "$status" | xargs)" = "PASS" ] && echo ":white_check_mark: PASS" || echo ":x: FAIL")
+              echo "| $STATUS_ICON | $(echo "$component" | xargs) | $(echo "$details" | xargs) |"
+            done < /tmp/validation_results.txt
+          } >> $GITHUB_STEP_SUMMARY
+
+          echo ""
+          echo "========================================"
+          echo "  VALIDATION SUMMARY — ${ENV^^}"
+          echo "========================================"
+          cat /tmp/validation_results.txt
+          echo ""
+          echo "Total: $TOTAL | Passed: $PASS_COUNT | Failed: $FAIL_COUNT"
+
+      - name: Fail if any gaps detected
+        if: always()
+        run: |
+          FAIL_COUNT=$(grep -c "^FAIL" /tmp/validation_results.txt 2>/dev/null || echo 0)
+          if [[ "$FAIL_COUNT" -gt 0 ]]; then
+            echo "ERROR: $FAIL_COUNT component(s) failed validation. Review the Summary tab for details."
+            exit 1
+          fi
+          echo "SUCCESS: All components validated."

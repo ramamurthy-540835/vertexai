@@ -1,5 +1,4 @@
 name: gcloud-adhoc-runner
-
 on:
   workflow_dispatch:
     inputs:
@@ -22,14 +21,12 @@ on:
         required: false
         type: boolean
         default: false
-
 jobs:
   run-gcloud-command:
     runs-on: cw-gcp-us-west1-${{ inputs.environment == 'prd' && 'pd' || 'np' }}
     permissions:
       id-token: write
       contents: read
-
     steps:
       - name: Resolve environment config
         id: config
@@ -56,7 +53,6 @@ jobs:
               echo "USE_PRD_SA=true" >> $GITHUB_ENV
               ;;
           esac
-
       - name: Auth to GCP
         id: auth
         uses: google-github-actions/auth@v2
@@ -64,28 +60,41 @@ jobs:
           token_format: access_token
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
           service_account: ${{ env.USE_PRD_SA == 'true' && secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL_PRD || secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
-
       - name: Set up gcloud
         uses: google-github-actions/setup-gcloud@v2
         with:
           project_id: ${{ env.PROJECT_ID }}
 
+      # The gcloud command is passed via env, NOT interpolated directly into the
+      # script. ${{ inputs.gcloud_command }} pasted straight into `run:` is a raw
+      # text substitution done before bash even runs — any quotes/parens typed
+      # into the input become literal characters wherever they land in the
+      # script, which is what caused the earlier syntax errors. Passing it as
+      # $GCLOUD_COMMAND lets bash handle the value as one opaque string at
+      # runtime, the same as typing it into a terminal. It also avoids splicing
+      # untrusted input directly into the script source.
       - name: Print command info
+        env:
+          GCLOUD_COMMAND: ${{ inputs.gcloud_command }}
         run: |
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo "  Environment : ${{ inputs.environment }}"
-          echo "  Project     : ${{ env.PROJECT_ID }}"
-          echo "  Command     : gcloud ${{ inputs.gcloud_command }} --project=${{ env.PROJECT_ID }}"
+          echo "  Project     : $PROJECT_ID"
+          echo "  Command     : gcloud $GCLOUD_COMMAND --project=$PROJECT_ID"
           echo "  Dry Run     : ${{ inputs.dry_run }}"
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
       - name: Run gcloud command
         if: ${{ inputs.dry_run == false }}
+        env:
+          GCLOUD_COMMAND: ${{ inputs.gcloud_command }}
         run: |
-          gcloud ${{ inputs.gcloud_command }} --project=${{ env.PROJECT_ID }}
+          gcloud $GCLOUD_COMMAND --project="$PROJECT_ID"
 
       - name: Dry run — skipped execution
         if: ${{ inputs.dry_run == true }}
+        env:
+          GCLOUD_COMMAND: ${{ inputs.gcloud_command }}
         run: |
           echo "DRY RUN — command not executed."
-          echo "Would have run: gcloud ${{ inputs.gcloud_command }} --project=${{ env.PROJECT_ID }}"
+          echo "Would have run: gcloud $GCLOUD_COMMAND --project=$PROJECT_ID"
