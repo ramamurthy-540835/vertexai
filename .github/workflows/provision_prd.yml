@@ -3,7 +3,7 @@ name: "provision_prd"
 on:
   push:
     tags:
-      - release-prd*
+      - release-prd-phase1-*
 
 
 jobs:
@@ -13,7 +13,7 @@ jobs:
     environment: ${{ github.event.pull_request.head.ref }}
     strategy:
       matrix:
-        env: ['prd']
+        env: ['pd']
 
     permissions:
       id-token: write
@@ -37,7 +37,7 @@ jobs:
         with:
           create_credentials_file: true
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
-          service_account: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
+          service_account: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL_PRD }}
           project_id: 'p-601-pd-bcleadsmgmt-prd'
 
       - name: "Setup Terraform"
@@ -52,6 +52,6 @@ jobs:
         run: terraform plan -out=plan.tfplan -input=false -lock-timeout=10m
 
       - name: "Terraform Apply"
-        if: startsWith(github.ref, 'refs/tags/release-prd')
+        if: startsWith(github.ref, 'refs/tags/release-prd-phase1')
         working-directory: ./terraform/environments/${{ matrix.env }}/infra
         run: terraform apply -input=false -lock-timeout=10m plan.tfplan
