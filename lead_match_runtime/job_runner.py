@@ -835,7 +835,7 @@ def write_back_match_results(conn, cursor, schema, run_id):
             updated_by = 'lead_match_runtime',
             updated_date = CURRENT_TIMESTAMP,
             matching_comments = CONCAT(
-                'match_run_id=', %s,
+                'match_run_id=', CAST(%s AS text),
                 '; lifecycle_state=', tx.lifecycle_state
             )
         FROM tx_updates tx
