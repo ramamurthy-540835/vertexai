@@ -103,6 +103,8 @@ main:
             next: done
           - condition: ${lead_match_result.state == "FAILED"}
             raise: ${lead_match_result.error}
+          - condition: ${lead_match_result.state == "CANCELLED"}
+            raise: ${"lead_match_workflow execution " + lead_match_execution.name + " was cancelled"}
           - condition: true
             next: poll_delay
 

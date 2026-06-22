@@ -367,6 +367,8 @@ main:
             next: save_checkpoint_snow_sync
           - condition: '${downstream_result.state == "FAILED"}'
             raise: '${downstream_result.error}'
+          - condition: '${downstream_result.state == "CANCELLED"}'
+            raise: '${"Downstream workflow execution " + downstream_execution.name + " was cancelled"}'
           - condition: true
             next: poll_delay
 
