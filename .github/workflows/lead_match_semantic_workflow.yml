@@ -82,6 +82,14 @@ on:
         options:
           - "true"
           - "false"
+      analysis_wait_for_ready:
+        description: "In downstream analysis workflow, wait for artifacts if _READY.json is absent?"
+        required: true
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
 
 jobs:
   trigger:
@@ -101,6 +109,7 @@ jobs:
       ARTIFACT_REPO: cloud-run-repo
       BUCKET_NAME: ${{ github.event.inputs.bucket }}
       CLOUDSQL_CONNECTION_NAME: ctoteam:us-central1:lead-mgmt-db
+      ANALYSIS_WAIT_FOR_READY: ${{ github.event.inputs.analysis_wait_for_ready || 'true' }}
 
     steps:
       - name: Checkout
@@ -553,6 +562,7 @@ jobs:
               --field warehouse="${W}" \
               --field run_id="${MATCH_RUN_ID}" \
               --field bucket="${BUCKET_NAME}" \
+              --field wait_for_ready="${ANALYSIS_WAIT_FOR_READY}" \
               --field generate_report="true" \
               --field generate_analysis="true"
           done
@@ -588,5 +598,6 @@ jobs:
             echo "- Update Cloud Run jobs: \`${{ github.event.inputs.update_cloud_run_jobs }}\`"
             echo "- Deploy workflow: \`${{ github.event.inputs.deploy_workflow }}\`"
             echo "- Prepare readiness: \`${{ github.event.inputs.prepare_readiness }}\`"
+            echo "- Analysis wait for ready: \`${{ github.event.inputs.analysis_wait_for_ready }}\`"
             echo "- Run analysis: \`${{ github.event.inputs.run_analysis }}\`"
           } >> "$GITHUB_STEP_SUMMARY"
