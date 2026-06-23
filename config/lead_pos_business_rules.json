@@ -1,5 +1,5 @@
 {
-  "schema_version": "2.0",
+  "schema_version": "2.1",
   "canonical_source": "lead_match_runtime/lead_to_pos_match_rules.json",
   "business_context": {
     "entity": "lead_to_pos_match",
@@ -76,13 +76,110 @@
       "cap": 100
     }
   },
+  "decision_rules": {
+    "exact_score": 100,
+    "exact_authoritative_score": 100,
+    "exact_match_types": ["Exact", "Deterministic", "Exact Match", "Direct Match", "Close Match"],
+    "exact_match_type": "Exact",
+    "exact_label": "Exact / Complete",
+    "exact_lifecycle_state": "Closed - Match",
+    "closed_existing_lifecycle_state": "Closed - Existing",
+    "no_match_lifecycle_state": "No Match",
+    "fuzzy_match_type": "Fuzzy",
+    "manual_review_match_type": "Manual Review",
+    "fuzzy_qualify_min_score": 70,
+    "fuzzy_max_score": 99.999,
+    "fuzzy_artifact_score": 100,
+    "fuzzy_reject_below_floor": true,
+    "fuzzy_high_min_score": 90,
+    "fuzzy_medium_min_score": 85,
+    "fuzzy_low_min_score": 70,
+    "no_match_max_score": 69.999,
+    "fuzzy_score_bands": [
+      {
+        "name": "Matching High",
+        "label": "Matching (High)",
+        "min_score": 90,
+        "max_score": 99.999,
+        "match_type": "Fuzzy",
+        "lifecycle_state": "Closed - Match",
+        "authoritative": "High Confidence AI",
+        "system_action": "Persist as high-confidence AI match",
+        "business_meaning": "Strong AI inference; still not Exact"
+      },
+      {
+        "name": "Potential Medium",
+        "label": "Potential (Medium)",
+        "min_score": 85,
+        "max_score": 89.999,
+        "match_type": "Fuzzy",
+        "lifecycle_state": "Potential",
+        "authoritative": "No",
+        "system_action": "Send to review / action queue",
+        "business_meaning": "Likely candidate, needs confirmation"
+      },
+      {
+        "name": "Potential Low",
+        "label": "Potential (Low)",
+        "min_score": 70,
+        "max_score": 84.999,
+        "match_type": "Fuzzy",
+        "lifecycle_state": "Potential",
+        "authoritative": "No",
+        "system_action": "Send to review / action queue",
+        "business_meaning": "Possible candidate, needs review"
+      }
+    ],
+    "below_floor": {
+      "label": "No Match",
+      "lifecycle_state": "No row",
+      "system_action": "Reject / do not persist"
+    }
+  },
+  "semantic_definitions": {
+    "_purpose": "Plain-English definitions of matching terms so LLM and human reviewers interpret results consistently. These definitions are authoritative for reporting and answering layers.",
+    "lead": "A Business Development tracked business prospect record assembled from lead, account, and contact data. Business identity is based on business_name and full_address.",
+    "pos": "A point-of-sale transaction record from the transaction table, representing actual purchase activity at a Costco warehouse.",
+    "warehouse_scope": "The runtime warehouse set being processed. Matching is always blocked to the same warehouse_number; warehouse scope is not itself a scoring rule.",
+    "exact_match": "A match produced only by the deterministic field-matching engine where normalized business identity fields agree. It is scored exactly 100, labeled Exact / Complete, and is authoritative.",
+    "deterministic_engine": "The rule-based matching engine that runs first on the dataset. It claims exact matches before the semantic/fuzzy engine processes only residual unmatched records.",
+    "fuzzy_match": "A match proposed by Vertex AI semantic embeddings using cosine similarity. Fuzzy matches are AI-inferred candidates scored 70-99.999 and are never labeled Exact.",
+    "matching_high": "A fuzzy match scoring 90-99.999. It is treated as a high-confidence AI match with lifecycle_state Closed - Match, but remains AI-inferred and traceable as fuzzy-sourced.",
+    "potential_medium": "A fuzzy match scoring 85-89.999 with lifecycle_state Potential. It is a likely candidate that needs business or ServiceNow confirmation.",
+    "potential_low": "A fuzzy match scoring 70-84.999 with lifecycle_state Potential. It is a possible candidate that needs review.",
+    "no_match": "Any computed fuzzy score below 70. It is rejected and no match row is written; scores are not clamped up to qualify.",
+    "manual_review": "A match_type assigned when competing leads for the same POS are within the ambiguity_delta of each other. It routes to human review with lifecycle_state Potential and must never be treated as Exact.",
+    "combined_field": "An embedding built from business_name plus full_address. It is used as the recall gate and candidate pre-filter only, not in the final weighted score.",
+    "recall_gate": "The pre-filter step using combined_field cosine similarity and nearest-neighbor retrieval to choose which POS candidates are precision-scored.",
+    "precision_score": "The final weighted fuzzy score for a candidate pair, computed from full_address_score and business_name_score only.",
+    "full_address_score": "Cosine similarity from 0 to 100 between lead and POS full_address embeddings. It has weight 4, the strongest precision signal.",
+    "business_name_score": "Cosine similarity from 0 to 100 between lead and POS business_name embeddings. It has weight 3.",
+    "final_score": "The stored confidence score. Exact rows are 100. Fuzzy rows use the precision formula and are capped below 100 with max 99.999.",
+    "closed_match": "lifecycle_state meaning the lead is treated as matched. It applies to deterministic Exact rows and Matching High fuzzy rows, but reports must split proven Exact from high-confidence AI.",
+    "closed_existing": "lifecycle_state for strong POS activity before the lead fiscal point. It is pre-existing customer activity and is not credited as a new conversion.",
+    "potential": "lifecycle_state for fuzzy 70-89.999 rows and Manual Review rows. It means a candidate awaiting confirmation, not a settled match.",
+    "no_match_state": "Lifecycle outcome for scores below 70; no row is persisted.",
+    "primary_transaction": "The earliest qualifying transaction per lead by fiscal_year, fiscal_period, and week among rows scoring at least 70.",
+    "ambiguity_delta": "The score gap, 3 points, within which competing lead-to-POS claims are too close to auto-decide and are routed to Manual Review.",
+    "new_match_fiscal_rule": "A POS transaction counts as a new conversion only when it is on or after the lead fiscal point. There is no 6-month, 180-day, rolling, or calendar-window attribution rule.",
+    "deterministic_boosts": "Optional hard-identifier confidence additions: email exact match plus 5 and phone exact match plus 5, capped at 100. Disagreement is neutral.",
+    "authoritative_meaning": "Authoritative means trusted enough to persist as a match. Exact is authoritative because it is rule-proven; Matching High is high-confidence AI but not deterministic proof.",
+    "exact_vs_fuzzy_summary": "Deterministic exact matching runs first and owns score 100 / Exact / Complete. Vertex AI runs only on residual unmatched records and produces fuzzy candidates from 70 to 99.999 that are never relabeled Exact."
+  },
+  "formula_explanation": {
+    "precision_score_formula": "final_score = (4 * full_address_score + 3 * business_name_score) / 7",
+    "denominator_reason": "The denominator is 7 because it is the sum of the precision weights: full_address weight 4 plus business_name weight 3.",
+    "combined_field_reason": "combined_field is used as the recall gate to find candidate POS rows. It is not added again to the final score to avoid double-counting the same business identity signal.",
+    "address_weight_percent": 57.1,
+    "business_name_weight_percent": 42.9
+  },
   "confidence_bands": {
-    "qualify_min_score": 78,
+    "qualify_min_score": 70,
     "bands": [
-      { "name": "High", "state": "Closed - Match", "min_score": 92, "max_score": 100 },
-      { "name": "Medium", "state": "Potential", "min_score": 85, "max_score": 91.999 },
-      { "name": "Review", "state": "Potential", "min_score": 78, "max_score": 84.999 },
-      { "name": "No Match", "state": "No Match", "min_score": 0, "max_score": 77.999 }
+      { "name": "Matching High", "state": "Closed - Match", "min_score": 90, "max_score": 99.999 },
+      { "name": "Potential Medium", "state": "Potential", "min_score": 85, "max_score": 89.999 },
+      { "name": "Potential Low", "state": "Potential", "min_score": 70, "max_score": 84.999 },
+      { "name": "No Match", "state": "No Match", "min_score": 0, "max_score": 69.999 }
     ],
     "calibration_status": "starting_prior_needs_labeled_set"
   },
@@ -95,11 +192,11 @@
     "ambiguity_match_type": "Manual Review",
     "primary_transaction": {
       "definition": "Earliest qualifying transaction per lead by fiscal year, period, then week.",
-      "qualifying_min_score": 78
+      "qualifying_min_score": 70
     }
   },
   "override_policy": {
-    "exact_qualified_min_score": 80,
+    "exact_qualified_min_score": 100,
     "exact_is_authoritative": true,
     "semantic_role": "recall_add_on_for_exact_misses",
     "compare_exact_points_to_semantic_score": false

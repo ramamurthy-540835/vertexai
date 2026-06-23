@@ -5,6 +5,10 @@
 -- databases; this file is the idempotent live-database backfill path.
 
 \set ON_ERROR_STOP on
+\set hnsw_m 32
+\set hnsw_ef_construction 128
+
+SET maintenance_work_mem = '512MB';
 
 ALTER TABLE leadmgmt.leads_embeddings
     ALTER COLUMN combined_embedding TYPE vector(768) USING combined_embedding::vector(768),
@@ -25,12 +29,12 @@ ON leadmgmt.pos_embeddings (pos_id);
 CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_leads_embeddings_combined_hnsw
 ON leadmgmt.leads_embeddings
 USING hnsw (combined_embedding vector_cosine_ops)
-WITH (m = 16, ef_construction = 128);
+WITH (m = :hnsw_m, ef_construction = :hnsw_ef_construction);
 
 CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_pos_embeddings_combined_hnsw
 ON leadmgmt.pos_embeddings
 USING hnsw (combined_embedding vector_cosine_ops)
-WITH (m = 16, ef_construction = 128);
+WITH (m = :hnsw_m, ef_construction = :hnsw_ef_construction);
 
 ANALYZE leadmgmt.leads_embeddings;
 ANALYZE leadmgmt.pos_embeddings;

@@ -15,14 +15,28 @@ from datetime import datetime
 from pathlib import Path
 
 from lead_match_runtime.business_rules import (
+    exact_authoritative_score,
+    exact_match_types,
+    exact_score,
+    fuzzy_max_score,
+    fuzzy_qualify_min_score,
     get_project_id,
     get_warehouse_scope,
     load_business_rules,
 )
-from lead_match_runtime.job_runner import connect, schema_name, assert_isolated_runtime
+from lead_match_runtime.job_runner import (
+    assert_isolated_runtime,
+    connect,
+    schema_name,
+    verify_hnsw_combined_indexes,
+)
 
 
 BUSINESS_RULES = load_business_rules()
+
+
+def _placeholders(values) -> str:
+    return ", ".join(["%s"] * len(values))
 
 
 def check_safety_env():
@@ -48,34 +62,184 @@ def check_safety_env():
 
 
 def check_hnsw_combined_indexes(cursor, schema: str, results: dict):
+    check_group = (
+        results["required_checks"]
+        if "hnsw_combined_indexes" in results.get("required_checks", {})
+        else results["optional_checks"]
+    )
+    try:
+        _, missing_tables = verify_hnsw_combined_indexes(cursor, schema, fail_fast=False)
+        if missing_tables:
+            check_group["hnsw_combined_indexes"] = "FAIL"
+            results["errors"].append(
+                "HNSW index missing on "
+                + ", ".join(f"{table}.combined_embedding" for table in missing_tables)
+                + " - refusing to run fuzzy match, would trigger full scan"
+            )
+            return
+        check_group["hnsw_combined_indexes"] = "PASS"
+        print("[INFO] combined_embedding HNSW indexes are present")
+    except Exception as e:
+        check_group["hnsw_combined_indexes"] = "FAIL"
+        results["errors"].append(f"Failed to check HNSW indexes: {e}")
+
+
+def latest_match_run_id(cursor, schema: str) -> str | None:
+    cursor.execute(
+        f"""
+        SELECT match_run_id
+        FROM "{schema}"."match_decision_detail"
+        ORDER BY created_date DESC
+        LIMIT 1
+        """
+    )
+    row = cursor.fetchone()
+    return row[0] if row else None
+
+
+def check_fuzzy_score_band(cursor, schema: str, results: dict):
     try:
         cursor.execute(
             """
-            SELECT tablename, indexname
-            FROM pg_indexes
-            WHERE schemaname = %s
-              AND tablename IN ('leads_embeddings', 'pos_embeddings')
-              AND lower(indexdef) LIKE '%%using hnsw%%'
-              AND lower(indexdef) LIKE '%%combined_embedding%%'
+            SELECT table_name
+            FROM information_schema.tables
+            WHERE table_schema = %s AND table_name = 'match_decision_detail'
             """,
             (schema,),
         )
-        found_tables = {row[0] for row in cursor.fetchall()}
-        missing_tables = sorted(
-            {"leads_embeddings", "pos_embeddings"} - found_tables
+        if not cursor.fetchone():
+            results["optional_checks"]["fuzzy_score_band"] = "SKIPPED"
+            return
+
+        match_run_id = os.environ.get("MATCH_RUN_ID") or latest_match_run_id(cursor, schema)
+        if not match_run_id:
+            results["optional_checks"]["fuzzy_score_band"] = "SKIPPED"
+            return
+
+        types = exact_match_types(BUSINESS_RULES)
+        placeholders = _placeholders(types)
+        fuzzy_floor = fuzzy_qualify_min_score(BUSINESS_RULES)
+        fuzzy_ceiling = fuzzy_max_score(BUSINESS_RULES)
+        cursor.execute(
+            f"""
+            SELECT COUNT(*)
+            FROM "{schema}"."match_decision_detail"
+            WHERE match_run_id = %s
+              AND lower(match_type) NOT IN ({placeholders})
+              AND final_score >= %s
+            """,
+            (match_run_id, *types, exact_score(BUSINESS_RULES)),
         )
-        if missing_tables:
-            results["optional_checks"]["hnsw_combined_indexes"] = "FAIL"
+        bad_count = int(cursor.fetchone()[0])
+
+        cursor.execute(
+            f"""
+            SELECT MIN(final_score), MAX(final_score)
+            FROM "{schema}"."match_decision_detail"
+            WHERE match_run_id = %s
+              AND lower(match_type) NOT IN ({placeholders})
+            """,
+            (match_run_id, *types),
+        )
+        min_score, max_score = cursor.fetchone()
+        cursor.execute(
+            f"""
+            SELECT COUNT(*)
+            FROM "{schema}"."match_decision_detail"
+            WHERE match_run_id = %s
+              AND final_score < %s
+            """,
+            (match_run_id, fuzzy_floor),
+        )
+        below_floor_count = int(cursor.fetchone()[0])
+        results["fuzzy_score_band"] = {
+            "match_run_id": match_run_id,
+            "min_semantic_score": float(min_score) if min_score is not None else None,
+            "max_semantic_score": float(max_score) if max_score is not None else None,
+            "bad_non_exact_100_plus": bad_count,
+            "below_fuzzy_floor_rows": below_floor_count,
+        }
+
+        if bad_count:
+            results["optional_checks"]["fuzzy_score_band"] = "FAIL"
             results["errors"].append(
-                "Missing combined_embedding HNSW indexes for tables: "
-                + ", ".join(missing_tables)
+                f"Found {bad_count} non-exact rows with final_score >= {exact_score(BUSINESS_RULES):.2f} "
+                f"for match_run_id={match_run_id}"
             )
             return
-        results["optional_checks"]["hnsw_combined_indexes"] = "PASS"
-        print("[INFO] combined_embedding HNSW indexes are present")
+        if below_floor_count:
+            results["optional_checks"]["fuzzy_score_band"] = "FAIL"
+            results["errors"].append(
+                f"Found {below_floor_count} rows with final_score below {fuzzy_floor:.2f} "
+                f"for match_run_id={match_run_id}"
+            )
+            return
+        if min_score is not None and float(min_score) < fuzzy_floor:
+            results["optional_checks"]["fuzzy_score_band"] = "FAIL"
+            results["errors"].append(
+                f"Semantic min score {float(min_score):.2f} is below {fuzzy_floor:.2f} "
+                f"for match_run_id={match_run_id}"
+            )
+            return
+        if max_score is not None and float(max_score) > fuzzy_ceiling:
+            results["optional_checks"]["fuzzy_score_band"] = "FAIL"
+            results["errors"].append(
+                f"Semantic max score {float(max_score):.2f} is above {fuzzy_ceiling:.2f} "
+                f"for match_run_id={match_run_id}"
+            )
+            return
+
+        results["optional_checks"]["fuzzy_score_band"] = "PASS"
+        print(
+            "[INFO] Semantic score band check passed: "
+            f"match_run_id={match_run_id}; min={min_score}; max={max_score}; "
+            f"bad_exact_score_plus={bad_count}; below_fuzzy_floor={below_floor_count}"
+        )
     except Exception as e:
-        results["optional_checks"]["hnsw_combined_indexes"] = "FAIL"
-        results["errors"].append(f"Failed to check HNSW indexes: {e}")
+        results["optional_checks"]["fuzzy_score_band"] = "FAIL"
+        results["errors"].append(f"Failed to check fuzzy score band: {e}")
+
+
+def check_mdd_transaction_exact_reconciliation(cursor, schema: str, warehouse: str, results: dict):
+    try:
+        types = exact_match_types(BUSINESS_RULES)
+        placeholders = _placeholders(types)
+        cursor.execute(
+            f"""
+            SELECT COUNT(*)
+            FROM "{schema}"."match_decision_detail" m
+            JOIN "{schema}"."transaction" t ON t.pos_id = m.pos_id
+            WHERE m.warehouse_number = %s
+              AND lower(m.match_type) IN ({placeholders})
+              AND (m.final_score IS NULL OR m.final_score >= %s)
+              AND COALESCE(lower(t.match_type), '') NOT IN (
+                  {placeholders}
+              )
+            """,
+            (
+                int(warehouse),
+                *types,
+                exact_authoritative_score(BUSINESS_RULES),
+                *types,
+            ),
+        )
+        mismatch_count = int(cursor.fetchone()[0])
+        results["mdd_transaction_exact_reconciliation"] = {
+            "warehouse": warehouse,
+            "exact_mismatch_count": mismatch_count,
+        }
+        if mismatch_count:
+            results["required_checks"]["mdd_transaction_exact_reconciliation"] = "FAIL"
+            results["errors"].append(
+                f"MDD/transaction exact reconciliation failed for warehouse {warehouse}: "
+                f"{mismatch_count} exact MDD pos_ids are non-exact in transaction"
+            )
+            return
+        results["required_checks"]["mdd_transaction_exact_reconciliation"] = "PASS"
+        print("[INFO] MDD exact decisions reconcile to transaction")
+    except Exception as e:
+        results["required_checks"]["mdd_transaction_exact_reconciliation"] = "FAIL"
+        results["errors"].append(f"Failed to check MDD/transaction exact reconciliation: {e}")
 
 
 def run_smoke_test(warehouse: str, fiscal_year: int = None, fiscal_period: int = None):
@@ -98,13 +262,15 @@ def run_smoke_test(warehouse: str, fiscal_year: int = None, fiscal_period: int =
             "schema_exists": "FAIL",
             "required_tables": "FAIL",
             "lead_rows": "FAIL",
-            "pos_rows": "FAIL"
+            "pos_rows": "FAIL",
+            "hnsw_combined_indexes": "FAIL",
+            "mdd_transaction_exact_reconciliation": "FAIL"
         },
         "optional_checks": {
             "lead_embeddings": "SKIPPED",
             "pos_embeddings": "SKIPPED",
             "match_audit": "SKIPPED",
-            "hnsw_combined_indexes": "SKIPPED"
+            "fuzzy_score_band": "SKIPPED"
         },
         "errors": []
     }
@@ -307,6 +473,8 @@ def run_smoke_test(warehouse: str, fiscal_year: int = None, fiscal_period: int =
             results["errors"].append(f"Failed to check match_audit existence: {e}")
 
         check_hnsw_combined_indexes(cursor, schema, results)
+        check_fuzzy_score_band(cursor, schema, results)
+        check_mdd_transaction_exact_reconciliation(cursor, schema, warehouse, results)
 
     finally:
         if conn:

@@ -1,5 +1,6 @@
 import argparse
 import json
+import logging
 import os
 import random
 import re
@@ -16,13 +17,29 @@ from google.genai import types
 
 from lead_match_runtime.business_rules import (
     build_embedding_text,
+    exact_authoritative_score,
+    exact_lifecycle_state,
+    exact_match_type,
+    exact_match_types as configured_exact_match_types,
+    exact_score,
+    fuzzy_artifact_score,
+    fuzzy_lifecycle_state,
+    fuzzy_match_type,
+    fuzzy_max_score,
+    fuzzy_qualify_min_score,
+    fuzzy_score_bands,
+    manual_review_match_type,
+    no_match_lifecycle_state,
     get_project_id,
     get_schema,
     get_warehouse_scope,
     load_business_rules,
+    precision_score_formula,
+    semantic_precision_weights,
 )
 
 
+logger = logging.getLogger(__name__)
 BUSINESS_RULES = load_business_rules()
 EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", BUSINESS_RULES["embeddings"]["model"])
 EMBEDDING_DIMENSION = int(
@@ -41,6 +58,15 @@ EMBEDDING_REQUEST_LOG_EVERY = max(0, int(os.environ.get("EMBEDDING_REQUEST_LOG_E
 MATCH_BATCH_SIZE = max(1, int(os.environ.get("MATCH_BATCH_SIZE", "100")))
 MATCH_STATEMENT_TIMEOUT_MS = int(os.environ.get("MATCH_STATEMENT_TIMEOUT_MS", "900000"))
 HNSW_EF_SEARCH = max(0, int(os.environ.get("HNSW_EF_SEARCH", "100")))
+HNSW_M = max(2, int(os.environ.get("HNSW_M", "32")))
+HNSW_EF_CONSTRUCTION = max(2 * HNSW_M, int(os.environ.get("HNSW_EF_CONSTRUCTION", "128")))
+HNSW_MAINTENANCE_WORK_MEM = os.environ.get("HNSW_MAINTENANCE_WORK_MEM", "512MB")
+EXPLAIN_FUZZY_PLAN = os.environ.get("EXPLAIN_FUZZY_PLAN", "true").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "y",
+}
 DRY_RUN = os.environ.get("DRY_RUN", "false").strip().lower() in {"1", "true", "yes", "y"}
 DRY_RUN_MATCH_ROW_LIMIT = min(
     10,
@@ -138,13 +164,14 @@ def connect():
     return pg8000.dbapi.connect(**db_config())
 
 
-def configure_hnsw_search(conn, cursor):
+def configure_hnsw_search(conn, cursor, local=False):
     if HNSW_EF_SEARCH <= 0:
         print("HNSW ef_search tuning disabled")
         return
     try:
-        cursor.execute(f"SET hnsw.ef_search = {HNSW_EF_SEARCH}")
-        print(f"HNSW ef_search set to {HNSW_EF_SEARCH}")
+        scope = "LOCAL " if local else ""
+        cursor.execute(f"SET {scope}hnsw.ef_search = {HNSW_EF_SEARCH}")
+        print(f"HNSW ef_search set {'locally ' if local else ''}to {HNSW_EF_SEARCH}")
     except Exception as exc:
         print(
             f"Warning: failed to set hnsw.ef_search={HNSW_EF_SEARCH}: {exc}",
@@ -179,10 +206,8 @@ def warehouse_sql_filter(alias):
 
 
 def exact_match_types():
-    raw_types = os.environ.get(
-        "EXACT_MATCH_TYPES",
-        "Exact,Deterministic,Exact Match,Direct Match,Close Match",
-    )
+    configured_types = ",".join(configured_exact_match_types(BUSINESS_RULES, lower=False))
+    raw_types = os.environ.get("EXACT_MATCH_TYPES", configured_types)
     return tuple(
         value.strip().lower()
         for value in raw_types.split(",")
@@ -191,11 +216,21 @@ def exact_match_types():
 
 
 def exact_qualified_min_score():
-    configured = BUSINESS_RULES.get("override_policy", {}).get(
-        "exact_qualified_min_score",
-        BUSINESS_RULES.get("exact_match_engine", {}).get("minimum_score", 80),
-    )
+    configured = exact_authoritative_score(BUSINESS_RULES)
     return float(os.environ.get("EXACT_MATCH_MIN_SCORE", configured))
+
+
+def _fuzzy_lifecycle_case(score_expr, params):
+    case_parts = []
+    for band in fuzzy_score_bands(BUSINESS_RULES):
+        params.extend([
+            float(band["min_score"]),
+            float(band["max_score"]),
+            str(band["lifecycle_state"]),
+        ])
+        case_parts.append(f"WHEN {score_expr} >= %s AND {score_expr} <= %s THEN %s")
+    params.append(str(BUSINESS_RULES["decision_rules"]["below_floor"]["lifecycle_state"]))
+    return "CASE " + " ".join(case_parts) + " ELSE %s END"
 
 
 def _exact_type_placeholders(types):
@@ -253,6 +288,41 @@ def exact_pos_exclusion_clause(schema, pos_expr, params):
             AND (exact_t.match_score IS NULL OR exact_t.match_score >= %s)
       )
     """
+
+
+REQUIRED_HNSW_COMBINED_INDEXES = {
+    "leads_embeddings": "idx_leads_embeddings_combined_hnsw",
+    "pos_embeddings": "idx_pos_embeddings_combined_hnsw",
+}
+
+
+def hnsw_combined_index_rows(cursor, schema):
+    cursor.execute(
+        """
+        SELECT tablename, indexname, indexdef
+        FROM pg_indexes
+        WHERE schemaname = %s
+          AND tablename IN ('leads_embeddings', 'pos_embeddings')
+          AND lower(indexdef) LIKE '%%using hnsw%%'
+          AND lower(indexdef) LIKE '%%combined_embedding%%'
+          AND lower(indexdef) LIKE '%%vector_cosine_ops%%'
+        """,
+        (schema,),
+    )
+    return cursor.fetchall()
+
+
+def verify_hnsw_combined_indexes(cursor, schema, *, fail_fast=True):
+    rows = hnsw_combined_index_rows(cursor, schema)
+    found_tables = {row[0] for row in rows}
+    missing_tables = sorted(set(REQUIRED_HNSW_COMBINED_INDEXES) - found_tables)
+    if missing_tables and fail_fast:
+        missing = ", ".join(f"{table}.combined_embedding" for table in missing_tables)
+        raise RuntimeError(
+            f"HNSW index missing on {missing} - refusing to run fuzzy match, "
+            "would trigger full scan"
+        )
+    return rows, missing_tables
 
 
 def warehouse_scope_label():
@@ -764,7 +834,12 @@ def run_fuzzy_match():
 def write_back_match_results(conn, cursor, schema, run_id):
     types = exact_match_types()
     min_score = exact_qualified_min_score()
+    exact_state = exact_lifecycle_state(BUSINESS_RULES)
+    fuzzy_type_lower = fuzzy_match_type(BUSINESS_RULES).lower()
+    manual_review_type_lower = manual_review_match_type(BUSINESS_RULES).lower()
     placeholders = _exact_type_placeholders(types)
+    fuzzy_lifecycle_params = []
+    fuzzy_lifecycle_case = _fuzzy_lifecycle_case("final_score", fuzzy_lifecycle_params)
     cursor.execute(
         f"""
         WITH base AS (
@@ -774,6 +849,7 @@ def write_back_match_results(conn, cursor, schema, run_id):
                 m.pos_id,
                 m.match_type,
                 m.final_score,
+                m.created_date,
                 l.fiscal_year AS lead_fiscal_year,
                 l.fiscal_period AS lead_fiscal_period,
                 COALESCE(l.week, 0) AS lead_week,
@@ -785,23 +861,35 @@ def write_back_match_results(conn, cursor, schema, run_id):
             JOIN "{schema}"."transaction" t ON t.pos_id = m.pos_id
             WHERE m.match_run_id = %s
         ),
+        prioritized AS (
+            SELECT
+                *,
+                CASE
+                    WHEN lower(match_type) IN ({placeholders}) THEN 3
+                    WHEN lower(match_type) = %s THEN 2
+                    WHEN lower(match_type) = %s THEN 1
+                    ELSE 0
+                END AS match_priority
+            FROM base
+        ),
+        ranked AS (
+            SELECT
+                *,
+                ROW_NUMBER() OVER (
+                    PARTITION BY pos_id
+                    ORDER BY match_priority DESC, final_score DESC NULLS LAST, created_date DESC, lead_id
+                ) AS decision_rank
+            FROM prioritized
+        ),
         classified AS (
             SELECT
                 *,
                 CASE
-                    WHEN match_type = 'Manual Review' THEN 'Potential'
-                    WHEN (
-                        pos_fiscal_year < lead_fiscal_year
-                        OR (pos_fiscal_year = lead_fiscal_year AND pos_fiscal_period < lead_fiscal_period)
-                        OR (
-                            pos_fiscal_year = lead_fiscal_year
-                            AND pos_fiscal_period = lead_fiscal_period
-                            AND pos_week < lead_week
-                        )
-                    ) THEN 'Closed - Existing'
-                    ELSE 'Closed - Match'
+                    WHEN match_priority = 3 THEN %s
+                    ELSE {fuzzy_lifecycle_case}
                 END AS lifecycle_state
-            FROM base
+            FROM ranked
+            WHERE decision_rank = 1
         ),
         primary_rows AS (
             SELECT
@@ -811,7 +899,7 @@ def write_back_match_results(conn, cursor, schema, run_id):
                     ORDER BY pos_fiscal_year, pos_fiscal_period, pos_week, pos_id
                 ) AS primary_rank
             FROM classified
-            WHERE lifecycle_state = 'Closed - Match'
+            WHERE lifecycle_state = %s
         ),
         tx_updates AS (
             SELECT
@@ -819,6 +907,8 @@ def write_back_match_results(conn, cursor, schema, run_id):
                 c.lead_id,
                 c.final_score,
                 c.match_type,
+                c.match_run_id,
+                c.match_priority,
                 c.lifecycle_state,
                 COALESCE(p.primary_rank = 1, false) AS primary_transaction
             FROM classified c
@@ -838,50 +928,56 @@ def write_back_match_results(conn, cursor, schema, run_id):
             updated_by = 'lead_match_runtime',
             updated_date = CURRENT_TIMESTAMP,
             matching_comments = CONCAT(
-                'match_run_id=', CAST(%s AS text),
+                'match_run_id=', CAST(tx.match_run_id AS text),
                 '; lifecycle_state=', tx.lifecycle_state
             )
         FROM tx_updates tx
         WHERE t.pos_id = tx.pos_id
-          AND (
-              lower(tx.match_type) IN ({placeholders})
-              OR (
-                  NOT (
-                      lower(COALESCE(t.match_type, '')) IN ({placeholders})
-                      AND (t.match_score IS NULL OR t.match_score >= %s)
-                  )
-                  AND NOT EXISTS (
-                      SELECT 1
-                      FROM "{schema}"."match_decision_detail" exact_m
-                      WHERE exact_m.pos_id = t.pos_id
-                        AND exact_m.match_run_id <> %s
-                        AND lower(exact_m.match_type) IN ({placeholders})
-                        AND (exact_m.final_score IS NULL OR exact_m.final_score >= %s)
-                  )
-              )
-          )
+          AND tx.match_priority >= CASE
+              WHEN lower(COALESCE(t.match_type, '')) IN ({placeholders})
+               AND (t.match_score IS NULL OR t.match_score >= %s)
+              THEN 3
+              WHEN lower(COALESCE(t.match_type, '')) = %s THEN 2
+              WHEN lower(COALESCE(t.match_type, '')) = %s THEN 1
+              ELSE 0
+          END
         """,
-        (run_id, run_id, *types, *types, min_score, run_id, *types, min_score),
+        (
+            run_id,
+            *types,
+            fuzzy_type_lower,
+            manual_review_type_lower,
+            exact_state,
+            *fuzzy_lifecycle_params,
+            exact_state,
+            *types,
+            min_score,
+            fuzzy_type_lower,
+            manual_review_type_lower,
+        ),
     )
     transaction_updates = cursor.rowcount
 
+    lead_lifecycle_params = []
+    lead_lifecycle_case = _fuzzy_lifecycle_case("m.final_score", lead_lifecycle_params)
+    fuzzy_states = tuple(
+        dict.fromkeys(str(band["lifecycle_state"]) for band in fuzzy_score_bands(BUSINESS_RULES))
+    )
+    potential_states = tuple(state for state in fuzzy_states if state != exact_state)
+    potential_state = potential_states[0] if potential_states else exact_state
+    no_match_state = no_match_lifecycle_state(BUSINESS_RULES)
+    potential_condition = "false"
+    if potential_states:
+        potential_placeholders = ", ".join(["%s"] * len(potential_states))
+        potential_condition = f"match_result IN ({potential_placeholders})"
     cursor.execute(
         f"""
         WITH classified AS (
             SELECT
                 m.lead_id,
                 CASE
-                    WHEN m.match_type = 'Manual Review' THEN 'Potential'
-                    WHEN (
-                        t.fiscal_year < l.fiscal_year
-                        OR (t.fiscal_year = l.fiscal_year AND t.fiscal_period < l.fiscal_period)
-                        OR (
-                            t.fiscal_year = l.fiscal_year
-                            AND t.fiscal_period = l.fiscal_period
-                            AND COALESCE(t.week, 0) < COALESCE(l.week, 0)
-                        )
-                    ) THEN 'Closed - Existing'
-                    ELSE 'Closed - Match'
+                    WHEN lower(m.match_type) IN ({placeholders}) THEN %s
+                    ELSE {lead_lifecycle_case}
                 END AS match_result
             FROM "{schema}"."match_decision_detail" m
             JOIN "{schema}"."lead" l ON l.lead_id = m.lead_id
@@ -892,10 +988,9 @@ def write_back_match_results(conn, cursor, schema, run_id):
             SELECT
                 lead_id,
                 CASE
-                    WHEN bool_or(match_result = 'Closed - Match') THEN 'Closed - Match'
-                    WHEN bool_or(match_result = 'Potential') THEN 'Potential'
-                    WHEN bool_or(match_result = 'Closed - Existing') THEN 'Closed - Existing'
-                    ELSE 'No Match'
+                    WHEN bool_or(match_result = %s) THEN %s
+                    WHEN bool_or({potential_condition}) THEN %s
+                    ELSE %s
                 END AS match_result
             FROM classified
             GROUP BY lead_id
@@ -934,7 +1029,24 @@ def write_back_match_results(conn, cursor, schema, run_id):
               )
           )
         """,
-        (run_id, run_id, *types, run_id, *types, min_score, *types, min_score),
+        (
+            *types,
+            exact_state,
+            *lead_lifecycle_params,
+            run_id,
+            exact_state,
+            exact_state,
+            *potential_states,
+            potential_state,
+            no_match_state,
+            run_id,
+            *types,
+            run_id,
+            *types,
+            min_score,
+            *types,
+            min_score,
+        ),
     )
     lead_updates = cursor.rowcount
     conn.commit()
@@ -1010,25 +1122,124 @@ def _run_exact_match(conn, job_started):
     cursor = conn.cursor()
     schema = schema_name()
     run_id = os.environ.get("MATCH_RUN_ID") or f"workflow-{uuid.uuid4().hex[:12]}"
-    types = exact_match_types()
-    placeholders = _exact_type_placeholders(types)
-    min_score = exact_qualified_min_score()
     warehouse_clause, warehouse_params = warehouse_sql_filter("t")
     limit = optional_positive_int_env("MATCH_LEAD_LIMIT")
     limit_clause = ""
-    params = [run_id, *types, min_score, *warehouse_params]
+    params = []
     if limit is not None:
         limit_clause = "LIMIT %s"
         params.append(limit)
+    params.extend(warehouse_params)
+    exact_type = exact_match_type(BUSINESS_RULES)
+    exact_match_score = exact_score(BUSINESS_RULES)
+    params.extend([
+        run_id,
+        exact_type,
+        exact_match_score,
+        exact_match_score,
+        exact_match_score,
+        exact_match_score,
+    ])
 
     print(f"Warehouse scope: {warehouse_scope_label()}")
     print(
-        f"Exact SQL handoff run: {run_id}; min_score={min_score}; "
+        f"Exact deterministic match run: {run_id}; "
         f"match_lead_limit={limit or 'all'}; dry_run={DRY_RUN}"
     )
 
     cursor.execute(
         f"""
+        WITH lead_candidates AS (
+            SELECT
+                l.lead_id,
+                l.warehouse_number,
+                upper(regexp_replace(trim(COALESCE(a.business_name, '')), '\\s+', ' ', 'g')) AS business_name_key,
+                regexp_replace(
+                    regexp_replace(
+                        regexp_replace(
+                            regexp_replace(
+                                regexp_replace(
+                                    regexp_replace(
+                                        upper(regexp_replace(trim(COALESCE(a.address_line_one, '')), '\\s+', ' ', 'g')),
+                                        '\\mSTREET\\M', 'ST', 'g'
+                                    ),
+                                    '\\mAVENUE\\M', 'AVE', 'g'
+                                ),
+                                '\\mROAD\\M', 'RD', 'g'
+                            ),
+                            '\\mDRIVE\\M', 'DR', 'g'
+                        ),
+                        '\\mLANE\\M', 'LN', 'g'
+                    ),
+                    '\\mBOULEVARD\\M', 'BLVD', 'g'
+                ) AS address_key,
+                upper(regexp_replace(trim(COALESCE(a.city, '')), '\\s+', ' ', 'g')) AS city_key,
+                left(upper(trim(COALESCE(a.state, ''))), 2) AS state_key,
+                left(regexp_replace(COALESCE(a.zip_code, ''), '\\D', '', 'g'), 5) AS zip_key
+            FROM "{schema}"."lead" l
+            JOIN "{schema}"."account" a ON a.account_id = l.account_id
+            WHERE l.lead_id IS NOT NULL
+              AND l.warehouse_number IS NOT NULL
+            ORDER BY l.lead_id
+            {limit_clause}
+        ),
+        pos_candidates AS (
+            SELECT
+                t.pos_id,
+                t.warehouse_number,
+                t.fiscal_year,
+                t.fiscal_period,
+                COALESCE(t.week, 0) AS week,
+                upper(regexp_replace(trim(COALESCE(t.business_name, '')), '\\s+', ' ', 'g')) AS business_name_key,
+                regexp_replace(
+                    regexp_replace(
+                        regexp_replace(
+                            regexp_replace(
+                                regexp_replace(
+                                    regexp_replace(
+                                        upper(regexp_replace(trim(COALESCE(t.address_line_one, '')), '\\s+', ' ', 'g')),
+                                        '\\mSTREET\\M', 'ST', 'g'
+                                    ),
+                                    '\\mAVENUE\\M', 'AVE', 'g'
+                                ),
+                                '\\mROAD\\M', 'RD', 'g'
+                            ),
+                            '\\mDRIVE\\M', 'DR', 'g'
+                        ),
+                        '\\mLANE\\M', 'LN', 'g'
+                    ),
+                    '\\mBOULEVARD\\M', 'BLVD', 'g'
+                ) AS address_key,
+                upper(regexp_replace(trim(COALESCE(t.city, '')), '\\s+', ' ', 'g')) AS city_key,
+                left(upper(trim(COALESCE(t.state, ''))), 2) AS state_key,
+                left(regexp_replace(COALESCE(t.zip_code, ''), '\\D', '', 'g'), 5) AS zip_key
+            FROM "{schema}"."transaction" t
+            WHERE t.pos_id IS NOT NULL
+              AND t.warehouse_number IS NOT NULL
+              {warehouse_clause}
+        ),
+        exact_pairs AS (
+            SELECT
+                l.lead_id,
+                p.pos_id,
+                p.warehouse_number,
+                p.fiscal_year,
+                p.fiscal_period,
+                p.week
+            FROM lead_candidates l
+            JOIN pos_candidates p
+              ON p.warehouse_number = l.warehouse_number
+             AND p.business_name_key = l.business_name_key
+             AND p.address_key = l.address_key
+             AND p.city_key = l.city_key
+             AND p.state_key = l.state_key
+             AND p.zip_key = l.zip_key
+            WHERE l.business_name_key <> ''
+              AND l.address_key <> ''
+              AND l.city_key <> ''
+              AND l.state_key <> ''
+              AND l.zip_key <> ''
+        )
         INSERT INTO "{schema}"."match_decision_detail" (
             match_run_id, lead_id, pos_id, warehouse_number, match_type, final_score,
             combined_field_score, full_address_score, business_name_score,
@@ -1036,25 +1247,19 @@ def _run_exact_match(conn, job_started):
         )
         SELECT
             %s,
-            t.lead_id,
-            t.pos_id,
-            t.warehouse_number,
-            t.match_type,
-            COALESCE(t.match_score, 100),
-            COALESCE(t.match_score, 100),
-            COALESCE(t.match_score, 100),
-            COALESCE(t.match_score, 100),
-            'canonical primary exact match from transaction table',
-            'primary-matching',
+            lead_id,
+            pos_id,
+            warehouse_number,
+            %s,
+            %s,
+            %s,
+            %s,
+            %s,
+            'deterministic 5-field exact identity',
+            'exact-sql',
             CURRENT_TIMESTAMP
-        FROM "{schema}"."transaction" t
-        WHERE t.lead_id IS NOT NULL
-          AND t.pos_id IS NOT NULL
-          AND lower(t.match_type) IN ({placeholders})
-          AND (t.match_score IS NULL OR t.match_score >= %s)
-          {warehouse_clause}
-        ORDER BY t.lead_id, t.fiscal_year, t.fiscal_period, COALESCE(t.week, 0), t.pos_id
-        {limit_clause}
+        FROM exact_pairs
+        ORDER BY lead_id, fiscal_year, fiscal_period, week, pos_id
         ON CONFLICT (match_run_id, lead_id, pos_id) DO NOTHING
         """,
         params,
@@ -1067,21 +1272,22 @@ def _run_exact_match(conn, job_started):
         SELECT COUNT(DISTINCT lead_id), COUNT(DISTINCT pos_id)
         FROM "{schema}"."match_decision_detail"
         WHERE match_run_id = %s
-          AND lower(match_type) = 'exact'
+          AND lower(match_type) IN ({_exact_type_placeholders(exact_match_types())})
         """,
-        (run_id,),
+        (run_id, *exact_match_types()),
     )
     exact_leads, exact_pos = cursor.fetchone()
     print(
-        f"Copied exact match decision rows from transaction: {inserted}; "
+        f"Inserted deterministic exact match decision rows: {inserted}; "
         f"exact_leads={exact_leads}; exact_pos={exact_pos}; "
         f"duration_seconds={time.monotonic() - job_started:.2f}"
     )
     if inserted == 0:
         print(
-            "No exact rows were copied from transaction. This is expected only if the "
-            "upstream exact update_cloud_sql stage has not populated transaction.match_type."
+            "No deterministic exact rows were found for this warehouse scope."
         )
+    if exact_pos:
+        write_back_match_results(conn, cursor, schema, run_id)
     conn.commit()
 
 
@@ -1092,9 +1298,18 @@ def _run_fuzzy_match(conn, job_started):
     limit = optional_positive_int_env("MATCH_LEAD_LIMIT") or 1000000
     rules = BUSINESS_RULES
     recall_gate = float(rules["candidate_retrieval"]["recall_gate_min_similarity"])
-    qualify_min = float(rules["confidence_bands"]["qualify_min_score"])
+    qualify_min = fuzzy_qualify_min_score(rules)
+    fuzzy_ceiling = fuzzy_max_score(rules)
+    artifact_threshold = fuzzy_artifact_score(rules)
+    fuzzy_type = fuzzy_match_type(rules)
+    manual_review_type = manual_review_match_type(rules)
     ambiguity_delta = float(rules["resolution"]["ambiguity_delta"])
     nearest_neighbor_limit = int(rules["candidate_retrieval"]["nearest_neighbor_limit"])
+    address_weight, business_weight = semantic_precision_weights(rules)
+    precision_weight_total = address_weight + business_weight
+    if precision_weight_total <= 0:
+        raise ValueError("Semantic precision score weights must sum to a positive value")
+    weight_formula = precision_score_formula(rules)
 
     print(f"Warehouse scope: {warehouse_scope_label()}")
     print(f"Match run: {run_id}")
@@ -1106,6 +1321,11 @@ def _run_fuzzy_match(conn, job_started):
         f"dry_run_match_row_limit: {DRY_RUN_MATCH_ROW_LIMIT}"
     )
     configure_hnsw_search(conn, cursor)
+    hnsw_indexes, _ = verify_hnsw_combined_indexes(cursor, schema)
+    print(
+        "Verified combined_embedding HNSW indexes: "
+        + ", ".join(f"{row[0]}.{row[1]}" for row in hnsw_indexes)
+    )
     if MATCH_STATEMENT_TIMEOUT_MS > 0:
         cursor.execute(f"SET statement_timeout = {MATCH_STATEMENT_TIMEOUT_MS}")
         print(f"statement_timeout set to {MATCH_STATEMENT_TIMEOUT_MS}ms")
@@ -1161,6 +1381,11 @@ def _run_fuzzy_match(conn, job_started):
         params.extend([
             recall_gate,
             nearest_neighbor_limit,
+            address_weight,
+            business_weight,
+            precision_weight_total,
+            fuzzy_ceiling,
+            qualify_min,
             qualify_min,
         ])
         query_started = time.monotonic()
@@ -1196,7 +1421,7 @@ def _run_fuzzy_match(conn, job_started):
                     LIMIT %s
                 ) s
             ),
-            scored AS (
+            raw_scored AS (
                 SELECT
                     lead_id,
                     pos_id,
@@ -1208,23 +1433,34 @@ def _run_fuzzy_match(conn, job_started):
                     full_address_score,
                     business_name_score,
                     (
-                        4 * full_address_score
-                        + 3 * business_name_score
-                    ) / 7 AS final_score,
-                    CASE
-                        WHEN (
-                            pos_fiscal_year > lead_fiscal_year
-                            OR (pos_fiscal_year = lead_fiscal_year AND pos_fiscal_period >= lead_fiscal_period)
-                        )
-                        THEN 'Closed - Match'
-                        ELSE 'Closed - Existing'
-                    END AS lifecycle_state
+                        %s * full_address_score
+                        + %s * business_name_score
+                    ) / %s AS raw_final_score
                 FROM candidates
+            ),
+            scored AS (
+                SELECT
+                    lead_id,
+                    pos_id,
+                    warehouse_number,
+                    pos_fiscal_year,
+                    pos_fiscal_period,
+                    pos_week,
+                    combined_field_score,
+                    full_address_score,
+                    business_name_score,
+                    raw_final_score,
+                    LEAST(
+                        %s,
+                        ROUND(raw_final_score::numeric, 2)::double precision
+                    ) AS final_score
+                FROM raw_scored
             ),
             ranked AS (
                 SELECT *
                 FROM scored
-                WHERE final_score >= %s
+                WHERE raw_final_score >= %s
+                  AND raw_final_score >= %s
             ),
             best_unique_pos AS (
                 SELECT *,
@@ -1239,10 +1475,36 @@ def _run_fuzzy_match(conn, job_started):
                 FROM ranked
             )
         """
+        if EXPLAIN_FUZZY_PLAN and batch_number == 1:
+            configure_hnsw_search(conn, cursor, local=True)
+            cursor.execute(
+                f"""
+                EXPLAIN (FORMAT TEXT)
+                {match_cte}
+                SELECT pos_id
+                FROM best_unique_pos
+                WHERE pos_rank = 1
+                ORDER BY final_score DESC, lead_id, pos_id
+                LIMIT 1
+                """,
+                params,
+            )
+            plan_text = "\n".join(row[0] for row in cursor.fetchall())
+            if "Seq Scan on pos_embeddings" in plan_text or "hnsw" not in plan_text.lower():
+                logger.warning(
+                    "Fuzzy top-k EXPLAIN did not show HNSW index usage; plan follows:\n%s",
+                    plan_text,
+                )
+            else:
+                print("Fuzzy top-k EXPLAIN shows HNSW index usage")
+
         insert_params = [*params]
         insert_params.extend([
             run_id,
             ambiguity_delta,
+            manual_review_type,
+            fuzzy_type,
+            weight_formula,
             EMBEDDING_MODEL,
         ])
         if DRY_RUN:
@@ -1254,41 +1516,81 @@ def _run_fuzzy_match(conn, job_started):
                 )
                 break
             insert_params.append(remaining_preview_rows)
+        insert_params.append(artifact_threshold)
+        configure_hnsw_search(conn, cursor, local=True)
         cursor.execute(
             f"""
-            {match_cte}
-            INSERT INTO "{schema}"."match_decision_detail" (
-                match_run_id, lead_id, pos_id, warehouse_number, match_type, final_score,
-                combined_field_score, full_address_score, business_name_score,
-                weight_formula, embedding_model, created_date
+            {match_cte},
+            inserted AS (
+                INSERT INTO "{schema}"."match_decision_detail" (
+                    match_run_id, lead_id, pos_id, warehouse_number, match_type, final_score,
+                    combined_field_score, full_address_score, business_name_score,
+                    weight_formula, embedding_model, created_date
+                )
+                SELECT
+                    %s,
+                    lead_id,
+                    pos_id,
+                    warehouse_number,
+                    CASE
+                        WHEN next_pos_score IS NOT NULL
+                         AND final_score - next_pos_score <= %s
+                        THEN %s
+                        ELSE %s
+                    END,
+                    final_score,
+                    combined_field_score,
+                    full_address_score,
+                    business_name_score,
+                    %s,
+                    %s,
+                    CURRENT_TIMESTAMP
+                FROM best_unique_pos
+                WHERE pos_rank = 1
+                ORDER BY final_score DESC, lead_id, pos_id
+                {"LIMIT %s" if DRY_RUN else ""}
+                ON CONFLICT (match_run_id, lead_id, pos_id) DO NOTHING
+                RETURNING lead_id, pos_id
+            ),
+            score_artifacts AS (
+                SELECT lead_id, pos_id, raw_final_score
+                FROM best_unique_pos
+                WHERE pos_rank = 1
+                  AND raw_final_score >= %s
+                ORDER BY raw_final_score DESC, lead_id, pos_id
+                LIMIT 20
             )
             SELECT
-                %s,
-                lead_id,
-                pos_id,
-                warehouse_number,
-                CASE
-                    WHEN next_pos_score IS NOT NULL
-                     AND final_score - next_pos_score <= %s
-                    THEN 'Manual Review'
-                    ELSE 'Fuzzy'
-                END,
-                final_score,
-                combined_field_score,
-                full_address_score,
-                business_name_score,
-                '(4*address + 3*name)/7',
-                %s,
-                CURRENT_TIMESTAMP
-            FROM best_unique_pos
-            WHERE pos_rank = 1
-            ORDER BY final_score DESC, lead_id, pos_id
-            {"LIMIT %s" if DRY_RUN else ""}
-            ON CONFLICT (match_run_id, lead_id, pos_id) DO NOTHING;
+                (SELECT COUNT(*) FROM inserted) AS inserted_count,
+                COALESCE(
+                    (
+                        SELECT json_agg(
+                            json_build_object(
+                                'lead_id', lead_id,
+                                'pos_id', pos_id,
+                                'raw_final_score', raw_final_score
+                            )
+                        )
+                        FROM score_artifacts
+                    ),
+                    '[]'::json
+                ) AS score_artifacts;
             """,
             insert_params,
         )
-        batch_inserted = cursor.rowcount
+        insert_summary = cursor.fetchone()
+        batch_inserted = int(insert_summary[0]) if insert_summary else 0
+        score_artifacts = insert_summary[1] if insert_summary else []
+        if isinstance(score_artifacts, str):
+            score_artifacts = json.loads(score_artifacts)
+        for artifact in score_artifacts:
+            logger.warning(
+                "Raw fuzzy score %.3f exceeded fuzzy ceiling for lead_id=%s pos_id=%s; clamping to %.2f",
+                float(artifact["raw_final_score"]),
+                artifact["lead_id"],
+                artifact["pos_id"],
+                fuzzy_ceiling,
+            )
         conn.commit()
         inserted += batch_inserted
         query_duration = time.monotonic() - query_started
@@ -1354,6 +1656,10 @@ def _ensure_indexes(conn, job_started):
     schema = schema_name()
     dimension = EMBEDDING_DIMENSION
     print(f"Schema: {schema}")
+    print(
+        f"HNSW build params: m={HNSW_M}; ef_construction={HNSW_EF_CONSTRUCTION}; "
+        f"maintenance_work_mem={HNSW_MAINTENANCE_WORK_MEM}"
+    )
 
     def execute(label, sql, params=None):
         print(f"start: {label}")
@@ -1367,6 +1673,14 @@ def _ensure_indexes(conn, job_started):
         return cursor.fetchall()
 
     execute("create pgvector extension", "CREATE EXTENSION IF NOT EXISTS vector")
+    if not re.match(r"^\d+(B|kB|MB|GB|TB)$", HNSW_MAINTENANCE_WORK_MEM):
+        raise RuntimeError(
+            "HNSW_MAINTENANCE_WORK_MEM must be a PostgreSQL memory value like 512MB"
+        )
+    execute(
+        "set HNSW maintenance_work_mem",
+        f"SET maintenance_work_mem = '{HNSW_MAINTENANCE_WORK_MEM}'",
+    )
 
     required_tables = ("leads_embeddings", "pos_embeddings")
     vector_columns = ("combined_embedding", "address_embedding", "name_embedding")
@@ -1407,6 +1721,27 @@ def _ensure_indexes(conn, job_started):
             f"drop invalid index {index_name}",
             f"DROP INDEX CONCURRENTLY IF EXISTS {qualified_name(schema, index_name)}",
         )
+    existing_hnsw_indexes = fetchall(
+        """
+        SELECT indexname, indexdef
+        FROM pg_indexes
+        WHERE schemaname = %s
+          AND indexname IN (
+            'idx_leads_embeddings_combined_hnsw',
+            'idx_pos_embeddings_combined_hnsw'
+          )
+        """,
+        (schema,),
+    )
+    for index_name, indexdef in existing_hnsw_indexes:
+        indexdef_lower = indexdef.lower()
+        expected_m = f"m='{HNSW_M}'"
+        expected_ef = f"ef_construction='{HNSW_EF_CONSTRUCTION}'"
+        if expected_m not in indexdef_lower or expected_ef not in indexdef_lower:
+            execute(
+                f"drop HNSW index with stale params {index_name}",
+                f"DROP INDEX CONCURRENTLY IF EXISTS {qualified_name(schema, index_name)}",
+            )
 
     for table in required_tables:
         current_types = {
@@ -1485,7 +1820,7 @@ def _ensure_indexes(conn, job_started):
         CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_leads_embeddings_combined_hnsw
         ON {qualified_name(schema, "leads_embeddings")}
         USING hnsw (combined_embedding vector_cosine_ops)
-        WITH (m = 16, ef_construction = 128)
+        WITH (m = {HNSW_M}, ef_construction = {HNSW_EF_CONSTRUCTION})
         """,
     )
     execute(
@@ -1494,7 +1829,7 @@ def _ensure_indexes(conn, job_started):
         CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_pos_embeddings_combined_hnsw
         ON {qualified_name(schema, "pos_embeddings")}
         USING hnsw (combined_embedding vector_cosine_ops)
-        WITH (m = 16, ef_construction = 128)
+        WITH (m = {HNSW_M}, ef_construction = {HNSW_EF_CONSTRUCTION})
         """,
     )
 

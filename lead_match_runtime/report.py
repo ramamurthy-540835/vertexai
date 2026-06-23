@@ -6,7 +6,16 @@ from pathlib import Path
 
 from google.cloud import storage
 
+from lead_match_runtime.business_rules import (
+    exact_lifecycle_state,
+    fuzzy_match_types,
+    fuzzy_max_score,
+    fuzzy_qualify_min_score,
+    lifecycle_state_for_match_type,
+    normalize_fuzzy_final_score,
+)
 from lead_match_runtime.job_runner import (
+    BUSINESS_RULES,
     EMBEDDING_DIMENSION,
     EMBEDDING_MODEL,
     connect,
@@ -14,6 +23,9 @@ from lead_match_runtime.job_runner import (
     warehouse_scope,
     warehouse_scope_label,
 )
+
+
+FUZZY_MATCH_TYPES = set(fuzzy_match_types(BUSINESS_RULES))
 
 
 def _scope_clause(alias: str, params: list) -> str:
@@ -94,74 +106,71 @@ def _fetch_match_rows(cursor, schema: str, match_run_id: str) -> list[dict]:
             JOIN "{schema}"."transaction" t ON t.pos_id = m.pos_id
             WHERE m.match_run_id = %s
               {clause}
-        ),
-        classified AS (
-            SELECT
-                *,
-                CASE
-                    WHEN match_type = 'Manual Review' THEN 'Potential'
-                    WHEN (
-                        pos_fiscal_year < lead_fiscal_year
-                        OR (pos_fiscal_year = lead_fiscal_year AND pos_fiscal_period < lead_fiscal_period)
-                        OR (
-                            pos_fiscal_year = lead_fiscal_year
-                            AND pos_fiscal_period = lead_fiscal_period
-                            AND pos_week < lead_week
-                        )
-                    ) THEN 'Closed - Existing'
-                    ELSE 'Closed - Match'
-                END AS lifecycle_state
-            FROM base
-        ),
-        ranked AS (
-            SELECT
-                *,
-                ROW_NUMBER() OVER (
-                    PARTITION BY lead_id
-                    ORDER BY pos_fiscal_year, pos_fiscal_period, pos_week, pos_id
-                ) AS lead_transaction_rank
-            FROM classified
-            WHERE lifecycle_state = 'Closed - Match'
         )
         SELECT
-            c.match_run_id,
-            c.lead_id,
-            c.pos_id,
-            c.warehouse_number,
-            c.match_type,
-            c.lifecycle_state,
-            CASE
-                WHEN c.lifecycle_state = 'Closed - Match'
-                 AND r.lead_transaction_rank = 1
-                THEN true
-                ELSE false
-            END AS primary_transaction,
-            c.final_score,
-            c.combined_field_score,
-            c.full_address_score,
-            c.business_name_score,
-            c.embedding_model,
-            c.lead_fiscal_year,
-            c.lead_fiscal_period,
-            c.lead_week,
-            c.pos_fiscal_year,
-            c.pos_fiscal_period,
-            c.pos_week,
-            c.lead_business_name,
-            c.pos_business_name,
-            c.order_amount,
-            c.created_date
-        FROM classified c
-        LEFT JOIN ranked r
-          ON r.match_run_id = c.match_run_id
-         AND r.lead_id = c.lead_id
-         AND r.pos_id = c.pos_id
-        ORDER BY c.final_score DESC, c.lead_id, c.pos_id
+            match_run_id,
+            lead_id,
+            pos_id,
+            warehouse_number,
+            match_type,
+            final_score,
+            combined_field_score,
+            full_address_score,
+            business_name_score,
+            embedding_model,
+            lead_fiscal_year,
+            lead_fiscal_period,
+            lead_week,
+            pos_fiscal_year,
+            pos_fiscal_period,
+            pos_week,
+            lead_business_name,
+            pos_business_name,
+            order_amount,
+            created_date
+        FROM base
+        ORDER BY final_score DESC, lead_id, pos_id
         """,
         params,
     )
     columns = [desc[0] for desc in cursor.description]
-    return [dict(zip(columns, row)) for row in cursor.fetchall()]
+    rows = [dict(zip(columns, row)) for row in cursor.fetchall()]
+    for row in rows:
+        row["primary_transaction"] = False
+        match_type = str(row.get("match_type") or "").strip().lower()
+        if match_type in FUZZY_MATCH_TYPES and row.get("final_score") is not None:
+            normalized = normalize_fuzzy_final_score(
+                row["final_score"],
+                config=BUSINESS_RULES,
+                lead_id=row.get("lead_id"),
+                pos_id=row.get("pos_id"),
+                reject_below_floor=False,
+            )
+            if normalized is not None:
+                row["final_score"] = normalized
+        row["lifecycle_state"] = lifecycle_state_for_match_type(
+            row.get("match_type"),
+            row.get("final_score"),
+            BUSINESS_RULES,
+        )
+    closed_state = exact_lifecycle_state(BUSINESS_RULES)
+    closed_rows_by_lead: dict = {}
+    for row in rows:
+        if row.get("lifecycle_state") == closed_state:
+            closed_rows_by_lead.setdefault(row.get("lead_id"), []).append(row)
+    for lead_rows in closed_rows_by_lead.values():
+        ordered = sorted(
+            lead_rows,
+            key=lambda row: (
+                row.get("pos_fiscal_year") or 0,
+                row.get("pos_fiscal_period") or 0,
+                row.get("pos_week") or 0,
+                row.get("pos_id") or "",
+            ),
+        )
+        if ordered:
+            ordered[0]["primary_transaction"] = True
+    return rows
 
 
 def _write_csv(path: Path, rows: list[dict]) -> None:
@@ -251,6 +260,10 @@ def run_report() -> dict:
             "match_type_counts": {},
             "lifecycle_state_counts": {},
             "primary_transaction_count": 0,
+            "fuzzy_score_band": {
+                "floor": fuzzy_qualify_min_score(BUSINESS_RULES),
+                "ceiling": fuzzy_max_score(BUSINESS_RULES),
+            },
         }
         for row in rows:
             summary["match_type_counts"][row["match_type"]] = (
