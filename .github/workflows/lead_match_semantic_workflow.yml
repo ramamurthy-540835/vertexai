@@ -66,11 +66,6 @@ on:
         required: false
         default: ""
         type: string
-      exact_handoff_uri:
-        description: "Optional gs:// exact-match handoff CSV from primary_matching.py"
-        required: false
-        default: ""
-        type: string
 
 jobs:
   trigger:
@@ -165,16 +160,15 @@ jobs:
         run: |
           set -euo pipefail
           gcloud config set project "${PROJECT_ID}"
-          BASE_ENV_VARS="DB_NAME=postgres,DB_SCHEMA=leadmgmt,DB_USER=postgres,VERTEX_PROJECT_ID=${PROJECT_ID},GOOGLE_CLOUD_PROJECT=${PROJECT_ID},VERTEX_LOCATION=${REGION},DEFAULT_FISCAL_YEAR=2026,DEFAULT_FISCAL_PERIOD=10,MATCH_MIN_SCORE=78,CLOUDSQL_CONNECTION_NAME=${CLOUDSQL_CONNECTION_NAME},CLOUDSQL_SOCKET_DIR=/cloudsql,ALLOW_CLIENT_GCP=false,ALLOW_PRODUCTION=false,EXPECTED_PROJECT_ID=${PROJECT_ID},WAREHOUSE_SCOPE=ALL"
-          PERF_ENV_VARS="EMBEDDING_BATCH_SIZE=100,EMBEDDING_MAX_WORKERS=3,EMBEDDING_BATCH_WORKERS=3,EMBEDDING_MAX_RETRIES=6,EMBEDDING_REQUEST_LOG_EVERY=100,MATCH_BATCH_SIZE=100,MATCH_STATEMENT_TIMEOUT_MS=900000,HNSW_EF_SEARCH=100"
+          BASE_ENV_VARS="DB_NAME=postgres,DB_SCHEMA=leadmgmt,DB_USER=postgres,VERTEX_PROJECT_ID=${PROJECT_ID},GOOGLE_CLOUD_PROJECT=${PROJECT_ID},VERTEX_LOCATION=${REGION},DEFAULT_FISCAL_YEAR=2026,DEFAULT_FISCAL_PERIOD=10,MATCH_MIN_SCORE=70,CLOUDSQL_CONNECTION_NAME=${CLOUDSQL_CONNECTION_NAME},CLOUDSQL_SOCKET_DIR=/cloudsql,ALLOW_CLIENT_GCP=false,ALLOW_PRODUCTION=false,EXPECTED_PROJECT_ID=${PROJECT_ID},WAREHOUSE_SCOPE=ALL"
+          PERF_ENV_VARS="EMBEDDING_BATCH_SIZE=50,EMBEDDING_MAX_TEXTS_PER_REQUEST=50,EMBEDDING_MAX_WORKERS=2,EMBEDDING_BATCH_WORKERS=1,EMBEDDING_MAX_RETRIES=6,EMBEDDING_RETRY_BASE_DELAY=2.0,EMBEDDING_RETRY_MAX_DELAY=120,EMBEDDING_REQUEST_LOG_EVERY=100,VERTEX_TIMEOUT_SECONDS=300,MATCH_BATCH_SIZE=100,MATCH_STATEMENT_TIMEOUT_MS=900000,HNSW_M=32,HNSW_EF_CONSTRUCTION=128,HNSW_EF_SEARCH=100,HNSW_MAINTENANCE_WORK_MEM=512MB"
           ENV_VARS="${BASE_ENV_VARS},${PERF_ENV_VARS}"
           for JOB in \
             lead-match-ensure-indexes \
             lead-match-exact-match \
             lead-match-lead-embeddings \
             lead-match-pos-embeddings \
-            lead-match-fuzzy-match \
-            lead-match-report; do
+            lead-match-fuzzy-match; do
             if ! gcloud run jobs describe "${JOB}" --project="${PROJECT_ID}" --region="${REGION}" >/dev/null 2>&1; then
               echo "Cloud Run Job ${JOB} is missing; creating it with DB connector and secrets."
               gcloud run jobs create "${JOB}" \
@@ -214,7 +208,6 @@ jobs:
           RAW_WAREHOUSE: ${{ github.event.inputs.warehouse }}
           RAW_DRY_RUN: ${{ github.event.inputs.dry_run }}
           RAW_RUN_LIMITS: ${{ github.event.inputs.run_limits }}
-          RAW_EXACT_HANDOFF_URI: ${{ github.event.inputs.exact_handoff_uri }}
         run: |
           set -euo pipefail
           WAREHOUSE="$(printf '%s' "${RAW_WAREHOUSE}" | tr -d '[:space:]')"
@@ -275,27 +268,12 @@ jobs:
               esac
             done
           fi
-          EXACT_HANDOFF_URI="$(printf '%s' "${RAW_EXACT_HANDOFF_URI:-}" | tr -d '[:space:]')"
-          if [[ -n "${EXACT_HANDOFF_URI}" && "${EXACT_HANDOFF_URI}" != gs://* ]]; then
-            echo "Invalid exact_handoff_uri: ${EXACT_HANDOFF_URI}. Expected gs://bucket/object.csv" >&2
-            exit 1
-          fi
           MATCH_RUN_ID="github-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${WAREHOUSE_LABEL}"
-          FINAL_REPORT_PREFIX="reports/lead_match/${PROJECT_ID}/${WAREHOUSE_LABEL}/${MATCH_RUN_ID}"
-          PAYLOAD="{\"project\":\"${PROJECT_ID}\",\"region\":\"${REGION}\",\"warehouse\":\"${WAREHOUSE_LABEL}\",\"matchRunId\":\"${MATCH_RUN_ID}\",\"reportBucket\":\"${BUCKET_NAME}\",\"reportPrefix\":\"${FINAL_REPORT_PREFIX}\",\"dryRun\":\"${DRY_RUN}\",\"exactHandoffUri\":\"${EXACT_HANDOFF_URI}\",\"leadEmbeddingLimit\":\"${LEAD_EMBEDDING_LIMIT}\",\"posEmbeddingLimit\":\"${POS_EMBEDDING_LIMIT}\",\"matchLeadLimit\":\"${MATCH_LEAD_LIMIT}\"}"
+          PAYLOAD="{\"project\":\"${PROJECT_ID}\",\"region\":\"${REGION}\",\"warehouse\":\"${WAREHOUSE_LABEL}\",\"matchRunId\":\"${MATCH_RUN_ID}\",\"dryRun\":\"${DRY_RUN}\",\"leadEmbeddingLimit\":\"${LEAD_EMBEDDING_LIMIT}\",\"posEmbeddingLimit\":\"${POS_EMBEDDING_LIMIT}\",\"matchLeadLimit\":\"${MATCH_LEAD_LIMIT}\"}"
           HANDOFF_PREFIX="preflight/lead_match/${PROJECT_ID}/${WAREHOUSE_LABEL}"
           READY_URI="gs://${BUCKET_NAME}/${HANDOFF_PREFIX}/READY"
           PREFLIGHT_REPORT_URI="gs://${BUCKET_NAME}/${HANDOFF_PREFIX}/report.md"
           PREFLIGHT_RESULT_URI="gs://${BUCKET_NAME}/${HANDOFF_PREFIX}/result.json"
-          if [[ "${DRY_RUN}" == "true" ]]; then
-            FINAL_SUMMARY_URI="gs://${BUCKET_NAME}/${FINAL_REPORT_PREFIX}/dryrun_summary.json"
-            FINAL_MATCHES_URI="gs://${BUCKET_NAME}/${FINAL_REPORT_PREFIX}/dryrun_matches.csv"
-            FINAL_REPORT_URI="gs://${BUCKET_NAME}/${FINAL_REPORT_PREFIX}/dryrun_report.md"
-          else
-            FINAL_SUMMARY_URI="gs://${BUCKET_NAME}/${FINAL_REPORT_PREFIX}/summary.json"
-            FINAL_MATCHES_URI="gs://${BUCKET_NAME}/${FINAL_REPORT_PREFIX}/matches.csv"
-            FINAL_REPORT_URI="gs://${BUCKET_NAME}/${FINAL_REPORT_PREFIX}/report.md"
-          fi
           echo "PAYLOAD=${PAYLOAD}" >> "$GITHUB_ENV"
           echo "MATCH_RUN_ID=${MATCH_RUN_ID}" >> "$GITHUB_ENV"
           echo "WAREHOUSE_LABEL=${WAREHOUSE_LABEL}" >> "$GITHUB_ENV"
@@ -303,12 +281,7 @@ jobs:
           echo "READY_URI=${READY_URI}" >> "$GITHUB_ENV"
           echo "PREFLIGHT_REPORT_URI=${PREFLIGHT_REPORT_URI}" >> "$GITHUB_ENV"
           echo "PREFLIGHT_RESULT_URI=${PREFLIGHT_RESULT_URI}" >> "$GITHUB_ENV"
-          echo "FINAL_REPORT_PREFIX=${FINAL_REPORT_PREFIX}" >> "$GITHUB_ENV"
-          echo "FINAL_SUMMARY_URI=${FINAL_SUMMARY_URI}" >> "$GITHUB_ENV"
-          echo "FINAL_MATCHES_URI=${FINAL_MATCHES_URI}" >> "$GITHUB_ENV"
-          echo "FINAL_REPORT_URI=${FINAL_REPORT_URI}" >> "$GITHUB_ENV"
           echo "DRY_RUN=${DRY_RUN}" >> "$GITHUB_ENV"
-          echo "EXACT_HANDOFF_URI=${EXACT_HANDOFF_URI}" >> "$GITHUB_ENV"
           echo "LEAD_EMBEDDING_LIMIT=${LEAD_EMBEDDING_LIMIT}" >> "$GITHUB_ENV"
           echo "POS_EMBEDDING_LIMIT=${POS_EMBEDDING_LIMIT}" >> "$GITHUB_ENV"
           echo "MATCH_LEAD_LIMIT=${MATCH_LEAD_LIMIT}" >> "$GITHUB_ENV"
@@ -473,19 +446,18 @@ jobs:
             echo "- Runtime Cloud Build ID: \`${RUNTIME_BUILD_ID:-not-run}\`"
             echo "- Warehouse: \`${WAREHOUSE_LABEL:-unknown}\`"
             echo "- Dry run: \`${DRY_RUN:-unknown}\`"
-            echo "- Exact handoff URI: \`${EXACT_HANDOFF_URI:-none}\`"
             echo "- Lead embedding limit: \`${LEAD_EMBEDDING_LIMIT:-all}\`"
             echo "- POS embedding limit: \`${POS_EMBEDDING_LIMIT:-all}\`"
             echo "- Match lead limit: \`${MATCH_LEAD_LIMIT:-all}\`"
             echo "- READY URI: \`${READY_URI:-unknown}\`"
             echo "- Preflight report URI: \`${PREFLIGHT_REPORT_URI:-unknown}\`"
             echo "- Preflight result URI: \`${PREFLIGHT_RESULT_URI:-unknown}\`"
-            echo "- Final summary URI: \`${FINAL_SUMMARY_URI:-unknown}\`"
-            echo "- Final matches URI: \`${FINAL_MATCHES_URI:-unknown}\`"
-            echo "- Final report URI: \`${FINAL_REPORT_URI:-unknown}\`"
-            echo "- Payload: \`${PAYLOAD:-unknown}\`"
             echo "- Match run ID: \`${MATCH_RUN_ID:-unknown}\`"
             echo "- Execution: \`${EXECUTION_NAME:-not-started}\`"
+            echo "- Payload: \`${PAYLOAD:-unknown}\`"
+            echo ""
+            echo "**Next**: Run lead_match_analysis.yml to generate reports and analysis."
+            echo ""
             echo "- Wait: \`${{ github.event.inputs.wait_for_completion }}\`"
             echo "- Deploy runtime: \`${{ github.event.inputs.deploy_runtime }}\`"
             echo "- Update Cloud Run jobs: \`${{ github.event.inputs.update_cloud_run_jobs }}\`"

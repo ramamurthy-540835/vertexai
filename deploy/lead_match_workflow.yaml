@@ -11,12 +11,8 @@ main:
           - posJob: ${default(map.get(args, "posJob"), "lead-match-pos-embeddings")}
           - matchJob: ${default(map.get(args, "matchJob"), "lead-match-fuzzy-match")}
           - indexJob: ${default(map.get(args, "indexJob"), "lead-match-ensure-indexes")}
-          - reportJob: ${default(map.get(args, "reportJob"), "lead-match-report")}
           - matchRunId: ${default(map.get(args, "matchRunId"), "")}
-          - reportBucket: ${default(map.get(args, "reportBucket"), "lead-match-ctoteam")}
-          - reportPrefix: ${default(map.get(args, "reportPrefix"), "reports/lead_match/" + project + "/" + warehouse + "/" + matchRunId)}
           - dryRun: ${default(map.get(args, "dryRun"), "false")}
-          - exactHandoffUri: ${default(map.get(args, "exactHandoffUri"), "")}
           - leadEmbeddingLimit: ${default(map.get(args, "leadEmbeddingLimit"), "")}
           - posEmbeddingLimit: ${default(map.get(args, "posEmbeddingLimit"), "")}
           - matchLeadLimit: ${default(map.get(args, "matchLeadLimit"), "")}
@@ -41,8 +37,6 @@ main:
               value: ${matchRunId}
             - name: DRY_RUN
               value: ${dryRun}
-            - name: EXACT_HANDOFF_URI
-              value: ${exactHandoffUri}
             - name: MATCH_LEAD_LIMIT
               value: ${matchLeadLimit}
         result: exactResult
@@ -131,37 +125,12 @@ main:
               value: ${matchLeadLimit}
         result: matchResult
 
-    - runReport:
-        call: runCloudRunJob
-        args:
-          project: ${project}
-          region: ${region}
-          jobName: ${reportJob}
-          containerArgs: []
-          envVars:
-            - name: WAREHOUSE
-              value: ${warehouse}
-            - name: WAREHOUSE_SCOPE
-              value: ${warehouse}
-            - name: MATCH_RUN_ID
-              value: ${matchRunId}
-            - name: REPORT_BUCKET
-              value: ${reportBucket}
-            - name: REPORT_PREFIX
-              value: ${reportPrefix}
-            - name: DRY_RUN
-              value: ${dryRun}
-        result: reportResult
-
     - done:
         return:
           status: "success"
           warehouse: ${warehouse}
           matchRunId: ${matchRunId}
-          reportBucket: ${reportBucket}
-          reportPrefix: ${reportPrefix}
           dryRun: ${dryRun}
-          exactHandoffUri: ${exactHandoffUri}
           leadEmbeddingLimit: ${leadEmbeddingLimit}
           posEmbeddingLimit: ${posEmbeddingLimit}
           matchLeadLimit: ${matchLeadLimit}
@@ -170,7 +139,6 @@ main:
           pos: ${posResult}
           indexes: ${indexResult}
           match: ${matchResult}
-          report: ${reportResult}
 
 runCloudRunJob:
   params: [project, region, jobName, envVars, containerArgs]
