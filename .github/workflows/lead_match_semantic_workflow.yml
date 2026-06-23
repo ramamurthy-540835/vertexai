@@ -231,7 +231,7 @@ jobs:
           fi
           normalize_limit() {
             local raw="$1"
-            raw="$(printf '%s' "${raw}" | tr -d '[:space:]')"
+            raw="$(printf '%s' "${raw}" | tr -d '[:space:]' | sed 's/[;]*$//')"
             if [[ -z "${raw}" || "${raw,,}" == "all" ]]; then
               printf ''
               return
@@ -250,7 +250,7 @@ jobs:
           LEAD_EMBEDDING_LIMIT=""
           POS_EMBEDDING_LIMIT=""
           MATCH_LEAD_LIMIT=""
-          RUN_LIMITS="$(printf '%s' "${RAW_RUN_LIMITS:-}" | tr -d '[:space:]')"
+          RUN_LIMITS="$(printf '%s' "${RAW_RUN_LIMITS:-}" | tr -d '[:space:]' | sed 's/[;]*$//')"
           if [[ -n "${RUN_LIMITS}" && "${RUN_LIMITS,,}" != "all" ]]; then
             IFS=',' read -ra LIMIT_PARTS <<< "${RUN_LIMITS}"
             for part in "${LIMIT_PARTS[@]}"; do
