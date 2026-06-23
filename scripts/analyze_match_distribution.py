@@ -214,9 +214,10 @@ def compute_distribution_facts(df: pd.DataFrame, rules: dict) -> dict:
     # Build histogram
     hist, bin_edges = pd.cut(scores, bins=range(70, 102, 1), right=False, retbins=True)
     hist_counts = hist.value_counts().sort_index()
+    histogram = {str(interval): int(count) for interval, count in hist_counts.items()}
 
     # Band counts
-    band_counts = df["band"].value_counts().to_dict()
+    band_counts = {str(band): int(count) for band, count in df["band"].value_counts().items()}
 
     # Statistics
     stats = {
@@ -229,15 +230,15 @@ def compute_distribution_facts(df: pd.DataFrame, rules: dict) -> dict:
 
     # Peak bin
     peak_bin = hist_counts.idxmax() if len(hist_counts) > 0 else None
-    peak_value = hist_counts.max() if len(hist_counts) > 0 else 0
+    peak_value = int(hist_counts.max()) if len(hist_counts) > 0 else 0
 
     # Tail volume (70-84.999)
     tail_mask = (scores >= 70) & (scores < 85)
-    tail_volume = tail_mask.sum()
+    tail_volume = int(tail_mask.sum())
 
     # Review workload (Potential + Manual Review = 70-89.999)
     review_mask = (scores >= 70) & (scores < 90)
-    review_workload = review_mask.sum()
+    review_workload = int(review_mask.sum())
 
     # Artifact check: any single bin with >15% of total or single-value spike
     artifact_flag = False
@@ -246,10 +247,10 @@ def compute_distribution_facts(df: pd.DataFrame, rules: dict) -> dict:
 
     facts = {
         "total_rows": len(df),
-        "histogram": hist_counts.to_dict(),
+        "histogram": histogram,
         "band_counts": band_counts,
         "statistics": stats,
-        "peak_bin": peak_bin,
+        "peak_bin": str(peak_bin) if peak_bin is not None else None,
         "peak_count": peak_value,
         "peak_percentage": 100 * peak_value / len(df),
         "tail_volume": tail_volume,
