@@ -103,6 +103,40 @@ def _extract_recall_gate(rules: dict) -> float:
     return float(rules.get("candidate_retrieval", {}).get("recall_gate_min_similarity", 65))
 
 
+def _band_for_score(score: float, rules: dict) -> str:
+    """Return the configured confidence band label for a final score."""
+    decision_rules = rules.get("decision_rules", {})
+    for band in decision_rules.get("fuzzy_score_bands", []):
+        min_score = float(band.get("min_score", float("-inf")))
+        max_score = float(band.get("max_score", float("inf")))
+        if min_score <= score <= max_score:
+            return str(band.get("label") or band.get("name") or "Unknown")
+
+    exact_score = float(decision_rules.get("exact_score", 100))
+    if score >= exact_score:
+        return str(decision_rules.get("exact_label", "Exact / Complete"))
+
+    below_floor = decision_rules.get("below_floor", {})
+    return str(below_floor.get("label", "No Match"))
+
+
+def ensure_band_column(df: pd.DataFrame, rules: dict) -> pd.DataFrame:
+    """Normalize current and legacy report CSVs to include a band column."""
+    if "band" in df.columns:
+        return df
+
+    df = df.copy()
+    if "confidence_band" in df.columns:
+        df["band"] = df["confidence_band"].fillna("Unknown")
+        return df
+
+    if "final_score" not in df.columns:
+        raise KeyError("matches.csv must include final_score or an explicit band column")
+
+    df["band"] = df["final_score"].apply(lambda value: _band_for_score(float(value), rules))
+    return df
+
+
 def read_matches_csv_from_gcs(bucket_name: str, gcs_path: str) -> pd.DataFrame:
     """Read matches.csv from GCS."""
     client = storage.Client()
@@ -172,8 +206,10 @@ def compute_distribution_facts(df: pd.DataFrame, rules: dict) -> dict:
     Returns:
         Dict with histogram, peak, tail volume, review workload, artifact check.
     """
-    scores = df["final_score"].values
-    bands_config = rules.get("decision_rules", {}).get("fuzzy_score_bands", [])
+    df = ensure_band_column(df, rules)
+    scores = pd.to_numeric(df["final_score"], errors="coerce").dropna()
+    if scores.empty:
+        raise ValueError("matches.csv does not contain any numeric final_score values")
 
     # Build histogram
     hist, bin_edges = pd.cut(scores, bins=range(70, 102, 1), right=False, retbins=True)
@@ -538,6 +574,7 @@ def main():
         sys.exit(1)
 
     logger.info(f"Loaded {len(df)} rows from matches.csv")
+    df = ensure_band_column(df, rules)
 
     # Compute distribution facts
     logger.info("Computing distribution facts...")
