@@ -355,7 +355,7 @@ def vector_literal(values):
 
 
 def is_retryable_embedding_error(exc):
-    error = str(exc).lower()
+    error = f"{exc.__class__.__module__}.{exc.__class__.__name__}: {exc}".lower()
     retryable_markers = (
         "429",
         "500",
@@ -365,6 +365,9 @@ def is_retryable_embedding_error(exc):
         "deadline",
         "temporarily unavailable",
         "timeout",
+        "timed out",
+        "read operation timed out",
+        "readtimeout",
         "connection reset",
         "resource exhausted",
         "quota",

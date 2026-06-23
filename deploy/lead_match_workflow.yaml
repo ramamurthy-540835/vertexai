@@ -41,52 +41,45 @@ main:
               value: ${matchLeadLimit}
         result: exactResult
 
-    - runEmbeddingJobs:
-        parallel:
-          shared: [leadResult, posResult]
-          branches:
-            - leadEmbeddings:
-                steps:
-                  - runLeadEmbeddings:
-                      call: runCloudRunJob
-                      args:
-                        project: ${project}
-                        region: ${region}
-                        jobName: ${leadJob}
-                        containerArgs: []
-                        envVars:
-                          - name: WAREHOUSE
-                            value: ${warehouse}
-                          - name: WAREHOUSE_SCOPE
-                            value: ${warehouse}
-                          - name: MATCH_RUN_ID
-                            value: ${matchRunId}
-                          - name: DRY_RUN
-                            value: ${dryRun}
-                          - name: LEAD_EMBEDDING_LIMIT
-                            value: ${leadEmbeddingLimit}
-                      result: leadResult
-            - posEmbeddings:
-                steps:
-                  - runPosEmbeddings:
-                      call: runCloudRunJob
-                      args:
-                        project: ${project}
-                        region: ${region}
-                        jobName: ${posJob}
-                        containerArgs: []
-                        envVars:
-                          - name: WAREHOUSE
-                            value: ${warehouse}
-                          - name: WAREHOUSE_SCOPE
-                            value: ${warehouse}
-                          - name: MATCH_RUN_ID
-                            value: ${matchRunId}
-                          - name: DRY_RUN
-                            value: ${dryRun}
-                          - name: POS_EMBEDDING_LIMIT
-                            value: ${posEmbeddingLimit}
-                      result: posResult
+    - runLeadEmbeddings:
+        call: runCloudRunJob
+        args:
+          project: ${project}
+          region: ${region}
+          jobName: ${leadJob}
+          containerArgs: []
+          envVars:
+            - name: WAREHOUSE
+              value: ${warehouse}
+            - name: WAREHOUSE_SCOPE
+              value: ${warehouse}
+            - name: MATCH_RUN_ID
+              value: ${matchRunId}
+            - name: DRY_RUN
+              value: ${dryRun}
+            - name: LEAD_EMBEDDING_LIMIT
+              value: ${leadEmbeddingLimit}
+        result: leadResult
+
+    - runPosEmbeddings:
+        call: runCloudRunJob
+        args:
+          project: ${project}
+          region: ${region}
+          jobName: ${posJob}
+          containerArgs: []
+          envVars:
+            - name: WAREHOUSE
+              value: ${warehouse}
+            - name: WAREHOUSE_SCOPE
+              value: ${warehouse}
+            - name: MATCH_RUN_ID
+              value: ${matchRunId}
+            - name: DRY_RUN
+              value: ${dryRun}
+            - name: POS_EMBEDDING_LIMIT
+              value: ${posEmbeddingLimit}
+        result: posResult
 
     - runEnsureIndexes:
         call: runCloudRunJob
