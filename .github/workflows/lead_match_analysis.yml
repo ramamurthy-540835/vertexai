@@ -77,6 +77,8 @@ jobs:
       GENERATE_ANALYSIS: ${{ github.event.inputs.generate_analysis || 'true' }}
       VALIDATE_CLOUDSQL: ${{ github.event.inputs.validate_cloudsql || 'true' }}
       WAIT_FOR_READY: ${{ github.event.inputs.wait_for_ready || 'true' }}
+      MATCH_ANALYSIS_DB_SECRET: match-analysis-db-connection
+      MATCH_ANALYSIS_DB_CONNECTION_FALLBACK: ${{ secrets.MATCH_ANALYSIS_DB_CONNECTION }}
 
     steps:
       - name: Checkout
@@ -187,15 +189,42 @@ jobs:
         if: env.GENERATE_ANALYSIS == 'true'
         run: |
           set -euo pipefail
-          python scripts/analyze_match_distribution.py \
-            --bucket "${BUCKET_NAME}" \
-            --project "${PROJECT_ID}" \
-            --warehouse "${WAREHOUSE}" \
-            --run-id "${RUN_ID}" \
-            --rules-json lead_match_runtime/lead_to_pos_match_rules.json \
-            --analysis-run-id "${GITHUB_RUN_ID}" \
-            --analysis-run-attempt "${GITHUB_RUN_ATTEMPT}" \
-            --analysis-workflow "${GITHUB_WORKFLOW}"
+          run_analysis() {
+            python scripts/analyze_match_distribution.py \
+              --bucket "${BUCKET_NAME}" \
+              --project "${PROJECT_ID}" \
+              --warehouse "${WAREHOUSE}" \
+              --run-id "${RUN_ID}" \
+              --rules-json lead_match_runtime/lead_to_pos_match_rules.json \
+              --analysis-run-id "${GITHUB_RUN_ID}" \
+              --analysis-run-attempt "${GITHUB_RUN_ATTEMPT}" \
+              --analysis-workflow "${GITHUB_WORKFLOW}" \
+              "$@"
+          }
+
+          set +e
+          run_analysis
+          analysis_rc=$?
+          set -e
+          if [[ "${analysis_rc}" -eq 0 ]]; then
+            exit 0
+          fi
+
+          echo "Cloud SQL connector route failed; retrying with PostgreSQL fallback connection."
+          set +e
+          MATCH_ANALYSIS_DB_CONNECTION="$(gcloud secrets versions access latest \
+            --project="${PROJECT_ID}" \
+            --secret="${MATCH_ANALYSIS_DB_SECRET}" 2>/dev/null)"
+          secret_rc=$?
+          set -e
+          if [[ "${secret_rc}" -ne 0 || -z "${MATCH_ANALYSIS_DB_CONNECTION}" ]]; then
+            MATCH_ANALYSIS_DB_CONNECTION="${MATCH_ANALYSIS_DB_CONNECTION_FALLBACK:-}"
+          fi
+          if [[ -z "${MATCH_ANALYSIS_DB_CONNECTION}" ]]; then
+            echo "No fallback DB connection is available from GCP Secret Manager or GitHub Actions secrets."
+            exit "${analysis_rc}"
+          fi
+          run_analysis --db-connection-string "${MATCH_ANALYSIS_DB_CONNECTION}"
 
       - name: Upload narrative to GCS
         if: env.GENERATE_ANALYSIS == 'true'
@@ -231,12 +260,39 @@ jobs:
         if: env.GENERATE_ANALYSIS == 'true' && env.VALIDATE_CLOUDSQL == 'true'
         run: |
           set -euo pipefail
-          python scripts/validate_match_analysis.py \
-            --warehouse "${WAREHOUSE}" \
-            --run-id "${RUN_ID}" \
-            --matches-csv matches.csv \
-            --bucket "${BUCKET_NAME}" \
-            --project "${PROJECT_ID}"
+          run_validation() {
+            python scripts/validate_match_analysis.py \
+              --warehouse "${WAREHOUSE}" \
+              --run-id "${RUN_ID}" \
+              --matches-csv matches.csv \
+              --bucket "${BUCKET_NAME}" \
+              --project "${PROJECT_ID}" \
+              "$@"
+          }
+
+          set +e
+          run_validation
+          validation_rc=$?
+          set -e
+          if [[ "${validation_rc}" -eq 0 ]]; then
+            exit 0
+          fi
+
+          echo "Cloud SQL connector validation failed; retrying with PostgreSQL fallback connection."
+          set +e
+          MATCH_ANALYSIS_DB_CONNECTION="$(gcloud secrets versions access latest \
+            --project="${PROJECT_ID}" \
+            --secret="${MATCH_ANALYSIS_DB_SECRET}" 2>/dev/null)"
+          secret_rc=$?
+          set -e
+          if [[ "${secret_rc}" -ne 0 || -z "${MATCH_ANALYSIS_DB_CONNECTION}" ]]; then
+            MATCH_ANALYSIS_DB_CONNECTION="${MATCH_ANALYSIS_DB_CONNECTION_FALLBACK:-}"
+          fi
+          if [[ -z "${MATCH_ANALYSIS_DB_CONNECTION}" ]]; then
+            echo "No fallback DB connection is available from GCP Secret Manager or GitHub Actions secrets."
+            exit "${validation_rc}"
+          fi
+          run_validation --db-connection-string "${MATCH_ANALYSIS_DB_CONNECTION}"
 
       - name: Summary
         run: |
