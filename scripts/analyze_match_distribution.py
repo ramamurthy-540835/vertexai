@@ -65,17 +65,47 @@ def _build_cloud_sql_engine() -> sqlalchemy.Engine | None:
     enable_iam_auth = use_iam and not db_password
 
     try:
-        def get_conn() -> Any:
-            return connector.connect(
-                instance,
-                "pg8000",
-                user=db_user,
-                password=db_password if not enable_iam_auth else None,
-                db=db_name,
-                enable_iam_auth=enable_iam_auth,
-            )
+        def _build_engine(with_iam: bool) -> sqlalchemy.Engine:
+            if not with_iam and not db_password:
+                raise ValueError("Password auth requested but DB_PASSWORD is not set.")
 
-        return sqlalchemy.create_engine("postgresql+pg8000://", creator=get_conn)
+            def get_conn() -> Any:
+                connection_kwargs = {
+                    "user": db_user,
+                    "db": db_name,
+                    "enable_iam_auth": with_iam,
+                }
+                if not with_iam:
+                    connection_kwargs["password"] = db_password
+                return connector.connect(instance, "pg8000", **connection_kwargs)
+
+            return sqlalchemy.create_engine("postgresql+pg8000://", creator=get_conn)
+
+        def _validate(engine: sqlalchemy.Engine, label: str) -> bool:
+            try:
+                with engine.connect() as conn:
+                    conn.execute(sqlalchemy.text("SELECT 1"))
+                logger.info("✓ Cloud SQL connection validated using %s", label)
+                return True
+            except Exception as exc:
+                logger.warning("Cloud SQL %s validation failed: %s", label, exc)
+                return False
+
+        if enable_iam_auth:
+            iam_engine = _build_engine(True)
+            if _validate(iam_engine, "IAM"):
+                return iam_engine
+            if db_password:
+                logger.warning("Falling back to password auth for Cloud SQL.")
+            else:
+                logger.error(
+                    "IAM auth failed and no DB_PASSWORD is configured for fallback."
+                )
+                return None
+
+        password_engine = _build_engine(False)
+        if _validate(password_engine, "password"):
+            return password_engine
     except Exception as e:
         logger.error(f"Cloud SQL connector engine build failed: {e}")
         return None
@@ -375,6 +405,10 @@ def write_reasoning_to_cloud_sql(
         )
     except Exception as e:
         logger.error(f"Failed to connect to Cloud SQL: {e}")
+        return 0
+
+    if engine is None:
+        logger.error("No Cloud SQL engine available; skipping reasoning write-back.")
         return 0
 
     rows_updated = 0
