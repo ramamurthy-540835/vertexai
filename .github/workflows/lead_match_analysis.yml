@@ -32,6 +32,14 @@ on:
         options:
           - "true"
           - "false"
+      validate_cloudsql:
+        description: "Validate Cloud SQL write-back after analysis?"
+        required: true
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
 
 jobs:
   analyze-match-distribution:
@@ -59,6 +67,7 @@ jobs:
       PYTHON_VERSION: "3.11"
       GENERATE_REPORT: ${{ github.event.inputs.generate_report || 'true' }}
       GENERATE_ANALYSIS: ${{ github.event.inputs.generate_analysis || 'true' }}
+      VALIDATE_CLOUDSQL: ${{ github.event.inputs.validate_cloudsql || 'true' }}
 
     steps:
       - name: Checkout
@@ -72,12 +81,8 @@ jobs:
           create_credentials_file: true
           export_environment_variables: true
 
-      - name: Set up Cloud SQL Proxy
-        run: |
-          set -euo pipefail
-          curl -o cloud-sql-proxy https://dl.google.com/cloudsql/cloud-sql-proxy.linux.amd64
-          chmod +x cloud-sql-proxy
-          echo "$(pwd)" >> $GITHUB_PATH
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -88,7 +93,7 @@ jobs:
         run: |
           set -euo pipefail
           python -m pip install --upgrade pip
-          pip install pandas google-cloud-storage google-cloud-sql-connector sqlalchemy google-genai pg8000
+          pip install pandas google-cloud-storage cloud-sql-python-connector[pg8000] sqlalchemy google-genai
 
       - name: Verify _READY.json exists (match run completed)
         run: |
@@ -131,6 +136,7 @@ jobs:
           set -euo pipefail
           python scripts/analyze_match_distribution.py \
             --bucket "${BUCKET_NAME}" \
+            --project "${PROJECT_ID}" \
             --warehouse "${WAREHOUSE}" \
             --run-id "${RUN_ID}" \
             --rules-json lead_match_runtime/lead_to_pos_match_rules.json \
@@ -167,6 +173,17 @@ jobs:
             echo "⚠ Narrative not found"
             exit 1
           fi
+
+      - name: Validate Cloud SQL write-back
+        if: env.GENERATE_ANALYSIS == 'true' && env.VALIDATE_CLOUDSQL == 'true'
+        run: |
+          set -euo pipefail
+          python scripts/validate_match_analysis.py \
+            --warehouse "${WAREHOUSE}" \
+            --run-id "${RUN_ID}" \
+            --matches-csv matches.csv \
+            --bucket "${BUCKET_NAME}" \
+            --project "${PROJECT_ID}"
 
       - name: Summary
         run: |

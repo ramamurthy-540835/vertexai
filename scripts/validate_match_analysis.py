@@ -12,6 +12,7 @@ import json
 import logging
 import sys
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 from google.cloud import storage
@@ -24,10 +25,56 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+def _build_cloud_sql_engine(db_connection_string: str | None) -> sqlalchemy.Engine | None:
+    """Build SQLAlchemy engine using explicit connection string or Cloud SQL connector."""
+
+    if db_connection_string:
+        try:
+            return sqlalchemy.create_engine(db_connection_string)
+        except Exception as e:
+            logger.error(f"Failed to create engine from explicit connection string: {e}")
+            return None
+
+    instance = os.getenv("CLOUDSQL_CONNECTION_NAME")
+    if not instance:
+        return None
+
+    db_user = os.getenv("CLOUDSQL_DB_USER", "postgres")
+    db_name = os.getenv("CLOUDSQL_DB_NAME", os.getenv("DB_NAME", "postgres"))
+    db_password = os.getenv("DB_PASSWORD")
+    use_iam = os.getenv("CLOUDSQL_IAM_AUTH", "true").lower() in {"1", "true", "yes"}
+
+    try:
+        from google.cloud.sql.connector import Connector
+
+        connector = Connector()
+    except Exception as e:
+        logger.error(f"Failed to initialize Cloud SQL connector: {e}")
+        return None
+
+    enable_iam_auth = use_iam and not db_password
+
+    try:
+        def get_conn() -> Any:
+            return connector.connect(
+                instance,
+                "pg8000",
+                user=db_user,
+                password=db_password if not enable_iam_auth else None,
+                db=db_name,
+                enable_iam_auth=enable_iam_auth,
+            )
+
+        return sqlalchemy.create_engine("postgresql+pg8000://", creator=get_conn)
+    except Exception as e:
+        logger.error(f"Cloud SQL connector engine build failed: {e}")
+        return None
+
+
 def validate_cloud_sql_reasoning(
     match_run_id: str,
     expected_row_count: int,
-    db_connection_string: str,
+    db_connection_string: str | None,
 ) -> bool:
     """
     Validate that match_reasoning is populated for all rows in the run.
@@ -41,7 +88,10 @@ def validate_cloud_sql_reasoning(
         True if validation passes
     """
     try:
-        engine = sqlalchemy.create_engine(db_connection_string)
+        engine = _build_cloud_sql_engine(db_connection_string)
+        if engine is None:
+            logger.error("Cloud SQL engine unavailable for reasoning validation")
+            return False
         with engine.connect() as conn:
             # Count reasoning rows
             query = sqlalchemy.text("""
@@ -82,7 +132,7 @@ def validate_cloud_sql_reasoning(
 
 def validate_reasoning_arithmetic(
     matches_csv_path: str,
-    db_connection_string: str,
+    db_connection_string: str | None,
     match_run_id: str,
     sample_size: int = 3,
 ) -> bool:
@@ -100,7 +150,10 @@ def validate_reasoning_arithmetic(
     """
     try:
         df = pd.read_csv(matches_csv_path)
-        engine = sqlalchemy.create_engine(db_connection_string)
+        engine = _build_cloud_sql_engine(db_connection_string)
+        if engine is None:
+            logger.error("Cloud SQL engine unavailable for arithmetic validation")
+            return False
 
         samples_checked = 0
         for idx in range(min(sample_size, len(df))):
@@ -201,7 +254,7 @@ def main():
     )
     parser.add_argument(
         "--db-connection-string",
-        help="Cloud SQL connection string (optional for partial validation)",
+        help="Cloud SQL connection string (optional; falls back to CLOUDSQL_* env config)",
     )
     args = parser.parse_args()
 
@@ -225,7 +278,8 @@ def main():
     # Validate Cloud SQL (if connection string provided)
     reasoning_ok = True
     arithmetic_ok = True
-    if args.db_connection_string and row_count:
+    has_db_target = bool(args.db_connection_string or os.getenv("CLOUDSQL_CONNECTION_NAME"))
+    if has_db_target and row_count:
         reasoning_ok = validate_cloud_sql_reasoning(
             args.run_id,
             row_count,
@@ -236,6 +290,10 @@ def main():
             args.db_connection_string,
             args.run_id,
         )
+    elif not has_db_target and row_count:
+        reasoning_ok = False
+        arithmetic_ok = False
+        logger.warning("Cloud SQL validation skipped: no db_connection_string or CLOUDSQL_CONNECTION_NAME provided")
 
     # Summary
     logger.info("")
@@ -243,11 +301,11 @@ def main():
     logger.info("VALIDATION SUMMARY")
     logger.info("=" * 60)
     logger.info(f"  Narrative:        {'✓' if narrative_ok else '✗'}")
-    logger.info(f"  Cloud SQL rows:   {'✓' if reasoning_ok else '✗' if args.db_connection_string else '⊘'}")
-    logger.info(f"  Arithmetic:       {'✓' if arithmetic_ok else '✗' if args.db_connection_string else '⊘'}")
+    logger.info(f"  Cloud SQL rows:   {'✓' if reasoning_ok else '✗' if has_db_target else '⊘'}")
+    logger.info(f"  Arithmetic:       {'✓' if arithmetic_ok else '✗' if has_db_target else '⊘'}")
 
     all_ok = narrative_ok and reasoning_ok and arithmetic_ok
-    if all_ok or (narrative_ok and not args.db_connection_string):
+    if all_ok or (narrative_ok and not has_db_target):
         logger.info("✓ Validation passed")
         sys.exit(0)
     else:

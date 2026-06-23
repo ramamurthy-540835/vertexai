@@ -25,7 +25,7 @@ import argparse
 
 import pandas as pd
 from google.cloud import storage
-from google.cloud import sql_connector
+from google.cloud.sql.connector import Connector
 import sqlalchemy
 
 logging.basicConfig(
@@ -57,7 +57,7 @@ def _build_cloud_sql_engine() -> sqlalchemy.Engine | None:
         return None
 
     try:
-        connector = sql_connector.Connector()
+        connector = Connector()
     except Exception as e:
         logger.error(f"Failed to initialize Cloud SQL connector: {e}")
         return None
@@ -473,6 +473,11 @@ def main():
         help="GCS bucket with match results",
     )
     parser.add_argument(
+        "--project",
+        default=os.getenv("PROJECT_ID", "ctoteam"),
+        help="GCP project used in match report path",
+    )
+    parser.add_argument(
         "--warehouse",
         default="115",
         help="Warehouse number",
@@ -521,7 +526,7 @@ def main():
     # Infer GCS path if not provided
     if not args.matches_csv:
         args.matches_csv = (
-            f"reports/lead_match/ctoteam/{args.warehouse}/{args.run_id}/matches.csv"
+            f"reports/lead_match/{args.project}/{args.warehouse}/{args.run_id}/matches.csv"
         )
 
     # Read matches.csv from GCS
@@ -547,7 +552,7 @@ def main():
     narrative = call_gemini_analysis(facts, rules, warehouse=args.warehouse)
 
     # Write narrative to GCS
-    narrative_path = f"reports/lead_match/ctoteam/{args.warehouse}/{args.run_id}/comparative_analysis.md"
+    narrative_path = f"reports/lead_match/{args.project}/{args.warehouse}/{args.run_id}/comparative_analysis.md"
     write_narrative_to_gcs(narrative, args.bucket, narrative_path)
 
     # Write reasoning to Cloud SQL (if connection available)
