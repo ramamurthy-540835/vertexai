@@ -161,7 +161,16 @@ jobs:
           set -euo pipefail
           gcloud config set project "${PROJECT_ID}"
           BASE_ENV_VARS="DB_NAME=postgres,DB_SCHEMA=leadmgmt,DB_USER=postgres,VERTEX_PROJECT_ID=${PROJECT_ID},GOOGLE_CLOUD_PROJECT=${PROJECT_ID},VERTEX_LOCATION=${REGION},DEFAULT_FISCAL_YEAR=2026,DEFAULT_FISCAL_PERIOD=10,MATCH_MIN_SCORE=70,CLOUDSQL_CONNECTION_NAME=${CLOUDSQL_CONNECTION_NAME},CLOUDSQL_SOCKET_DIR=/cloudsql,ALLOW_CLIENT_GCP=false,ALLOW_PRODUCTION=false,EXPECTED_PROJECT_ID=${PROJECT_ID},WAREHOUSE_SCOPE=ALL"
-          PERF_ENV_VARS="EMBEDDING_BATCH_SIZE=25,EMBEDDING_MAX_TEXTS_PER_REQUEST=25,EMBEDDING_MAX_WORKERS=1,EMBEDDING_BATCH_WORKERS=1,EMBEDDING_MAX_RETRIES=6,EMBEDDING_RETRY_BASE_DELAY=5.0,EMBEDDING_RETRY_MAX_DELAY=180,EMBEDDING_REQUEST_LOG_EVERY=100,VERTEX_TIMEOUT_SECONDS=300,MATCH_BATCH_SIZE=100,MATCH_STATEMENT_TIMEOUT_MS=900000,HNSW_M=32,HNSW_EF_CONSTRUCTION=128,HNSW_EF_SEARCH=100,HNSW_MAINTENANCE_WORK_MEM=512MB"
+          # Conservative embedding profile for large warehouse runs: smaller embedding payloads + strict retry timeout.
+          PERF_ENV_VARS="EMBEDDING_MODEL=gemini-embedding-001,EMBEDDING_BATCH_SIZE=10,EMBEDDING_MAX_TEXTS_PER_REQUEST=10,EMBEDDING_MAX_WORKERS=1,EMBEDDING_BATCH_WORKERS=1,EMBEDDING_MAX_RETRIES=6,EMBEDDING_RETRY_BASE_DELAY=2.0,EMBEDDING_RETRY_MAX_DELAY=120,EMBEDDING_REQUEST_LOG_EVERY=100,VERTEX_TIMEOUT_SECONDS=600,MATCH_BATCH_SIZE=100,MATCH_STATEMENT_TIMEOUT_MS=900000,HNSW_M=32,HNSW_EF_CONSTRUCTION=128,HNSW_EF_SEARCH=100,HNSW_MAINTENANCE_WORK_MEM=512MB"
+          if [[ "${PERF_ENV_VARS}" != *"EMBEDDING_MODEL=gemini-embedding-001"* ]]; then
+            echo "Expected EMBEDDING_MODEL=gemini-embedding-001 in PERF_ENV_VARS but did not find it." >&2
+            exit 1
+          fi
+          if [[ "${PERF_ENV_VARS}" == *"API_KEY"* || "${BASE_ENV_VARS}" == *"API_KEY"* ]]; then
+            echo "Refusing to propagate API key-based auth to run jobs." >&2
+            exit 1
+          fi
           ENV_VARS="${BASE_ENV_VARS},${PERF_ENV_VARS}"
           for JOB in \
             lead-match-ensure-indexes \
@@ -390,6 +399,14 @@ jobs:
       - name: Trigger lead match workflow
         run: |
           set -euo pipefail
+          if [[ "${DRY_RUN}" == "true" ]]; then
+            echo "dryRun=true: workflow will run in preview mode"
+            echo "  - match decisions are preview-limited by DRY_RUN_MATCH_ROW_LIMIT=10 (default)"
+            echo "  - lead/pos writebacks are skipped unless DRY_RUN_WRITEBACK_BUSINESS_TABLES is enabled"
+          else
+            echo "dryRun=false: workflow will write match decisions and transaction/business writebacks"
+          fi
+          echo "Payload: ${PAYLOAD}"
           gcloud config set project "${PROJECT_ID}"
           EXECUTION=$(gcloud workflows execute "${WORKFLOW_NAME}" \
             --location="${REGION}" \
