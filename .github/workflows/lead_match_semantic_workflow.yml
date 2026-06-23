@@ -538,6 +538,53 @@ jobs:
             esac
           done
 
+      - name: Ensure report artifacts for analysis
+        if: success() && github.event.inputs.wait_for_completion == 'true' && github.event.inputs.run_analysis == 'true'
+        run: |
+          set -euo pipefail
+          if [[ -z "${WAREHOUSE_LABEL}" || "${WAREHOUSE_LABEL}" == "all" ]]; then
+            echo "run_analysis=true is set, but WAREHOUSE_LABEL=${WAREHOUSE_LABEL}; analysis handoff requires explicit warehouse."
+            exit 0
+          fi
+
+          if [[ "${DRY_RUN}" == "true" ]]; then
+            echo "run_analysis=true is not supported for dry_run=true because report artifacts are written as dryrun_* files."
+            exit 1
+          fi
+
+          gcloud config set project "${PROJECT_ID}"
+          IFS=',' read -ra WAREHOUSE_LIST <<< "${WAREHOUSE_LABEL}"
+          for W in "${WAREHOUSE_LIST[@]}"; do
+            W="$(printf '%s' "${W}" | tr -d '[:space:]')"
+            if [[ -z "${W}" ]]; then
+              continue
+            fi
+
+            REPORT_PREFIX="reports/lead_match/${PROJECT_ID}/${W}/${MATCH_RUN_ID}"
+            MATCHES_URI="gs://${BUCKET_NAME}/${REPORT_PREFIX}/matches.csv"
+            SUMMARY_URI="gs://${BUCKET_NAME}/${REPORT_PREFIX}/summary.json"
+
+            if gsutil stat "${MATCHES_URI}" >/dev/null 2>&1 && gsutil stat "${SUMMARY_URI}" >/dev/null 2>&1; then
+              echo "Analysis artifacts already exist for warehouse=${W}: gs://${BUCKET_NAME}/${REPORT_PREFIX}/"
+              continue
+            fi
+
+            echo "Analysis artifacts missing for warehouse=${W}; running lead-match-report for run_id=${MATCH_RUN_ID}."
+            gcloud run jobs execute lead-match-report \
+              --project="${PROJECT_ID}" \
+              --region="${REGION}" \
+              --args=report \
+              --update-env-vars="WAREHOUSE=${W},WAREHOUSE_SCOPE=${W},MATCH_RUN_ID=${MATCH_RUN_ID},DRY_RUN=${DRY_RUN},REPORT_BUCKET=${BUCKET_NAME}" \
+              --wait
+
+            if ! gsutil stat "${MATCHES_URI}" >/dev/null 2>&1 || ! gsutil stat "${SUMMARY_URI}" >/dev/null 2>&1; then
+              echo "Report job completed but analysis artifacts are still missing:"
+              echo "- ${MATCHES_URI}"
+              echo "- ${SUMMARY_URI}"
+              exit 1
+            fi
+          done
+
       - name: Hand off to analysis and reasoning workflow
         if: success() && github.event.inputs.wait_for_completion == 'true' && github.event.inputs.run_analysis == 'true'
         env:
