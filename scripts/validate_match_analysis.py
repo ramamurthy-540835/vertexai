@@ -177,11 +177,12 @@ def validate_reasoning_arithmetic(
                 reasoning = result.scalar()
 
                 if reasoning:
-                    # Extract score from reasoning string
-                    if "=>" in reasoning and "=" in reasoning:
+                    is_exact = "Deterministic" in reasoning or "exact" in reasoning.lower()
+                    is_fuzzy = "=>" in reasoning and "=" in reasoning
+                    if is_exact or is_fuzzy:
                         logger.info(
                             f"  Sample {idx + 1}: {lead_id}/{pos_id} "
-                            f"(stored_score={final_score:.2f})"
+                            f"(stored_score={final_score:.2f}, type={'exact' if is_exact else 'fuzzy'})"
                         )
                         logger.info(f"    Reasoning: {reasoning[:100]}...")
                         samples_checked += 1
