@@ -66,6 +66,14 @@ on:
         required: false
         default: ""
         type: string
+      run_analysis:
+        description: "Trigger lead_match_analysis.yml after successful run?"
+        required: true
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
 
 jobs:
   trigger:
@@ -76,6 +84,7 @@ jobs:
     permissions:
       id-token: write
       contents: read
+      actions: write
 
     env:
       PROJECT_ID: ctoteam
@@ -250,7 +259,7 @@ jobs:
           LEAD_EMBEDDING_LIMIT=""
           POS_EMBEDDING_LIMIT=""
           MATCH_LEAD_LIMIT=""
-          RUN_LIMITS="$(printf '%s' "${RAW_RUN_LIMITS:-}" | tr -d '[:space:]' | sed 's/[;]*$//')"
+          RUN_LIMITS="$(printf '%s' "${RAW_RUN_LIMITS:-}" | tr -d '[:space:]' | sed 's/^run_limits://' | sed 's/[;]*$//')"
           if [[ -n "${RUN_LIMITS}" && "${RUN_LIMITS,,}" != "all" ]]; then
             IFS=',' read -ra LIMIT_PARTS <<< "${RUN_LIMITS}"
             for part in "${LIMIT_PARTS[@]}"; do
@@ -449,6 +458,33 @@ jobs:
             esac
           done
 
+      - name: Trigger post-match analysis workflow
+        if: success() && github.event.inputs.wait_for_completion == 'true' && github.event.inputs.run_analysis == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${WAREHOUSE_LABEL}" || "${WAREHOUSE_LABEL}" == "all" ]]; then
+            echo "run_analysis=true is set, but WAREHOUSE_LABEL=${WAREHOUSE_LABEL}; analysis requires explicit warehouse."
+            exit 0
+          fi
+
+          IFS=',' read -ra WAREHOUSE_LIST <<< "${WAREHOUSE_LABEL}"
+          for W in "${WAREHOUSE_LIST[@]}"; do
+            W="$(printf '%s' "${W}" | tr -d '[:space:]')"
+            if [[ -z "${W}" ]]; then
+              continue
+            fi
+            echo "Dispatching lead_match_analysis.yml for warehouse=${W}, run_id=${MATCH_RUN_ID}"
+            gh workflow run lead_match_analysis.yml \
+              --ref "${GITHUB_REF_NAME}" \
+              --field warehouse="${W}" \
+              --field run_id="${MATCH_RUN_ID}" \
+              --field bucket="${BUCKET_NAME}" \
+              --field generate_report="true" \
+              --field generate_analysis="true"
+          done
+
       - name: Summary
         if: always()
         run: |
@@ -480,4 +516,5 @@ jobs:
             echo "- Update Cloud Run jobs: \`${{ github.event.inputs.update_cloud_run_jobs }}\`"
             echo "- Deploy workflow: \`${{ github.event.inputs.deploy_workflow }}\`"
             echo "- Prepare readiness: \`${{ github.event.inputs.prepare_readiness }}\`"
+            echo "- Run analysis: \`${{ github.event.inputs.run_analysis }}\`"
           } >> "$GITHUB_STEP_SUMMARY"
