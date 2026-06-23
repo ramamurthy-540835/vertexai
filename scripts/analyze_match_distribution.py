@@ -411,6 +411,16 @@ def write_reasoning_to_cloud_sql(
         logger.error("No Cloud SQL engine available; skipping reasoning write-back.")
         return 0
 
+    try:
+        with engine.begin() as conn:
+            conn.execute(sqlalchemy.text(
+                'ALTER TABLE "leadmgmt"."match_decision_detail" '
+                'ADD COLUMN IF NOT EXISTS "match_reasoning" text'
+            ))
+            logger.info("Ensured match_reasoning column exists on match_decision_detail")
+    except Exception as e:
+        logger.warning("Could not ensure match_reasoning column: %s", e)
+
     rows_updated = 0
     batch_size = 1000
 
