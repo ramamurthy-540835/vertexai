@@ -70,7 +70,7 @@ jobs:
       BUCKET_NAME: ${{ github.event.inputs.bucket || 'lead-match-ctoteam' }}
       WAREHOUSE: ${{ github.event.inputs.warehouse }}
       RUN_ID: ${{ github.event.inputs.run_id }}
-      VERTEX_LOCATION: us-central1
+      VERTEX_LOCATION: global
       GEMINI_MODEL: gemini-3.5-flash
       PYTHON_VERSION: "3.11"
       GENERATE_REPORT: ${{ github.event.inputs.generate_report || 'true' }}
