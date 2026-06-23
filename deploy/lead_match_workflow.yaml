@@ -19,6 +19,7 @@ main:
           - exactResult: null
           - leadResult: null
           - posResult: null
+          - reportResult: null
 
     - runExactMatch:
         call: runCloudRunJob
@@ -118,6 +119,25 @@ main:
               value: ${matchLeadLimit}
         result: matchResult
 
+    - runReport:
+        call: runCloudRunJob
+        args:
+          project: ${project}
+          region: ${region}
+          jobName: "lead-match-report"
+          containerArgs:
+            - report
+          envVars:
+            - name: WAREHOUSE
+              value: ${warehouse}
+            - name: WAREHOUSE_SCOPE
+              value: ${warehouse}
+            - name: MATCH_RUN_ID
+              value: ${matchRunId}
+            - name: DRY_RUN
+              value: ${dryRun}
+        result: reportResult
+
     - done:
         return:
           status: "success"
@@ -132,6 +152,7 @@ main:
           pos: ${posResult}
           indexes: ${indexResult}
           match: ${matchResult}
+          report: ${reportResult}
 
 runCloudRunJob:
   params: [project, region, jobName, envVars, containerArgs]

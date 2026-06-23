@@ -186,7 +186,8 @@ jobs:
             lead-match-exact-match \
             lead-match-lead-embeddings \
             lead-match-pos-embeddings \
-            lead-match-fuzzy-match; do
+            lead-match-fuzzy-match \
+            lead-match-report; do
             if ! gcloud run jobs describe "${JOB}" --project="${PROJECT_ID}" --region="${REGION}" >/dev/null 2>&1; then
               echo "Cloud Run Job ${JOB} is missing; creating it with DB connector and secrets."
               gcloud run jobs create "${JOB}" \
@@ -462,6 +463,7 @@ jobs:
         if: success() && github.event.inputs.wait_for_completion == 'true' && github.event.inputs.run_analysis == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
+          ANALYSIS_WORKFLOW_REF: ${{ github.event.repository.default_branch }}
         run: |
           set -euo pipefail
           if [[ -z "${WAREHOUSE_LABEL}" || "${WAREHOUSE_LABEL}" == "all" ]]; then
@@ -476,8 +478,8 @@ jobs:
               continue
             fi
             echo "Dispatching lead_match_analysis.yml for warehouse=${W}, run_id=${MATCH_RUN_ID}"
-            gh workflow run lead_match_analysis.yml \
-              --ref "${GITHUB_REF_NAME}" \
+            gh workflow run .github/workflows/lead_match_analysis.yml \
+              --ref "${ANALYSIS_WORKFLOW_REF}" \
               --field warehouse="${W}" \
               --field run_id="${MATCH_RUN_ID}" \
               --field bucket="${BUCKET_NAME}" \
