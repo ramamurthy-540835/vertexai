@@ -54,7 +54,7 @@ on:
           - "true"
           - "false"
       dry_run:
-        description: "Run fuzzy matching without writing match decisions?"
+        description: "No-write mode? true = do NOT write decisions; false = write decisions. For low-volume writes, keep false and use run_limits."
         required: true
         default: "false"
         type: choice
@@ -62,7 +62,7 @@ on:
           - "false"
           - "true"
       run_limits:
-        description: "Optional limits: lead=50,pos=500,match=25; blank/all means no cap"
+        description: "Low-volume run limits while still writing decisions when no-write mode=false. Example: lead=50,pos=500,match=25; blank/all means no cap"
         required: false
         default: ""
         type: string
