@@ -43,7 +43,7 @@
     "email_phone_note": "Agreement can boost confidence. Disagreement is neutral because POS email can be member-personal."
   },
   "embeddings": {
-    "model": "gemini-embedding-001",
+    "model": "text-embedding-004",
     "task_type": "SEMANTIC_SIMILARITY",
     "output_dimensionality": 768,
     "l2_normalize": true,

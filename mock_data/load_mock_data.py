@@ -10,8 +10,8 @@ from datetime import datetime, UTC
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_DIR = os.path.dirname(SCRIPT_DIR)
 ENV_FILE = os.path.join(PROJECT_DIR, '.env.local')
-LEADS_FILE = os.path.join(SCRIPT_DIR, 'leads_corrected.xlsx')
-POS_FILE = os.path.join(SCRIPT_DIR, 'pos_corrected.xlsx')
+ROOT_LEADS_FILE = os.path.join(SCRIPT_DIR, 'leads_corrected.xlsx')
+ROOT_POS_FILE = os.path.join(SCRIPT_DIR, 'pos_corrected.xlsx')
 
 def load_env_file(path=ENV_FILE):
     if not os.path.exists(path):
@@ -35,6 +35,19 @@ def get_db_config():
         'user': os.environ.get('DB_USER', 'postgres'),
         'password': os.environ.get('DB_PASSWORD'),
     }
+
+def resolve_mock_file(filename, warehouse_number=None, input_dir=None):
+    candidates = []
+    if input_dir:
+        candidates.append(os.path.join(input_dir, filename))
+    if warehouse_number is not None:
+        candidates.append(os.path.join(SCRIPT_DIR, str(warehouse_number), filename))
+    candidates.append(os.path.join(SCRIPT_DIR, filename))
+
+    for candidate in candidates:
+        if os.path.exists(candidate):
+            return candidate
+    return candidates[0]
 
 def make_id(prefix, run_suffix, idx):
     return f"{prefix}{run_suffix}{idx:08d}"
@@ -120,10 +133,10 @@ def clean_val(val):
         return None
     return val_str
 
-def load_leads(cursor, conn, limit=None):
-    print(f"\nReading Lead Mock Data: {LEADS_FILE}...")
+def load_leads(cursor, conn, leads_file, limit=None):
+    print(f"\nReading Lead Mock Data: {leads_file}...")
     try:
-        df_leads_raw = pd.read_excel(LEADS_FILE)
+        df_leads_raw = pd.read_excel(leads_file)
         if limit is not None:
             df_leads_raw = df_leads_raw.head(limit)
         print(f"Loaded {len(df_leads_raw)} lead rows from Excel.")
@@ -290,11 +303,11 @@ def load_leads(cursor, conn, limit=None):
         conn.rollback()
         return False
 
-def load_pos(cursor, conn, limit=None):
-    print(f"\nReading POS Mock Data: {POS_FILE}...")
+def load_pos(cursor, conn, pos_file, limit=None):
+    print(f"\nReading POS Mock Data: {pos_file}...")
     try:
         # We read the file in chunks or read completely since memory is adequate
-        df_pos_raw = pd.read_excel(POS_FILE)
+        df_pos_raw = pd.read_excel(pos_file)
         if limit is not None:
             df_pos_raw = df_pos_raw.head(limit)
         print(f"Loaded {len(df_pos_raw)} POS rows from Excel.")
@@ -485,6 +498,10 @@ def main():
                         help="Optional positional target: lead, pos, or all")
     parser.add_argument('--table', type=str, choices=['lead', 'pos', 'all'], default='lead',
                         help="Choose which tables to load: 'lead' (default), 'pos', or 'all'")
+    parser.add_argument('--warehouse-number', type=str,
+                        help="Warehouse number used to resolve mock_data/<warehouse_number>/ files")
+    parser.add_argument('--input-dir', type=str,
+                        help="Explicit directory containing leads_corrected.xlsx and pos_corrected.xlsx")
     parser.add_argument('--limit', type=int,
                         help="Load only the first N rows from each selected Excel file")
     parser.add_argument('--summary-only', action='store_true',
@@ -496,6 +513,12 @@ def main():
         parser.error("--limit must be a positive integer")
 
     print(f"--- Mock Data Loader Started (Target: {target}) ---")
+    warehouse_number = args.warehouse_number or os.environ.get("WAREHOUSE_NUMBER") or os.environ.get("WAREHOUSE")
+    leads_file = resolve_mock_file("leads_corrected.xlsx", warehouse_number, args.input_dir)
+    pos_file = resolve_mock_file("pos_corrected.xlsx", warehouse_number, args.input_dir)
+    print(f"Warehouse scope: {warehouse_number or 'default'}")
+    print(f"Lead workbook path: {leads_file}")
+    print(f"POS workbook path: {pos_file}")
     db_config = get_db_config()
     missing = [key for key in ('host', 'password') if not db_config.get(key)]
     if missing:
@@ -519,11 +542,11 @@ def main():
 
     success = True
     if target in ['lead', 'all']:
-        success_lead = load_leads(cursor, conn, args.limit)
+        success_lead = load_leads(cursor, conn, leads_file, args.limit)
         success = success and success_lead
 
     if target in ['pos', 'all']:
-        success_pos = load_pos(cursor, conn, args.limit)
+        success_pos = load_pos(cursor, conn, pos_file, args.limit)
         success = success and success_pos
 
     if success:

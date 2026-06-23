@@ -1,3 +1,5 @@
 __pycache__/
 local_check/
 local_db_check/
+validation_summary.json
+validation_summary.md

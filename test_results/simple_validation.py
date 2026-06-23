@@ -31,7 +31,7 @@ from lead_match_runtime.business_rules import (  # noqa: E402
 
 DOTENV_PATH = REPO_ROOT / ".env.local"
 OUTPUT_DIR = Path(__file__).resolve().parent
-DEFAULT_WAREHOUSE = os.environ.get("WAREHOUSE", "115")
+DEFAULT_WAREHOUSE = os.environ.get("WAREHOUSE", "").strip()
 
 
 def load_dotenv(path: Path) -> None:
@@ -80,7 +80,9 @@ def db_config() -> dict[str, Any]:
     raise RuntimeError("Set CLOUDSQL_CONNECTION_NAME or DB_HOST in .env.local")
 
 
-def count_rows(cursor, schema: str, table: str, warehouse: str) -> int:
+def count_rows(cursor, schema: str, table: str, warehouse: str) -> int | None:
+    if not warehouse or not warehouse.isdigit():
+        return None
     cursor.execute(
         f'SELECT COUNT(*) FROM "{schema}"."{table}" WHERE warehouse_number = %s',
         (int(warehouse),),
@@ -124,7 +126,8 @@ def check_cloud_sql(warehouse: str, schema: str) -> dict[str, Any]:
             result["tables"][table] = "PASS" if table in tables else "MISSING"
             if table in tables:
                 try:
-                    result["row_counts"][table] = count_rows(cursor, schema, table, warehouse)
+                    row_count = count_rows(cursor, schema, table, warehouse)
+                    result["row_counts"][table] = row_count if row_count is not None else "SKIPPED"
                 except Exception as exc:
                     result["row_counts"][table] = f"ERROR: {exc}"
         result["status"] = "PASS" if all(result["tables"].get(t) == "PASS" for t in expected) else "FAIL"
@@ -331,9 +334,11 @@ def main() -> int:
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    warehouse = args.warehouse or "ALL"
+
     payload: dict[str, Any] = {
         "generated_at": datetime.now(UTC).isoformat(),
-        "warehouse": args.warehouse,
+        "warehouse": warehouse,
         "schema": args.schema,
         "project": os.environ.get("GOOGLE_CLOUD_PROJECT", "ctoteam"),
         "cloud_sql": {
