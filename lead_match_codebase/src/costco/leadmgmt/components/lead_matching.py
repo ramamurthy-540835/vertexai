@@ -318,6 +318,41 @@ def preprocess_sales(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # ==============================================================
+# BIDIRECTIONAL CONTAINS — business-name field only
+# ==============================================================
+def _bidir_contains(lead_vals: pd.Series, pos_vals: pd.Series) -> np.ndarray:
+    """
+    Bidirectional substring match for two aligned Series:
+    a hit is when the lead value is contained in the POS value
+    OR the POS value is contained in the lead value.
+
+    Both sides must be non-null, non-empty strings. The empty-string
+    guard is essential: "" is a substring of every string, so without
+    it every pair with one blank side would register a spurious hit.
+    Values are already normalized (strip + lowercase) upstream by
+    _normalize_col, so this is a plain casefold-free substring test.
+
+    Returns a boolean ndarray aligned to the input index.
+    """
+    both = (lead_vals.notna() & pos_vals.notna()).to_numpy()
+    lv = lead_vals.to_numpy(dtype=object)
+    pv = pos_vals.to_numpy(dtype=object)
+    out = np.zeros(len(lead_vals), dtype=bool)
+    for i in range(len(lead_vals)):
+        if not both[i]:
+            continue
+        a, b = lv[i], pv[i]
+        if not isinstance(a, str):
+            a = str(a)
+        if not isinstance(b, str):
+            b = str(b)
+        if a == "" or b == "":
+            continue
+        out[i] = (a in b) or (b in a)
+    return out
+
+
+# ==============================================================
 # SCORE A PAIR TABLE — per-set scoring, pick max
 # ==============================================================
 def _score_pairs(
@@ -376,11 +411,18 @@ def _score_pairs(
 
             lead_vals = pairs[lead_col]
             pos_vals  = pairs[pos_col]
-            hit = (
-                lead_vals.notna()
-                & pos_vals.notna()
-                & (lead_vals == pos_vals)
-            ).to_numpy()
+            if field == "business":
+                # Bidirectional substring match for business name only:
+                # lead-name contained in POS-name OR POS-name contained
+                # in lead-name. Replaces the previous exact-equality test
+                # for this field; every other field stays exact-equal.
+                hit = _bidir_contains(lead_vals, pos_vals)
+            else:
+                hit = (
+                    lead_vals.notna()
+                    & pos_vals.notna()
+                    & (lead_vals == pos_vals)
+                ).to_numpy()
 
             if hit.any():
                 set_scores[:, col_idx] += hit.astype(np.int64) * points

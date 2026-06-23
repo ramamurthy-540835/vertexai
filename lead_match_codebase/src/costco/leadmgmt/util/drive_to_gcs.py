@@ -49,6 +49,7 @@ ARCHIVE_FOLDER_NAME = os.environ.get("ARCHIVE_FOLDER_NAME", "archive")
 INCOMING_PREFIX     = os.environ.get("INCOMING_PREFIX", "pos-raw-data/incoming-files")
 MANIFESTS_PREFIX    = os.environ.get("MANIFESTS_PREFIX", "manifests")
 RUN_LABEL           = os.environ.get("RUN_LABEL", "")
+RUN_SNOW_SYNC       = os.environ.get("RUN_SNOW_SYNC", "true").strip().lower() == "true"
 
 # ── Checkpoint blob — tracks run_id + archive_folder_id across retries ───────
 CHECKPOINT_BLOB = f"{INCOMING_PREFIX}/.run_checkpoint.json"
@@ -276,15 +277,23 @@ def build_run_id(checkpoint: dict) -> str:
     return f"run-{timestamp}"
 
 
-def build_manifest(run_id: str, gcs_paths: list[str], service_account_email: str) -> dict:
+def build_manifest(
+    run_id: str,
+    gcs_paths: list[str],
+    service_account_email: str,
+    run_snow_sync: bool,
+) -> dict:
     """
     Build the manifest JSON.
     submitted_by reflects the Cloud Run service account.
+    run_snow_sync indicates whether the downstream snow_sync workflow
+    should be triggered for the files in this manifest.
     """
     return {
         "run_id": run_id,
         "submitted_by": f"service-account:{service_account_email}",
         "submitted_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "run_snow_sync": run_snow_sync,
         "files": gcs_paths,
     }
 
@@ -309,6 +318,7 @@ def upload_manifest(bucket, manifest: dict, run_id: str) -> str:
 def run():
     credentials = get_credentials()
     log.info("Running as service account: %s", SERVICE_ACCOUNT)
+    log.info("run_snow_sync flag: %s", RUN_SNOW_SYNC)
 
     drive  = build_drive_service(credentials)
     gcs    = storage.Client(project=PROJECT_ID, credentials=credentials)
@@ -409,7 +419,9 @@ def run():
         )
     else:
         log.info("Building and uploading manifest …")
-        manifest = build_manifest(run_id, transferred_gcs_paths, SERVICE_ACCOUNT)
+        manifest = build_manifest(
+            run_id, transferred_gcs_paths, SERVICE_ACCOUNT, RUN_SNOW_SYNC
+        )
         log.info("Manifest contents:\n%s", json.dumps(manifest, indent=2))
         try:
             manifest_uri = upload_manifest(bucket, manifest, run_id)

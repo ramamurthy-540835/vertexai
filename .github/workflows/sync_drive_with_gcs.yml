@@ -1,5 +1,4 @@
 name: drive_to_gcs_sync
-
 on:
   workflow_dispatch:
     inputs:
@@ -9,72 +8,64 @@ on:
         default: 'adt'
         type: choice
         options: ['adt', 'qat', 'spt', 'prd']
-
       drive_folder_id:
         description: 'Google Drive folder ID (optional — leave blank to use the value already configured on the job)'
         required: false
         default: ''
         type: string
-
+      run_snow_sync:
+        description: 'Set run_snow_sync flag on the job (added to manifest)'
+        required: false
+        default: true
+        type: boolean
 jobs:
   trigger_sync:
     name: "Drive → GCS sync (${{ github.event.inputs.environment }})"
     runs-on: cw-gcp-us-west1-${{ inputs.environment == 'prd' && 'pd' || 'np' }}
     environment: ${{ github.event.inputs.environment }}
-
     permissions:
       id-token: write
       contents: read
-
     env:
       ENV_NAME:        ${{ github.event.inputs.environment }}
       DRIVE_FOLDER_ID: ${{ github.event.inputs.drive_folder_id }}
+      RUN_SNOW_SYNC:   ${{ github.event.inputs.run_snow_sync }}
       PROJECT_ID:      ${{ github.event.inputs.environment == 'prd' && 'p-601-pd-bcleadsmgmt-prd' || format('p-601-np-bcleadsmgmt-{0}', github.event.inputs.environment) }}
       JOB_NAME:        'snow-sync-job'
       REGION:          'us-central1'
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
       - name: Auth to GCP
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
           service_account: ${{ github.event.inputs.environment == 'prd' && secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL_PRD || secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
-
       - name: Set up gcloud
         uses: google-github-actions/setup-gcloud@v2
-
       - name: Trigger Drive → GCS Cloud Run job
         run: |
           set -euo pipefail
           unset CLOUDSDK_CORE_PROJECT CLOUDSDK_PROJECT GCLOUD_PROJECT GCP_PROJECT GOOGLE_CLOUD_PROJECT
           gcloud config set project "${PROJECT_ID}"
-
           echo "Triggering job: ${JOB_NAME}"
           echo "  Environment: ${ENV_NAME}"
-
+          echo "  run_snow_sync: ${RUN_SNOW_SYNC}"
+          ENV_VARS="RUN_SNOW_SYNC=${RUN_SNOW_SYNC}"
           if [ -n "${DRIVE_FOLDER_ID}" ]; then
             echo "  Drive folder ID (override): ${DRIVE_FOLDER_ID}"
-            gcloud run jobs execute "${JOB_NAME}" \
-              --region="${REGION}" \
-              --project="${PROJECT_ID}" \
-              --args="main.py,drive_to_gcs" \
-              --update-env-vars="DRIVE_FOLDER_ID=${DRIVE_FOLDER_ID}" \
-              --wait
+            ENV_VARS="${ENV_VARS},DRIVE_FOLDER_ID=${DRIVE_FOLDER_ID}"
           else
             echo "  Drive folder ID: (using value already configured on the job)"
-            gcloud run jobs execute "${JOB_NAME}" \
-              --region="${REGION}" \
-              --project="${PROJECT_ID}" \
-              --args="main.py,drive_to_gcs" \
-              --wait
           fi
-
+          gcloud run jobs execute "${JOB_NAME}" \
+            --region="${REGION}" \
+            --project="${PROJECT_ID}" \
+            --args="main.py,drive_to_gcs" \
+            --update-env-vars="${ENV_VARS}" \
+            --wait
           echo ""
           echo "✅ Drive sync complete"
-
       - name: Summary
         if: always()
         run: |
@@ -87,4 +78,5 @@ jobs:
             else
               echo "- **Drive folder ID:** (used job's configured value)"
             fi
+            echo "- **run_snow_sync:** \`${RUN_SNOW_SYNC}\`"
           } >> $GITHUB_STEP_SUMMARY
