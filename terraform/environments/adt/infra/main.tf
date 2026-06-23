@@ -234,7 +234,7 @@ module "gcs_eventarc_workflow_trigger" {
   location              = var.region
   trigger_name          = "pos-manifest-trigger"
   pubsub_topic_id       = module.gcs_pubsub_trigger.topic_id
-  workflow_name         = "pos_ingestion_workflow"
+  workflow_name         = module.pos_ingestion_workflow.workflow_name
   workflow_location     = var.region
   service_account_email = module.project_init.service_account_email
 }
