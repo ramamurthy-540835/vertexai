@@ -24,6 +24,14 @@ on:
         options:
           - "true"
           - "false"
+      wait_for_ready:
+        description: "Wait for analysis artifacts to appear before validating?"
+        required: true
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
       generate_analysis:
         description: "Write per-row reasoning to Cloud SQL and generate Gemini distribution analysis?"
         required: true
@@ -68,6 +76,7 @@ jobs:
       GENERATE_REPORT: ${{ github.event.inputs.generate_report || 'true' }}
       GENERATE_ANALYSIS: ${{ github.event.inputs.generate_analysis || 'true' }}
       VALIDATE_CLOUDSQL: ${{ github.event.inputs.validate_cloudsql || 'true' }}
+      WAIT_FOR_READY: ${{ github.event.inputs.wait_for_ready || 'true' }}
 
     steps:
       - name: Checkout
@@ -95,7 +104,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install pandas google-cloud-storage cloud-sql-python-connector[pg8000] sqlalchemy google-genai
 
-      - name: Verify _READY.json exists (match run completed)
+      - name: Verify match run artifacts are ready
         run: |
           set -euo pipefail
           gcloud config set project "${PROJECT_ID}"
@@ -103,20 +112,58 @@ jobs:
             echo "✗ warehouse and run_id inputs are required for deterministic analysis."
             exit 1
           fi
-          READY_PATH="gs://${BUCKET_NAME}/reports/lead_match/${PROJECT_ID}/${WAREHOUSE}/${RUN_ID}/_READY.json"
-          if gsutil ls "${READY_PATH}" &>/dev/null; then
-            echo "✓ _READY.json found: ${READY_PATH}"
-          else
-            echo "✗ _READY.json not found. Match run may still be in progress."
-            exit 1
-          fi
+
+          REPORT_PREFIX="reports/lead_match/${PROJECT_ID}/${WAREHOUSE}/${RUN_ID}"
+          READY_PATH="gs://${BUCKET_NAME}/${REPORT_PREFIX}/_READY.json"
+          MATCHES_PATH="gs://${BUCKET_NAME}/${REPORT_PREFIX}/matches.csv"
+          SUMMARY_PATH="gs://${BUCKET_NAME}/${REPORT_PREFIX}/summary.json"
+          echo "REPORT_PREFIX=${REPORT_PREFIX}" >> "$GITHUB_ENV"
+
+          ready=0
+          checks=0
+          max_checks=40
+          while true; do
+            checks=$((checks + 1))
+
+            if gsutil ls "${READY_PATH}" &>/dev/null; then
+              ready=1
+              echo "✓ _READY.json found: ${READY_PATH}"
+              break
+            fi
+
+            matches_exists=0
+            summary_exists=0
+            if gsutil ls "${MATCHES_PATH}" &>/dev/null; then
+              matches_exists=1
+            fi
+            if gsutil ls "${SUMMARY_PATH}" &>/dev/null; then
+              summary_exists=1
+            fi
+
+            if [[ "${matches_exists}" -eq 1 && "${summary_exists}" -eq 1 ]]; then
+              echo "⚠ _READY.json not found, but matches.csv and summary.json are present."
+              echo "  Proceeding with analysis artifacts as completion signal."
+              break
+            fi
+
+            if [[ "${WAIT_FOR_READY}" != "true" || "${checks}" -ge "${max_checks}" ]]; then
+              echo "✗ Match run artifacts not ready."
+              echo "  Checked:"
+              echo "  - READY: ${READY_PATH}"
+              echo "  - matches: ${MATCHES_PATH}"
+              echo "  - summary: ${SUMMARY_PATH}"
+              exit 1
+            fi
+
+            echo "⏳ Waiting for run artifacts (attempt ${checks}/${max_checks})..."
+            sleep 15
+          done
 
       - name: Download matches.csv from GCS
         run: |
           set -euo pipefail
           gcloud config set project "${PROJECT_ID}"
-          MATCHES_PATH="reports/lead_match/${PROJECT_ID}/${WAREHOUSE}/${RUN_ID}/matches.csv"
-          gsutil cp "gs://${BUCKET_NAME}/${MATCHES_PATH}" matches.csv
+          gsutil cp "gs://${BUCKET_NAME}/${REPORT_PREFIX}/matches.csv" matches.csv
           echo "Downloaded $(wc -l < matches.csv) rows"
 
       - name: Generate detailed business report
