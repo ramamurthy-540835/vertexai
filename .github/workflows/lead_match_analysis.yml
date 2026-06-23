@@ -159,11 +159,16 @@ jobs:
             sleep 15
           done
 
-      - name: Download matches.csv from GCS
+      - name: Download report artifacts from GCS
         run: |
           set -euo pipefail
           gcloud config set project "${PROJECT_ID}"
-          gsutil cp "gs://${BUCKET_NAME}/${REPORT_PREFIX}/matches.csv" matches.csv
+          REPORT_DIR="reports/lead_match/${PROJECT_ID}/${WAREHOUSE}/${RUN_ID}"
+          mkdir -p "${REPORT_DIR}"
+          gsutil cp "gs://${BUCKET_NAME}/${REPORT_PREFIX}/summary.json" "${REPORT_DIR}/summary.json"
+          gsutil cp "gs://${BUCKET_NAME}/${REPORT_PREFIX}/matches.csv" "${REPORT_DIR}/matches.csv"
+          gsutil cp "gs://${BUCKET_NAME}/${REPORT_PREFIX}/report.md" "${REPORT_DIR}/report.md" || true
+          cp "${REPORT_DIR}/matches.csv" matches.csv
           echo "Downloaded $(wc -l < matches.csv) rows"
 
       - name: Generate detailed business report
@@ -176,6 +181,7 @@ jobs:
             --report-dir "${REPORT_DIR}" \
             --cleanup-old-reports \
             --rules-path lead_match_runtime/lead_to_pos_match_rules.json
+          gsutil cp "${REPORT_DIR}/fuzzy_match_business_report.md" "gs://${BUCKET_NAME}/${REPORT_PREFIX}/fuzzy_match_business_report.md"
 
       - name: Write per-row reasoning to Cloud SQL and generate Gemini analysis
         if: env.GENERATE_ANALYSIS == 'true'
