@@ -53,6 +53,14 @@ on:
         options:
           - "true"
           - "false"
+      require_preflight:
+        description: "Require lead_match_preflight_ops.yml handoff before running?"
+        required: true
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
       dry_run:
         description: "No-write mode? true = do NOT write decisions; false = write decisions. For low-volume writes, keep false and use run_limits."
         required: true
@@ -67,7 +75,7 @@ on:
         default: ""
         type: string
       run_analysis:
-        description: "Trigger lead_match_analysis.yml after successful run?"
+        description: "Hand off to Lead Match Analysis and Reasoning after successful run?"
         required: true
         default: "true"
         type: choice
@@ -305,8 +313,70 @@ jobs:
           echo "POS_EMBEDDING_LIMIT=${POS_EMBEDDING_LIMIT}" >> "$GITHUB_ENV"
           echo "MATCH_LEAD_LIMIT=${MATCH_LEAD_LIMIT}" >> "$GITHUB_ENV"
 
+      - name: Check full preflight handoff
+        env:
+          REQUIRE_PREFLIGHT: ${{ github.event.inputs.require_preflight }}
+        run: |
+          set -euo pipefail
+          PREFLIGHT_PREFIX="gs://${BUCKET_NAME}/${HANDOFF_PREFIX}/"
+          echo "Checking preflight handoff folder: ${PREFLIGHT_PREFIX}"
+          if ! gsutil ls "${PREFLIGHT_PREFIX}" >/dev/null 2>&1; then
+            echo "::error::Preflight handoff folder is missing: ${PREFLIGHT_PREFIX}"
+            echo "::error::Run lead_match_preflight_ops.yml for warehouse=${WAREHOUSE_LABEL} before this semantic workflow."
+            if [[ "${REQUIRE_PREFLIGHT}" == "true" ]]; then
+              exit 1
+            fi
+            exit 0
+          fi
+
+          gsutil ls "${PREFLIGHT_PREFIX}" || true
+          if ! gsutil stat "${PREFLIGHT_RESULT_URI}" >/dev/null 2>&1; then
+            echo "::error::Preflight result.json is missing: ${PREFLIGHT_RESULT_URI}"
+            echo "::error::Run lead_match_preflight_ops.yml for warehouse=${WAREHOUSE_LABEL} before this semantic workflow."
+            if [[ "${REQUIRE_PREFLIGHT}" == "true" ]]; then
+              exit 1
+            fi
+            exit 0
+          fi
+
+          PREFLIGHT_INSPECT="${RUNNER_TEMP}/lead_match_existing_preflight_result.json"
+          export PREFLIGHT_INSPECT
+          gsutil cp "${PREFLIGHT_RESULT_URI}" "${PREFLIGHT_INSPECT}"
+          python - <<'PY'
+          import json
+          import os
+          import sys
+          from pathlib import Path
+
+          result = json.loads(Path(os.environ["PREFLIGHT_INSPECT"]).read_text())
+          required = result.get("required_checks") or {}
+          print("Existing preflight status:", result.get("status"))
+          print("Existing preflight ready:", result.get("ready"))
+          print("Existing preflight required_checks:", json.dumps(required, sort_keys=True))
+          errors = []
+          if result.get("status") != "PASS":
+              errors.append(f"preflight status is {result.get('status')}, expected PASS")
+          if result.get("ready") is not True:
+              errors.append(f"preflight ready is {result.get('ready')}, expected true")
+          if result.get("project") != os.environ["PROJECT_ID"]:
+              errors.append(f"preflight project is {result.get('project')}, expected {os.environ['PROJECT_ID']}")
+          if result.get("warehouse") != os.environ["WAREHOUSE_LABEL"]:
+              errors.append(f"preflight warehouse is {result.get('warehouse')}, expected {os.environ['WAREHOUSE_LABEL']}")
+          for key in ("workflow_yaml", "vertex_path"):
+              if required.get(key) != "PASS":
+                  errors.append(f"required_checks.{key} is {required.get(key)}, expected PASS")
+
+          if errors:
+              for error in errors:
+                  print(f"::error::{error}")
+              if os.environ.get("REQUIRE_PREFLIGHT") == "true":
+                  sys.exit(1)
+          else:
+              print("Full preflight handoff is ready.")
+          PY
+
       - name: Prepare lightweight readiness contract
-        if: github.event.inputs.prepare_readiness == 'true'
+        if: github.event.inputs.prepare_readiness == 'true' && github.event.inputs.require_preflight != 'true'
         run: |
           set -euo pipefail
           gcloud config set project "${PROJECT_ID}"
@@ -459,7 +529,7 @@ jobs:
             esac
           done
 
-      - name: Trigger post-match analysis workflow
+      - name: Hand off to analysis and reasoning workflow
         if: success() && github.event.inputs.wait_for_completion == 'true' && github.event.inputs.run_analysis == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
@@ -467,7 +537,7 @@ jobs:
         run: |
           set -euo pipefail
           if [[ -z "${WAREHOUSE_LABEL}" || "${WAREHOUSE_LABEL}" == "all" ]]; then
-            echo "run_analysis=true is set, but WAREHOUSE_LABEL=${WAREHOUSE_LABEL}; analysis requires explicit warehouse."
+            echo "run_analysis=true is set, but WAREHOUSE_LABEL=${WAREHOUSE_LABEL}; analysis handoff requires explicit warehouse."
             exit 0
           fi
 
@@ -477,7 +547,7 @@ jobs:
             if [[ -z "${W}" ]]; then
               continue
             fi
-            echo "Dispatching lead_match_analysis.yml for warehouse=${W}, run_id=${MATCH_RUN_ID}"
+            echo "Dispatching Lead Match Analysis and Reasoning for warehouse=${W}, run_id=${MATCH_RUN_ID}"
             gh workflow run .github/workflows/lead_match_analysis.yml \
               --ref "${ANALYSIS_WORKFLOW_REF}" \
               --field warehouse="${W}" \
@@ -511,7 +581,7 @@ jobs:
             echo "- Execution: \`${EXECUTION_NAME:-not-started}\`"
             echo "- Payload: \`${PAYLOAD:-unknown}\`"
             echo ""
-            echo "**Next**: Run lead_match_analysis.yml to generate reports and analysis."
+            echo "**Next**: Run Lead Match Analysis and Reasoning to generate reports and write reasoning metadata."
             echo ""
             echo "- Wait: \`${{ github.event.inputs.wait_for_completion }}\`"
             echo "- Deploy runtime: \`${{ github.event.inputs.deploy_runtime }}\`"

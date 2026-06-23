@@ -1,0 +1,197 @@
+name: Lead Match Analysis and Reasoning
+
+on:
+  workflow_dispatch:
+    inputs:
+      warehouse:
+        description: "Warehouse number (e.g., 115, or blank for all)"
+        required: false
+        type: string
+      run_id:
+        description: "Match run ID to analyze (auto-inferred if blank)"
+        required: false
+        type: string
+      bucket:
+        description: "GCS bucket containing match results"
+        required: false
+        default: "lead-match-ctoteam"
+        type: string
+      generate_report:
+        description: "Generate detailed business report?"
+        required: true
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
+      generate_analysis:
+        description: "Write per-row reasoning to Cloud SQL and generate Gemini distribution analysis?"
+        required: true
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
+
+jobs:
+  analyze-match-distribution:
+    name: "analysis-reasoning-writeback"
+    runs-on: ubuntu-latest
+
+    permissions:
+      id-token: write
+      contents: read
+
+    env:
+      PROJECT_ID: ctoteam
+      GOOGLE_CLOUD_PROJECT: ctoteam
+      VERTEX_PROJECT_ID: ctoteam
+      REGION: us-central1
+      CLOUDSQL_CONNECTION_NAME: ctoteam:us-central1:lead-mgmt-db
+      CLOUDSQL_DB_NAME: postgres
+      CLOUDSQL_DB_USER: postgres
+      CLOUDSQL_IAM_AUTH: "true"
+      BUCKET_NAME: ${{ github.event.inputs.bucket || 'lead-match-ctoteam' }}
+      WAREHOUSE: ${{ github.event.inputs.warehouse }}
+      RUN_ID: ${{ github.event.inputs.run_id }}
+      VERTEX_LOCATION: us-central1
+      GEMINI_MODEL: gemini-3.5-flash
+      PYTHON_VERSION: "3.11"
+      GENERATE_REPORT: ${{ github.event.inputs.generate_report || 'true' }}
+      GENERATE_ANALYSIS: ${{ github.event.inputs.generate_analysis || 'true' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Auth to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
+          service_account: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
+          create_credentials_file: true
+          export_environment_variables: true
+
+      - name: Set up Cloud SQL Proxy
+        run: |
+          set -euo pipefail
+          curl -o cloud-sql-proxy https://dl.google.com/cloudsql/cloud-sql-proxy.linux.amd64
+          chmod +x cloud-sql-proxy
+          echo "$(pwd)" >> $GITHUB_PATH
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install Python dependencies
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          pip install pandas google-cloud-storage google-cloud-sql-connector sqlalchemy google-genai pg8000
+
+      - name: Verify _READY.json exists (match run completed)
+        run: |
+          set -euo pipefail
+          gcloud config set project "${PROJECT_ID}"
+          if [[ -z "${WAREHOUSE}" || -z "${RUN_ID}" ]]; then
+            echo "✗ warehouse and run_id inputs are required for deterministic analysis."
+            exit 1
+          fi
+          READY_PATH="gs://${BUCKET_NAME}/reports/lead_match/${PROJECT_ID}/${WAREHOUSE}/${RUN_ID}/_READY.json"
+          if gsutil ls "${READY_PATH}" &>/dev/null; then
+            echo "✓ _READY.json found: ${READY_PATH}"
+          else
+            echo "✗ _READY.json not found. Match run may still be in progress."
+            exit 1
+          fi
+
+      - name: Download matches.csv from GCS
+        run: |
+          set -euo pipefail
+          gcloud config set project "${PROJECT_ID}"
+          MATCHES_PATH="reports/lead_match/${PROJECT_ID}/${WAREHOUSE}/${RUN_ID}/matches.csv"
+          gsutil cp "gs://${BUCKET_NAME}/${MATCHES_PATH}" matches.csv
+          echo "Downloaded $(wc -l < matches.csv) rows"
+
+      - name: Generate detailed business report
+        if: env.GENERATE_REPORT == 'true'
+        run: |
+          set -euo pipefail
+          gcloud config set project "${PROJECT_ID}"
+          REPORT_DIR="reports/lead_match/${PROJECT_ID}/${WAREHOUSE}/${RUN_ID}"
+          python3 scripts/generate_fuzzy_match_business_report.py \
+            --report-dir "${REPORT_DIR}" \
+            --cleanup-old-reports \
+            --rules-path lead_match_runtime/lead_to_pos_match_rules.json
+
+      - name: Write per-row reasoning to Cloud SQL and generate Gemini analysis
+        if: env.GENERATE_ANALYSIS == 'true'
+        run: |
+          set -euo pipefail
+          python scripts/analyze_match_distribution.py \
+            --bucket "${BUCKET_NAME}" \
+            --warehouse "${WAREHOUSE}" \
+            --run-id "${RUN_ID}" \
+            --rules-json lead_match_runtime/lead_to_pos_match_rules.json \
+            --analysis-run-id "${GITHUB_RUN_ID}" \
+            --analysis-run-attempt "${GITHUB_RUN_ATTEMPT}" \
+            --analysis-workflow "${GITHUB_WORKFLOW}"
+
+      - name: Upload narrative to GCS
+        if: env.GENERATE_ANALYSIS == 'true'
+        run: |
+          set -euo pipefail
+          gcloud config set project "${PROJECT_ID}"
+          NARRATIVE_SRC="comparative_analysis.md"
+          NARRATIVE_DST="gs://${BUCKET_NAME}/reports/lead_match/${PROJECT_ID}/${WAREHOUSE}/${RUN_ID}/comparative_analysis.md"
+          if [[ -f "${NARRATIVE_SRC}" ]]; then
+            gsutil cp "${NARRATIVE_SRC}" "${NARRATIVE_DST}"
+            echo "✓ Narrative uploaded to ${NARRATIVE_DST}"
+          else
+            echo "⚠ No narrative generated (Gemini may have failed)"
+          fi
+
+      - name: Validate analysis
+        if: env.GENERATE_ANALYSIS == 'true'
+        run: |
+          set -euo pipefail
+          gcloud config set project "${PROJECT_ID}"
+          NARRATIVE_PATH="gs://${BUCKET_NAME}/reports/lead_match/${PROJECT_ID}/${WAREHOUSE}/${RUN_ID}/comparative_analysis.md"
+          if gsutil ls "${NARRATIVE_PATH}" &>/dev/null; then
+            echo "✓ Narrative exists"
+            echo ""
+            echo "## Narrative Preview"
+            gsutil cat "${NARRATIVE_PATH}" | head -50
+          else
+            echo "⚠ Narrative not found"
+            exit 1
+          fi
+
+      - name: Summary
+        run: |
+          {
+            echo "## Lead Match Analysis and Reasoning"
+            echo ""
+            echo "- Project: \`${PROJECT_ID}\`"
+            echo "- Warehouse: \`${WAREHOUSE}\`"
+            echo "- Run: \`${RUN_ID}\`"
+            echo "- Bucket: \`${BUCKET_NAME}\`"
+            echo ""
+            if [[ "${GENERATE_REPORT}" == "true" ]]; then
+              echo "### Business Report"
+              echo "- \`gs://${BUCKET_NAME}/reports/lead_match/${PROJECT_ID}/${WAREHOUSE}/${RUN_ID}/report.md\`"
+              echo "- \`gs://${BUCKET_NAME}/reports/lead_match/${PROJECT_ID}/${WAREHOUSE}/${RUN_ID}/summary.json\`"
+              echo "- \`gs://${BUCKET_NAME}/reports/lead_match/${PROJECT_ID}/${WAREHOUSE}/${RUN_ID}/matches.csv\`"
+              echo ""
+            fi
+            if [[ "${GENERATE_ANALYSIS}" == "true" ]]; then
+              echo "### Cloud SQL Reasoning + Gemini Distribution Analysis"
+              echo "- Narrative: \`gs://${BUCKET_NAME}/reports/lead_match/${PROJECT_ID}/${WAREHOUSE}/${RUN_ID}/comparative_analysis.md\`"
+              echo "- Per-row reasoning written to Cloud SQL by \`scripts/analyze_match_distribution.py\`"
+              echo ""
+            fi
+            echo "### Next"
+            echo "- View in reporting app: \`/analysis?warehouse=${WAREHOUSE}&run_id=${RUN_ID}\`"
+            echo "- Search matches: \`/search?warehouse=${WAREHOUSE}&run_id=${RUN_ID}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
