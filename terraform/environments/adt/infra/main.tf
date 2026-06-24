@@ -193,7 +193,7 @@ module "pos_ingestion_workflow" {
   workflow_description = "Ingestion of point of sales data"
 }
 
-/*module "pos_ingestion_workflow_test" {
+module "pos_ingestion_workflow_test" {
   source                = "../../../modules/workflows"
   project_id            = var.projectId
   region                = var.region
@@ -201,7 +201,7 @@ module "pos_ingestion_workflow" {
   workflow_name = "pos_test_ingestion_workflow"
   workflow_path = "../../../modules/workflows/pos_dataflow_workflow.yaml"
   workflow_description = "Ingestion of point of sales data"
-}*/
+}
 
 
 module "security_monitoring" {
@@ -249,17 +249,17 @@ module "gcs_eventarc_workflow_trigger" {
   service_account_email = module.project_init.service_account_email
 }
 
-/*module "gcs_eventarc_workflow_trigger_test" {
+module "gcs_eventarc_workflow_trigger_test" {
   source = "../../../modules/event_arc"
 
   project_id            = var.projectId
   location              = var.region
   trigger_name          = "pos-manifest-trigger-test"
   pubsub_topic_id       = module.gcs_pubsub_trigger.topic_id
-  workflow_name         = "pos_test_ingestion_workflow"
+  workflow_name         = module.pos_ingestion_workflow_test.workflow_name
   workflow_location     = var.region
   service_account_email = module.project_init.service_account_email
-}*/
+}
 
 ###############################################################################
 # Outputs
