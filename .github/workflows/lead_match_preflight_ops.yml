@@ -73,19 +73,14 @@ jobs:
       SCHEMA_NAME: ${{ github.event.inputs.schema_name }}
       INSTANCE_NAME: ${{ github.event.inputs.instance_name }}
       WORKFLOW_NAME: lead_match_workflow
-      LEAD_JOB: lead-match-lead-embeddings
-      POS_JOB: lead-match-pos-embeddings
-      MATCH_JOB: lead-match-fuzzy-match
       # Reuse the DB-wired fuzzy job and override args to run index maintenance.
       INDEX_JOB: lead-match-fuzzy-match
-      SMOKE_JOB: lead-match-warehouse-smoke
       BUCKET_NAME: ${{ github.event.inputs.bucket }}
       EMBEDDING_DIMENSION: "768"
       WORKFLOW_YAML_STATUS: FAIL
       VERTEX_PATH_STATUS: FAIL
       CLOUD_SQL_SMOKE_STATUS: SKIPPED
       CLOUD_SQL_INDEX_STATUS: SKIPPED
-      OPTIONAL_CHECKS_JSON: '{}'
 
     steps:
       - name: Checkout
@@ -162,7 +157,7 @@ jobs:
             echo "- Cloud SQL instance: \`${INSTANCE_NAME}\`"
             echo "- Schema: \`${SCHEMA_NAME}\`"
             echo "- Workflow: \`${WORKFLOW_NAME}\`"
-            echo "- Cloud Run Jobs: \`${LEAD_JOB}\`, \`${POS_JOB}\`, \`${INDEX_JOB}\`, \`${MATCH_JOB}\`"
+            echo "- Cloud Run Jobs: \`lead-match-ensure-indexes\`, \`lead-match-exact-match\`, \`lead-match-lead-embeddings\`, \`lead-match-pos-embeddings\`, \`lead-match-fuzzy-match\`, \`lead-match-report\`"
             echo "- Warehouse: \`${WAREHOUSE_LABEL}\`"
             echo "- Smoke tests: \`${{ github.event.inputs.run_smoke_tests }}\`"
             echo "- Cloud SQL index maintenance: \`${{ github.event.inputs.run_cloud_sql_index_maintenance }}\`"
@@ -337,75 +332,6 @@ jobs:
             echo "## Vertex AI Embedding Smoke Test"
             echo '```json'
             cat "${RUNNER_TEMP}/gemini_embedding_client_smoke_test_results.json"
-            echo '```'
-            echo ""
-          } >> "${REPORT_FILE}"
-
-      - name: Check Cloud SQL smoke job contract
-        if: github.event.inputs.run_smoke_tests == 'true'
-        timeout-minutes: 5
-        run: |
-          set -euo pipefail
-          {
-            echo "CLOUD_SQL_SMOKE_STATUS=SKIPPED"
-          } >> "$GITHUB_ENV"
-
-          # Warehouse smoke test must run inside Cloud Run Job, not GitHub runner, because Cloud SQL is accessed through GCP runtime connectivity.
-          # Direct DB access from the GitHub runner is intentionally NOT allowed.
-          # Cloud SQL validation must run inside GCP via a Cloud Run Job.
-          if [[ "${WAREHOUSE_LABEL}" == "all" ]]; then
-            {
-              echo "## Cloud SQL Warehouse Smoke Test"
-              echo ""
-              echo "Skipped: warehouse smoke test requires one numeric warehouse, but input was \`all\`."
-              echo ""
-            } >> "${REPORT_FILE}"
-            exit 0
-          fi
-
-          if ! gcloud run jobs describe "${SMOKE_JOB}" --region="${REGION}" >/dev/null 2>&1; then
-            {
-              echo "## Cloud SQL Warehouse Smoke Test"
-              echo ""
-              echo "Skipped: Cloud Run Job \`${SMOKE_JOB}\` is not deployed in \`${REGION}\`."
-              echo "GitHub Actions does not connect to Cloud SQL directly; deploy the job first."
-              echo ""
-            } >> "${REPORT_FILE}"
-            exit 0
-          fi
-
-          set +e
-          EXECUTION_NAME="$(gcloud run jobs execute "${SMOKE_JOB}" \
-            --project="${PROJECT_ID}" \
-            --region="${REGION}" \
-            --update-env-vars="WAREHOUSE=${WAREHOUSE_LABEL},WAREHOUSE_SCOPE=${WAREHOUSE_LABEL}" \
-            --wait \
-            --format='value(metadata.name)')"
-          EXECUTION_RC=$?
-          set -e
-
-          if [[ ${EXECUTION_RC} -eq 0 ]]; then
-            CLOUD_SQL_SMOKE_STATUS="PASS"
-            {
-              echo "CLOUD_SQL_SMOKE_STATUS=PASS"
-            } >> "$GITHUB_ENV"
-          else
-            CLOUD_SQL_SMOKE_STATUS="FAIL"
-            {
-              echo "CLOUD_SQL_SMOKE_STATUS=FAIL"
-            } >> "$GITHUB_ENV"
-          fi
-
-          {
-            echo "## Cloud SQL Warehouse Smoke Test"
-            echo ""
-            echo "Triggered Cloud Run Job: \`${SMOKE_JOB}\`"
-            echo "Execution: \`${EXECUTION_NAME}\`"
-            echo "Status: \`${CLOUD_SQL_SMOKE_STATUS}\`"
-            echo ""
-            echo "Inspect logs with:"
-            echo '```bash'
-            echo "gcloud run jobs executions describe ${EXECUTION_NAME} --region=${REGION}"
             echo '```'
             echo ""
           } >> "${REPORT_FILE}"

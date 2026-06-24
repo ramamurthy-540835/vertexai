@@ -3,11 +3,6 @@ name: lead_match_reporting_app.yml
 on:
   workflow_dispatch:
     inputs:
-      warehouse:
-        description: "Optional manifest label — does NOT affect the deployed service or URL. The app serves all warehouses via ?warehouse=<id>."
-        required: false
-        default: ""
-        type: string
       bucket:
         description: "GCS bucket containing lead-match reports"
         required: false
