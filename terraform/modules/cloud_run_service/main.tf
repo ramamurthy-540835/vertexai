@@ -25,7 +25,7 @@ resource "google_cloud_run_v2_service" "this" {
     }
 
     containers {
-      image = var.image
+      image = "us-docker.pkg.dev/gcp-prj-images/gcp-gar-repo-mbrshp/cloud-run-service:${var.service_image_tag}"
 
       resources {
         limits = {

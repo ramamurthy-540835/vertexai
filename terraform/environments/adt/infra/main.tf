@@ -291,11 +291,11 @@ module "cloud_run_service" {
   project_id             = var.projectId
   region                 = var.region
   service_name           = "lead-mgmt-service"
-  image                  = "us-docker.pkg.dev/gcp-prj-images/gcp-gar-repo-mbrshp/cloud-run-service:${var.service_image_tag}"
   service_account_email  = module.project_init.service_account_email
   network                = "projects/gcp-prj-transit-hub/global/networks/gcp-vpc-np-host"
   subnet                 = "projects/gcp-prj-transit-hub/regions/us-central1/subnetworks/gcp-snt-np-usc1-601-cloudrunjobs-np"
   env_vars               = local.parsed_env_vars["service"]
+  service_image_tag      = var.service_image_tag
 }
 
 module "lead_mgmt_glb_backend" {

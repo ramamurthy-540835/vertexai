@@ -14,11 +14,6 @@ variable "service_name" {
   type        = string
 }
 
-variable "image" {
-  description = "Full image reference including tag/digest, e.g. us-docker.pkg.dev/.../cloud-run-service:<sha>"
-  type        = string
-}
-
 variable "service_account_email" {
   description = "Service account email the Cloud Run service runs as"
   type        = string
