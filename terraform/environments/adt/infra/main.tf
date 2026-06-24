@@ -193,7 +193,7 @@ module "pos_ingestion_workflow" {
   workflow_description = "Ingestion of point of sales data"
 }
 
-module "pos_ingestion_workflow" {
+module "pos_ingestion_workflow_test" {
   source                = "../../../modules/workflows"
   project_id            = var.projectId
   region                = var.region
@@ -249,7 +249,7 @@ module "gcs_eventarc_workflow_trigger" {
   service_account_email = module.project_init.service_account_email
 }
 
-module "gcs_eventarc_workflow_trigger" {
+module "gcs_eventarc_workflow_trigger_test" {
   source = "../../../modules/event_arc"
 
   project_id            = var.projectId
