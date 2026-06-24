@@ -3,6 +3,7 @@ from datetime import datetime
 import time
 import random
 import uuid
+import json
 import numpy as np
 from pgvector.sqlalchemy import Vector
 from google import genai
@@ -10,6 +11,7 @@ from google.genai.types import EmbedContentConfig, HttpOptions
 from sqlalchemy.dialects.postgresql import TIMESTAMP
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from sqlalchemy import text, bindparam
+import os
 
 from costco.leadmgmt.config.Configuration import JobConfig
 from costco.leadmgmt.util.apputil import load_file_from_gcs
@@ -20,9 +22,37 @@ from costco.leadmgmt.util.fiscal_year import get_costco_fiscal_info
 # ============================================================
 # CONFIGURATION
 # ============================================================
-MODEL_NAME = "gemini-embedding-001"
-TASK_TYPE = "SEMANTIC_SIMILARITY"
-OUTPUT_DIMENSIONALITY = 768
+def load_embedding_config():
+    """Load embedding model and dimension from business rules JSON. Fails fast if not found."""
+    env_path = os.environ.get("LEAD_POS_RULES_PATH")
+    repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))))
+    paths = [
+        env_path,
+        os.path.join(repo_root, "lead_match_runtime/lead_to_pos_match_rules.json"),
+        os.path.join(os.getcwd(), "lead_match_runtime/lead_to_pos_match_rules.json"),
+    ]
+    for path in paths:
+        if not path or not os.path.exists(path):
+            continue
+        try:
+            with open(path, "r") as f:
+                rules = json.load(f)
+                emb = rules["embeddings"]
+                return {
+                    "model": emb["model"],
+                    "task_type": emb["task_type"],
+                    "output_dimensionality": emb["output_dimensionality"],
+                }
+        except Exception as e:
+            print(f"[WARN] Failed to parse rules from {path}: {e}")
+    raise FileNotFoundError(
+        "Business rules JSON not found. Set LEAD_POS_RULES_PATH or ensure lead_to_pos_match_rules.json exists."
+    )
+
+embedding_config = load_embedding_config()
+MODEL_NAME = embedding_config["model"]
+TASK_TYPE = embedding_config["task_type"]
+OUTPUT_DIMENSIONALITY = embedding_config["output_dimensionality"]
 CHUNK_SIZE = 2000
 MAX_WORKERS = 5
 INTERNAL_BATCH_SIZE = 25

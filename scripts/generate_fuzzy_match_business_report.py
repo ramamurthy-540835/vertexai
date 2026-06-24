@@ -77,17 +77,23 @@ def load_report_rules(path: Path) -> ReportRules:
     config = json.loads(path.read_text(encoding="utf-8"))
     decision = config["decision_rules"]
     fields = config["embeddings"]["fields"]
+    subtiers = decision.get("optional_confidence_subtiers", {}).get("subtiers", [])
+    lifecycle = str(decision.get("fuzzy_lifecycle_state", "Potential"))
+    bands_from_subtiers = [
+        {**s, "lifecycle_state": lifecycle, "match_type": str(decision.get("fuzzy_match_type", "Fuzzy"))}
+        for s in subtiers
+    ]
     return ReportRules(
         exact_score=float(decision["exact_score"]),
         no_match_max_score=float(decision["no_match_max_score"]),
         fuzzy_score_bands=sorted(
-            decision["fuzzy_score_bands"],
+            bands_from_subtiers,
             key=lambda band: float(band["min_score"]),
             reverse=True,
         ),
         scoring_formula=str(config["scoring"]["precision_score_formula"]),
-        address_weight=float(fields["full_address"]["weight"]),
-        business_weight=float(fields["business_name"]["weight"]),
+        address_weight=float(fields["address_variant"]["weight"]),
+        business_weight=float(fields["name_variant"]["weight"]),
         recall_gate_role=str(fields["combined_field"]["role"]),
     )
 

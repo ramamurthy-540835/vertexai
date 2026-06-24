@@ -36,10 +36,12 @@ def load_business_rules(path: str | os.PathLike[str] | None = None) -> dict[str,
 
     required_keys = {
         "candidate_retrieval",
-        "confidence_bands",
         "decision_rules",
         "embeddings",
         "environment",
+        "fiscal_rules",
+        "matching_markers",
+        "matching_sets",
         "override_policy",
         "resolution",
         "scoring",
@@ -118,7 +120,31 @@ def fuzzy_reject_below_floor(config: dict[str, Any]) -> bool:
 
 
 def fuzzy_score_bands(config: dict[str, Any]) -> list[dict[str, Any]]:
-    bands = list(decision_rules(config)["fuzzy_score_bands"])
+    dr = decision_rules(config)
+    lifecycle = str(dr.get("fuzzy_lifecycle_state", "Potential"))
+    match_type = str(dr.get("fuzzy_match_type", "Fuzzy"))
+    subtiers = dr.get("optional_confidence_subtiers", {}).get("subtiers", [])
+    if subtiers:
+        bands = [
+            {
+                "name": s["name"],
+                "min_score": s["min_score"],
+                "max_score": s["max_score"],
+                "lifecycle_state": lifecycle,
+                "match_type": match_type,
+            }
+            for s in subtiers
+        ]
+    else:
+        bands = [
+            {
+                "name": "Potential",
+                "min_score": float(dr["fuzzy_qualify_min_score"]),
+                "max_score": float(dr["fuzzy_max_score"]),
+                "lifecycle_state": lifecycle,
+                "match_type": match_type,
+            }
+        ]
     return sorted(bands, key=lambda band: float(band["min_score"]), reverse=True)
 
 
@@ -127,9 +153,10 @@ def embedding_field_weight(config: dict[str, Any], field: str) -> float:
 
 
 def semantic_precision_weights(config: dict[str, Any]) -> tuple[float, float]:
+    fields = config["embeddings"]["fields"]
     return (
-        embedding_field_weight(config, "full_address"),
-        embedding_field_weight(config, "business_name"),
+        float(fields["address_variant"]["weight"]),
+        float(fields["name_variant"]["weight"]),
     )
 
 
@@ -138,6 +165,7 @@ def precision_score_formula(config: dict[str, Any]) -> str:
 
 
 def confidence_bands(config: dict[str, Any]) -> list[dict[str, Any]]:
+    dr = decision_rules(config)
     bands = [
         {
             "name": band["name"],
@@ -149,21 +177,21 @@ def confidence_bands(config: dict[str, Any]) -> list[dict[str, Any]]:
     ]
     bands.append(
         {
-            "name": decision_rules(config)["below_floor"]["label"],
-            "state": no_match_lifecycle_state(config),
+            "name": "No Match",
+            "state": "No Match",
             "min_score": 0,
-            "max_score": float(decision_rules(config)["no_match_max_score"]),
+            "max_score": float(dr["no_match_max_score"]),
         }
     )
     return sorted(bands, key=lambda band: float(band["min_score"]), reverse=True)
 
 
 def fuzzy_lifecycle_state(score: float, config: dict[str, Any]) -> str:
-    numeric_score = float(score)
-    for band in fuzzy_score_bands(config):
-        if float(band["min_score"]) <= numeric_score <= float(band["max_score"]):
-            return str(band["lifecycle_state"])
-    return str(decision_rules(config)["below_floor"]["lifecycle_state"])
+    dr = decision_rules(config)
+    floor = float(dr["fuzzy_qualify_min_score"])
+    if float(score) >= floor:
+        return str(dr.get("fuzzy_lifecycle_state", "Potential"))
+    return str(dr.get("no_match_lifecycle_state", "No Match"))
 
 
 def lifecycle_state_for_match_type(
@@ -347,16 +375,21 @@ def apply_deterministic_boost(
     lead: dict[str, Any],
     pos: dict[str, Any],
     config: dict[str, Any],
-) -> float:
+    winning_set_def: dict[str, Any] | None = None,
+) -> tuple[float, float, float]:
     boosts = config["scoring"]["deterministic_boosts"]
     boosted = score
     lead_identity = lead if "combined_field" in lead else normalize_business_identity(lead)
-    pos_identity = pos if "combined_field" in pos else normalize_business_identity(pos)
-    if lead_identity["email"] and lead_identity["email"] == pos_identity["email"]:
-        boosted += boosts["email_exact_match"]
-    if lead_identity["phone"] and lead_identity["phone"] == pos_identity["phone"]:
-        boosted += boosts["phone_exact_match"]
-    return min(boosted, boosts["cap"])
+    email_field = (winning_set_def or {}).get("email_field", "email")
+    phone_field = (winning_set_def or {}).get("phone_field", "phone")
+    lead_email = normalize_email(lead_identity.get("email", ""))
+    lead_phone = normalize_phone(lead_identity.get("phone", ""))
+    pos_email = normalize_email(pos.get(email_field, ""))
+    pos_phone = normalize_phone(pos.get(phone_field, ""))
+    email_boost = float(boosts["email_exact_match"]) if lead_email and lead_email == pos_email else 0.0
+    phone_boost = float(boosts["phone_exact_match"]) if lead_phone and lead_phone == pos_phone else 0.0
+    boosted += email_boost + phone_boost
+    return min(boosted, float(boosts["cap"])), email_boost, phone_boost
 
 
 def assign_confidence_band(score: float, config: dict[str, Any]) -> dict[str, Any]:
@@ -469,3 +502,181 @@ def assign_lifecycle_state(match: dict[str, Any], config: dict[str, Any]) -> str
         return closed_existing_lifecycle_state(config)
     score = float(match.get("final_score") or match.get("similarity_score") or 0)
     return assign_confidence_band(score, config)["state"]
+
+
+# ─────────────────────────────────────────────────────────────
+# v2.3 helpers: six-set matching, fiscal rules, OMS variants
+# ─────────────────────────────────────────────────────────────
+
+def matching_sets(config: dict[str, Any]) -> list[dict[str, Any]]:
+    return sorted(
+        list(config["matching_sets"]["sets"]),
+        key=lambda item: int(item["set"]),
+    )
+
+
+def matching_set_definitions(config: dict[str, Any]) -> list[dict[str, Any]]:
+    return matching_sets(config)
+
+
+def matching_set_by_id(config: dict[str, Any], set_id: int) -> dict[str, Any] | None:
+    for item in matching_sets(config):
+        if int(item.get("set", -1)) == int(set_id):
+            return dict(item)
+    return None
+
+
+def matching_sets_fields(config: dict[str, Any]) -> set[str]:
+    fields: set[str] = set()
+    for item in matching_sets(config):
+        fields.add(str(item.get("name_field", "")).strip())
+        fields.add(str(item.get("address_field", "")).strip())
+        fields.add(str(item.get("email_field", "")).strip())
+        fields.add(str(item.get("phone_field", "")).strip())
+    return fields
+
+
+def matching_set_email_fields(config: dict[str, Any]) -> list[str]:
+    fields = [str(item.get("email_field", "")).strip() for item in matching_sets(config)]
+    return list(dict.fromkeys(field for field in fields if field))
+
+
+def matching_set_phone_fields(config: dict[str, Any]) -> list[str]:
+    fields = [str(item.get("phone_field", "")).strip() for item in matching_sets(config)]
+    return list(dict.fromkeys(field for field in fields if field))
+
+
+def matching_set_name_fields(config: dict[str, Any]) -> list[str]:
+    fields = [str(item.get("name_field", "")).strip() for item in matching_sets(config)]
+    return list(dict.fromkeys(field for field in fields if field))
+
+
+def matching_set_address_fields(config: dict[str, Any]) -> list[str]:
+    fields = [str(item.get("address_field", "")).strip() for item in matching_sets(config)]
+    return list(dict.fromkeys(field for field in fields if field))
+
+
+def closed_existing_lifecycle_state_from_fiscal_rules(config: dict[str, Any]) -> str:
+    classification = config["fiscal_rules"].get("classification", [])
+    if classification:
+        for rule in classification:
+            if str(rule.get("name", "")).lower().startswith("closed"):
+                state = rule.get("lifecycle_state")
+                if state:
+                    return str(state)
+    return str(config["semantic_definitions"].get("closed_existing", "Closed - Existing"))
+
+
+def fuzzy_boost_rule(config: dict[str, Any]) -> dict[str, Any]:
+    return dict(config["scoring"].get("deterministic_boosts", {}))
+
+
+def fuzzy_denom(config: dict[str, Any]) -> float:
+    return float(
+        semantic_precision_weights(config)[0] + semantic_precision_weights(config)[1]
+    )
+
+
+def pos_embedding_variant_field_aliases(config: dict[str, Any]) -> dict[str, str]:
+    """Map business rule variant names to current pos_embeddings vector columns."""
+    return {
+        "full_address": "address_embedding",
+        "full_oms_address": "oms_address_embedding",
+        "full_oms2_address": "oms2_address_embedding",
+        "business_name": "name_embedding",
+        "oms_company_name": "oms_company_name_embedding",
+        "oms2_company_name": "oms2_company_name_embedding",
+        "combined_field": "combined_embedding",
+    }
+
+
+def pos_transaction_field_aliases(config: dict[str, Any]) -> dict[str, str]:
+    return {
+        "email": "email",
+        "phone": "phone",
+        "email_1_oms": "email_1_oms",
+        "phone_1_oms": "phone_1_oms",
+        "email_2_oms": "email_2_oms",
+        "phone_2_oms": "phone_2_oms",
+    }
+
+
+def matching_set_selection_rule(config: dict[str, Any]) -> str:
+    return str(config["matching_sets"]["selection_rule"])
+
+
+def matching_set_scoring_formula(config: dict[str, Any]) -> str:
+    return str(config["matching_sets"]["scoring_formula"])
+
+
+def skip_set_if_variant_blank(config: dict[str, Any]) -> bool:
+    return bool(config["matching_sets"].get("skip_set_if_variant_blank", True))
+
+
+def fiscal_periods_per_year(config: dict[str, Any]) -> int:
+    return int(config["fiscal_rules"]["periods_per_year"])
+
+
+def fiscal_ce_period_window(config: dict[str, Any]) -> int:
+    return int(config["fiscal_rules"]["ce_period_window"])
+
+
+def name_variant_sources(config: dict[str, Any]) -> list[str]:
+    return list(config["matching_markers"]["name_variant_sources"])
+
+
+def address_variant_sources(config: dict[str, Any]) -> list[str]:
+    return list(config["matching_markers"]["address_variant_sources"])
+
+
+def fuzzy_lifecycle_state_label(config: dict[str, Any]) -> str:
+    return str(decision_rules(config).get("fuzzy_lifecycle_state", "Potential"))
+
+
+def confidence_subtier(score: float, config: dict[str, Any]) -> str | None:
+    subtiers = decision_rules(config).get("optional_confidence_subtiers", {}).get("subtiers", [])
+    numeric = float(score)
+    for s in sorted(subtiers, key=lambda x: float(x["min_score"]), reverse=True):
+        if float(s["min_score"]) <= numeric <= float(s["max_score"]):
+            return str(s["name"])
+    return None
+
+
+def normalize_email(value: Any) -> str:
+    return str(value or "").strip().lower()
+
+
+def build_oms_address(record: dict[str, Any], prefix: str = "oms") -> str:
+    if prefix == "oms":
+        parts = [
+            record.get("oms_address_line_1"),
+            record.get("oms_city"),
+            record.get("oms_state"),
+            record.get("oms_zip"),
+        ]
+    else:
+        parts = [
+            record.get("oms_address_line_1_v2"),
+            record.get("oms_city_2"),
+            record.get("oms_state_2"),
+            record.get("oms_zip_2"),
+        ]
+    raw = " ".join(str(p) for p in parts if p and str(p).strip())
+    return normalize_address(raw) if raw.strip() else ""
+
+
+def build_pos_variant_texts(record: dict[str, Any]) -> dict[str, str | None]:
+    identity = normalize_business_identity(record)
+    oms_company = normalize_text(record.get("oms_company_name"), uppercase=True)
+    oms2_company = normalize_text(record.get("oms2_company_name"), uppercase=True)
+    oms_addr = build_oms_address(record, "oms")
+    oms2_addr = build_oms_address(record, "oms2")
+    return {
+        "combined_field": identity.get("combined_field") or None,
+        "business_name": identity.get("business_name") or None,
+        "full_address": identity.get("full_address") or None,
+        "oms_company_name": oms_company or None,
+        "oms2_company_name": oms2_company or None,
+        "full_oms_address": oms_addr or None,
+        "full_oms2_address": oms2_addr or None,
+    }

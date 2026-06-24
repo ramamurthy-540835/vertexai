@@ -38,16 +38,23 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-GUARDRAIL_SYSTEM_INSTRUCTION = (
-    "The scoring rules are FIXED and authoritative: floor 70, fuzzy ceiling 99.999, "
-    "bands 90-99.999 / 85-89.999 / 70-84.999, formula (4*address+3*name)/7. "
-    "Do NOT propose changing the floor, ceiling, formula, or band boundaries. "
-    "Do NOT call score clustering an 'artifact' — clustering near a cutoff is "
-    "expected from the weighted formula. You may note operational impact (e.g. "
-    "'most rows fall in Potential, large review queue') and recommend ONLY: "
-    "calibrate thresholds against a human-labeled validation set. Never recommend "
-    "an auto-reject or auto-promote cutoff that contradicts the floor of 70."
-)
+def _build_guardrail(rules: dict) -> str:
+    dr = rules["decision_rules"]
+    floor = dr["fuzzy_qualify_min_score"]
+    ceiling = dr["fuzzy_max_score"]
+    formula = rules["scoring"]["precision_score_formula"]
+    subtiers = dr.get("optional_confidence_subtiers", {}).get("subtiers", [])
+    band_str = " / ".join(f"{s['min_score']}-{s['max_score']}" for s in sorted(subtiers, key=lambda x: -x["min_score"]))
+    return (
+        f"The scoring rules are FIXED and authoritative: floor {floor}, fuzzy ceiling {ceiling}, "
+        f"bands {band_str}, formula {formula}. "
+        "Do NOT propose changing the floor, ceiling, formula, or band boundaries. "
+        "Do NOT call score clustering an 'artifact' — clustering near a cutoff is "
+        "expected from the weighted formula. You may note operational impact (e.g. "
+        "'most rows fall in Potential, large review queue') and recommend ONLY: "
+        f"calibrate thresholds against a human-labeled validation set. Never recommend "
+        f"an auto-reject or auto-promote cutoff that contradicts the floor of {floor}."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -145,8 +152,23 @@ def compute_deterministic_facts(
     """Compute all deterministic facts from summary.json + matches.csv."""
     df = ensure_band_column(df, rules)
 
-    exact_df = df[df["match_type"] == "Exact"]
-    fuzzy_df = df[df["match_type"].isin(["Fuzzy", "Manual Review"])]
+    dr = rules.get("decision_rules", {})
+    exact_type = str(dr.get("exact_match_type", "Exact"))
+    fuzzy_type = str(dr.get("fuzzy_match_type", "Fuzzy"))
+    mr_type = str(dr.get("manual_review_match_type", "Manual Review"))
+    exact_state = str(dr.get("exact_lifecycle_state", "Closed - Match"))
+    fuzzy_state = str(dr.get("fuzzy_lifecycle_state", "Potential"))
+    fuzzy_floor = float(dr["fuzzy_qualify_min_score"])
+    fuzzy_ceil = float(dr["fuzzy_max_score"])
+    subtiers = sorted(
+        dr.get("optional_confidence_subtiers", {}).get("subtiers", []),
+        key=lambda s: float(s["min_score"]),
+    )
+    high_min = float(subtiers[2]["min_score"]) if len(subtiers) >= 3 else fuzzy_floor
+    mid_min = float(subtiers[1]["min_score"]) if len(subtiers) >= 2 else fuzzy_floor
+
+    exact_df = df[df["match_type"] == exact_type]
+    fuzzy_df = df[df["match_type"].isin([fuzzy_type, mr_type])]
 
     # --- Counts ---
     counts = {
@@ -154,9 +176,9 @@ def compute_deterministic_facts(
         "pos": int(summary.get("pos_rows", 0)),
         "lead_embeddings": int(summary.get("lead_embedding_rows", 0)),
         "pos_embeddings": int(summary.get("pos_embedding_rows", 0)),
-        "exact": int(summary.get("match_type_counts", {}).get("Exact", 0)),
-        "fuzzy": int(summary.get("match_type_counts", {}).get("Fuzzy", 0)),
-        "manual_review": int(summary.get("match_type_counts", {}).get("Manual Review", 0)),
+        "exact": int(summary.get("match_type_counts", {}).get(exact_type, 0)),
+        "fuzzy": int(summary.get("match_type_counts", {}).get(fuzzy_type, 0)),
+        "manual_review": int(summary.get("match_type_counts", {}).get(mr_type, 0)),
         "total_rows": int(summary.get("match_rows", len(df))),
         "primary_transactions": int(summary.get("primary_transaction_count", 0)),
     }
@@ -168,13 +190,13 @@ def compute_deterministic_facts(
 
     band_summary = {
         "matching_high_90_99": int(
-            ((df["final_score"] >= 90) & (df["final_score"] <= 99.999) & (df["match_type"] != "Exact")).sum()
+            ((df["final_score"] >= high_min) & (df["final_score"] <= fuzzy_ceil) & (df["match_type"] != exact_type)).sum()
         ),
         "potential_medium_85_89": int(
-            ((df["final_score"] >= 85) & (df["final_score"] < 90) & (df["match_type"] != "Exact")).sum()
+            ((df["final_score"] >= mid_min) & (df["final_score"] < high_min) & (df["match_type"] != exact_type)).sum()
         ),
         "potential_low_70_84": int(
-            ((df["final_score"] >= 70) & (df["final_score"] < 85) & (df["match_type"] != "Exact")).sum()
+            ((df["final_score"] >= fuzzy_floor) & (df["final_score"] < mid_min) & (df["match_type"] != exact_type)).sum()
         ),
     }
 
@@ -192,7 +214,7 @@ def compute_deterministic_facts(
             "std": round(float(non_exact_scores.std()), 3),
         }
         hist, _ = pd.cut(
-            non_exact_scores, bins=range(70, 102, 1), right=False, retbins=True
+            non_exact_scores, bins=range(int(fuzzy_floor), 102, 1), right=False, retbins=True
         )
         hist_counts = hist.value_counts().sort_index()
         histogram = {str(k): int(v) for k, v in hist_counts.items()}
@@ -204,26 +226,26 @@ def compute_deterministic_facts(
         score_stats = {}
         histogram = {}
 
-    # --- Lifecycle split: Closed-Match = Exact + Matching-High-fuzzy ---
+    # --- Lifecycle split ---
     closed_match_total = int(
-        summary.get("lifecycle_state_counts", {}).get("Closed - Match", 0)
+        summary.get("lifecycle_state_counts", {}).get(exact_state, 0)
     )
     closed_match_exact = int(len(exact_df))
     closed_match_fuzzy_high = int(
-        ((df["match_type"] != "Exact") & (df["lifecycle_state"] == "Closed - Match")).sum()
-    )
+        ((df["match_type"] != exact_type) & (df.get("lifecycle_state", "") == exact_state)).sum()
+    ) if "lifecycle_state" in df.columns else 0
     lifecycle_split = {
         "closed_match_total": closed_match_total,
         "closed_match_exact": closed_match_exact,
         "closed_match_fuzzy_high": closed_match_fuzzy_high,
         "potential_total": int(
-            summary.get("lifecycle_state_counts", {}).get("Potential", 0)
+            summary.get("lifecycle_state_counts", {}).get(fuzzy_state, 0)
         ),
     }
 
     # --- Review workload ---
     review_rows = int(
-        ((df["final_score"] >= 70) & (df["final_score"] < 90) & (df["match_type"] != "Exact")).sum()
+        ((df["final_score"] >= fuzzy_floor) & (df["final_score"] < high_min) & (df["match_type"] != exact_type)).sum()
     )
     review_pct = round(100 * review_rows / len(df), 2) if len(df) > 0 else 0
 
@@ -364,7 +386,7 @@ Keep it concise and data-driven. Only write what the facts show."""
             model=model_name,
             contents=prompt,
             config=types.GenerateContentConfig(
-                system_instruction=GUARDRAIL_SYSTEM_INSTRUCTION,
+                system_instruction=_build_guardrail(rules),
                 temperature=0.2,
             ),
         )
@@ -552,7 +574,7 @@ Be concise and data-driven. Do not repeat the raw numbers — interpret them."""
             model=model_name,
             contents=prompt,
             config=types.GenerateContentConfig(
-                system_instruction=GUARDRAIL_SYSTEM_INSTRUCTION,
+                system_instruction=_build_guardrail(rules),
                 temperature=0.2,
             ),
         )
