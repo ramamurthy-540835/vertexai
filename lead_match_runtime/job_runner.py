@@ -1711,6 +1711,7 @@ def _run_fuzzy_match(conn, job_started):
                     LIMIT %s
                 ) s
                 JOIN "{schema}"."transaction" t ON t.pos_id = s.pos_id
+                  AND t.is_processed = false
             ),
             fiscal_classified AS (
                 SELECT *,
@@ -1779,7 +1780,20 @@ def _run_fuzzy_match(conn, job_started):
                         (%s * (1 - (s_oms2_addr_emb <=> l_addr_emb)) * 100
                          + %s * (1 - COALESCE(NULLIF(s_oms2_co_emb <=> l_name_emb, 'NaN'::float), 1)) * 100
                         ) / %s
-                    END AS set6_score
+                    END AS set6_score,
+                    -- Individual component cosine scores per set (for winning set extraction)
+                    (1 - COALESCE(NULLIF(s_name_emb <=> l_name_emb, 'NaN'::float), 1)) * 100 AS set1_name,
+                    (1 - (s_addr_emb <=> l_addr_emb)) * 100 AS set1_addr,
+                    (1 - COALESCE(NULLIF(s_oms_co_emb <=> l_name_emb, 'NaN'::float), 1)) * 100 AS set2_name,
+                    (1 - (s_addr_emb <=> l_addr_emb)) * 100 AS set2_addr,
+                    (1 - COALESCE(NULLIF(s_name_emb <=> l_name_emb, 'NaN'::float), 1)) * 100 AS set3_name,
+                    CASE WHEN s_oms_addr_emb IS NOT NULL THEN (1 - (s_oms_addr_emb <=> l_addr_emb)) * 100 END AS set3_addr,
+                    CASE WHEN s_oms_co_emb IS NOT NULL THEN (1 - COALESCE(NULLIF(s_oms_co_emb <=> l_name_emb, 'NaN'::float), 1)) * 100 END AS set4_name,
+                    CASE WHEN s_oms_addr_emb IS NOT NULL THEN (1 - (s_oms_addr_emb <=> l_addr_emb)) * 100 END AS set4_addr,
+                    (1 - COALESCE(NULLIF(s_name_emb <=> l_name_emb, 'NaN'::float), 1)) * 100 AS set5_name,
+                    CASE WHEN s_oms2_addr_emb IS NOT NULL THEN (1 - (s_oms2_addr_emb <=> l_addr_emb)) * 100 END AS set5_addr,
+                    CASE WHEN s_oms2_co_emb IS NOT NULL THEN (1 - COALESCE(NULLIF(s_oms2_co_emb <=> l_name_emb, 'NaN'::float), 1)) * 100 END AS set6_name,
+                    CASE WHEN s_oms2_addr_emb IS NOT NULL THEN (1 - (s_oms2_addr_emb <=> l_addr_emb)) * 100 END AS set6_addr
                 FROM normal_candidates
             ),
             best_set AS (
@@ -1801,7 +1815,17 @@ def _run_fuzzy_match(conn, job_started):
                         WHEN set5_score THEN 5
                         WHEN set6_score THEN 6
                         ELSE 1
-                    END AS winning_set
+                    END AS winning_set,
+                    CASE GREATEST(COALESCE(set1_score,-1),COALESCE(set2_score,-1),COALESCE(set3_score,-1),COALESCE(set4_score,-1),COALESCE(set5_score,-1),COALESCE(set6_score,-1))
+                        WHEN set1_score THEN set1_name WHEN set2_score THEN set2_name
+                        WHEN set3_score THEN set3_name WHEN set4_score THEN set4_name
+                        WHEN set5_score THEN set5_name WHEN set6_score THEN set6_name ELSE set1_name
+                    END AS winning_name_score,
+                    CASE GREATEST(COALESCE(set1_score,-1),COALESCE(set2_score,-1),COALESCE(set3_score,-1),COALESCE(set4_score,-1),COALESCE(set5_score,-1),COALESCE(set6_score,-1))
+                        WHEN set1_score THEN set1_addr WHEN set2_score THEN set2_addr
+                        WHEN set3_score THEN set3_addr WHEN set4_score THEN set4_addr
+                        WHEN set5_score THEN set5_addr WHEN set6_score THEN set6_addr ELSE set1_addr
+                    END AS winning_address_score
                 FROM six_set_scores
             ),
             boosted AS (
@@ -1930,11 +1954,11 @@ def _run_fuzzy_match(conn, job_started):
                     END,
                     final_score,
                     combined_field_score,
-                    COALESCE(set1_score, 0),
-                    COALESCE(set1_score, 0),
+                    COALESCE(winning_address_score, 0),
+                    COALESCE(winning_name_score, 0),
                     winning_set,
-                    best_set_score,
-                    best_set_score,
+                    COALESCE(winning_name_score, 0),
+                    COALESCE(winning_address_score, 0),
                     email_boost,
                     phone_boost,
                     %s,
@@ -1988,6 +2012,77 @@ def _run_fuzzy_match(conn, job_started):
                 fuzzy_ceiling,
             )
         conn.commit()
+
+        if not DRY_RUN:
+            ce_params = [*lead_ids, recall_gate, nearest_neighbor_limit,
+                         periods_per_year, ce_window, ce_window,
+                         run_id, ce_lifecycle, weight_formula, EMBEDDING_MODEL]
+            cursor.execute(
+                f"""
+                WITH lead_batch AS (
+                    SELECT l.*, ld.account_id
+                    FROM "{schema}"."leads_embeddings" l
+                    JOIN "{schema}"."lead" ld ON ld.lead_id = l.lead_id
+                    WHERE l.combined_embedding IS NOT NULL
+                      AND l.lead_id IN ({lead_placeholders})
+                ),
+                candidates AS (
+                    SELECT l.lead_id, s.pos_id, l.warehouse_number,
+                           l.fiscal_year AS lead_fy, l.fiscal_period AS lead_fp,
+                           s.fiscal_year AS pos_fy, s.fiscal_period AS pos_fp, s.week AS pos_wk
+                    FROM lead_batch l
+                    CROSS JOIN LATERAL (
+                        SELECT s_inner.pos_id, s_inner.fiscal_year, s_inner.fiscal_period, s_inner.week
+                        FROM "{schema}"."pos_embeddings" s_inner
+                        WHERE s_inner.combined_embedding IS NOT NULL
+                          AND s_inner.warehouse_number = l.warehouse_number
+                          AND (1 - (s_inner.combined_embedding <=> l.combined_embedding)) * 100 >= %s
+                        ORDER BY s_inner.combined_embedding <=> l.combined_embedding
+                        LIMIT %s
+                    ) s
+                    JOIN "{schema}"."transaction" t ON t.pos_id = s.pos_id AND t.is_processed = false
+                ),
+                ce_pairs AS (
+                    SELECT *, (%s * (lead_fy - pos_fy) + (lead_fp - pos_fp)) AS gap
+                    FROM candidates
+                    WHERE (pos_fy < lead_fy OR (pos_fy = lead_fy AND pos_fp < lead_fp))
+                ),
+                ce_rows AS (
+                    SELECT * FROM ce_pairs WHERE gap <= %s AND gap > 0
+                ),
+                ce_inserted AS (
+                    INSERT INTO "{schema}"."match_decision_detail" (
+                        match_run_id, lead_id, pos_id, warehouse_number,
+                        match_type, final_score, lifecycle_state,
+                        weight_formula, embedding_model, created_date
+                    )
+                    SELECT %s, lead_id, pos_id, warehouse_number,
+                           'Closed - Existing', 0, %s, %s, %s, CURRENT_TIMESTAMP
+                    FROM ce_rows
+                    ON CONFLICT (match_run_id, lead_id, pos_id) DO NOTHING
+                    RETURNING pos_id, lead_id
+                ),
+                ce_txn_update AS (
+                    UPDATE "{schema}"."transaction" t
+                    SET is_processed = true,
+                        process_datetime = CURRENT_TIMESTAMP,
+                        updated_by = 'lead_match_runtime_ce'
+                    FROM ce_inserted ci WHERE t.pos_id = ci.pos_id
+                    RETURNING t.pos_id
+                )
+                SELECT
+                    (SELECT count(*) FROM ce_inserted) AS ce_stubs,
+                    (SELECT count(*) FROM ce_txn_update) AS ce_txns_processed
+                """,
+                ce_params,
+            )
+            ce_result = cursor.fetchone()
+            ce_stubs = int(ce_result[0]) if ce_result else 0
+            ce_txns = int(ce_result[1]) if ce_result else 0
+            if ce_stubs > 0:
+                conn.commit()
+                print(f"  CE stubs inserted: {ce_stubs}; transactions marked processed: {ce_txns}")
+
         inserted += batch_inserted
         query_duration = time.monotonic() - query_started
         print(
