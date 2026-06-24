@@ -89,8 +89,14 @@ variable "sql_scripts" {
 }
 
 
-variable "costco_tlsi_cert" {
-  description = "Costco TLSi CA certificate chain (base64 encoded) for GCP egress TLS inspection"
+variable "lead_mgmt_service_cert" {
+  description = "SSL certificate for Global load balancer"
+  type        = string
+  sensitive   = true
+}
+
+variable "lead_mgmt_service_private_key"{
+  description = "private key for Global load balancer"
   type        = string
   sensitive   = true
 }

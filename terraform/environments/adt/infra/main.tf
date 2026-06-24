@@ -113,6 +113,20 @@ module "service_now_client_secret" {
   secret_value  = var.service_now_client_secret
 }
 
+module "lead_mgmt_cert" {
+  source        = "../../../modules/secret_manager"
+  project       = var.projectId
+  secret_id     = "lead_mgmt_service_cert"
+  secret_value  = var.lead_mgmt_service_cert
+}
+
+module "lead_mgmt_private_key" {
+  source        = "../../../modules/secret_manager"
+  project       = var.projectId
+  secret_id     = "lead_mgmt_service_private_key"
+  secret_value  = var.lead_mgmt_service_private_key
+}
+
 module "cloud_sql_instance" {
   source              = "../../../modules/database"
   project             = var.projectId
