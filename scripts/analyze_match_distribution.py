@@ -144,12 +144,24 @@ def _band_for_score(score: float, rules: dict) -> str:
         if float(s["min_score"]) <= score <= float(s["max_score"]):
             return str(s.get("name", "Unknown"))
 
-    exact_score = float(decision_rules.get("exact_score", 100))
+    decision_rules = rules.get("decision_rules", {})
+    score_model = rules.get("score_model", {})
+    exact_score = float(
+        decision_rules.get(
+            "exact_score",
+            score_model.get("match", {}).get("score", 100),
+        )
+    )
     if score >= exact_score:
-        return str(decision_rules.get("exact_label", "Exact / Complete"))
+        return str(
+            decision_rules.get(
+                "exact_label",
+                score_model.get("match", {}).get("match_result", "Exact / Complete"),
+            )
+        )
 
-    below_floor = decision_rules.get("below_floor", {})
-    return str(below_floor.get("label", "No Match"))
+    below_floor = decision_rules.get("below_floor") or score_model.get("no_match", {})
+    return str(below_floor.get("label") or below_floor.get("match_result", "No Match"))
 
 
 def ensure_band_column(df: pd.DataFrame, rules: dict) -> pd.DataFrame:
