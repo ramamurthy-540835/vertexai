@@ -65,7 +65,7 @@ jobs:
 
           echo ""
           echo "--- Checking Cloud Run Jobs ---"
-          for JOB in lead-match-lead-embeddings lead-match-pos-embeddings lead-match-fuzzy-match lead-match-report; do
+          for JOB in lead-match-ensure-indexes lead-match-exact-match lead-match-lead-embeddings lead-match-pos-embeddings lead-match-fuzzy-match lead-match-report; do
             gcloud run jobs describe "${JOB}" \
               --region="${REGION}" \
               --project="${PROJECT_ID}" \
@@ -192,7 +192,7 @@ jobs:
       - name: Collect Cloud Run Job executions
         run: |
           set -euo pipefail
-          JOBS="lead-match-lead-embeddings lead-match-pos-embeddings lead-match-fuzzy-match lead-match-report"
+          JOBS="lead-match-ensure-indexes lead-match-exact-match lead-match-lead-embeddings lead-match-pos-embeddings lead-match-fuzzy-match lead-match-report"
           for JOB in ${JOBS}; do
             gcloud run jobs executions list \
               --job="${JOB}" \
@@ -412,6 +412,8 @@ jobs:
           cloud_run_jobs = {}
           latest_cloud_run_jobs = {}
           for job_name in [
+              "lead-match-ensure-indexes",
+              "lead-match-exact-match",
               "lead-match-lead-embeddings",
               "lead-match-pos-embeddings",
               "lead-match-fuzzy-match",

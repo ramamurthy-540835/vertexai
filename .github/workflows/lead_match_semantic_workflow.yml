@@ -83,7 +83,7 @@ on:
           - "true"
           - "false"
       analysis_wait_for_ready:
-        description: "In downstream analysis workflow, wait for artifacts if _READY.json is absent?"
+        description: "In downstream analysis workflow, poll until matches.csv + summary.json appear before running?"
         required: true
         default: "true"
         type: choice
@@ -548,8 +548,9 @@ jobs:
           fi
 
           if [[ "${DRY_RUN}" == "true" ]]; then
-            echo "run_analysis=true is not supported for dry_run=true because report artifacts are written as dryrun_* files."
-            exit 1
+            echo "⚠ run_analysis=true is ignored when dry_run=true — report artifacts are written as dryrun_* files and are not suitable for analysis."
+            echo "  Skipping analysis handoff."
+            exit 0
           fi
 
           gcloud config set project "${PROJECT_ID}"

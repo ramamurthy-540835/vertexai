@@ -121,44 +121,25 @@ jobs:
           fi
 
           REPORT_PREFIX="reports/lead_match/${PROJECT_ID}/${WAREHOUSE}/${RUN_ID}"
-          READY_PATH="gs://${BUCKET_NAME}/${REPORT_PREFIX}/_READY.json"
           MATCHES_PATH="gs://${BUCKET_NAME}/${REPORT_PREFIX}/matches.csv"
           SUMMARY_PATH="gs://${BUCKET_NAME}/${REPORT_PREFIX}/summary.json"
           echo "REPORT_PREFIX=${REPORT_PREFIX}" >> "$GITHUB_ENV"
 
-          ready=0
           checks=0
           max_checks=40
           while true; do
             checks=$((checks + 1))
 
-            if gsutil ls "${READY_PATH}" &>/dev/null; then
-              ready=1
-              echo "✓ _READY.json found: ${READY_PATH}"
-              break
-            fi
-
-            matches_exists=0
-            summary_exists=0
-            if gsutil ls "${MATCHES_PATH}" &>/dev/null; then
-              matches_exists=1
-            fi
-            if gsutil ls "${SUMMARY_PATH}" &>/dev/null; then
-              summary_exists=1
-            fi
-
-            if [[ "${matches_exists}" -eq 1 && "${summary_exists}" -eq 1 ]]; then
-              echo "⚠ _READY.json not found, but matches.csv and summary.json are present."
-              echo "  Proceeding with analysis artifacts as completion signal."
+            if gsutil ls "${MATCHES_PATH}" &>/dev/null && gsutil ls "${SUMMARY_PATH}" &>/dev/null; then
+              echo "✓ Analysis artifacts ready: ${REPORT_PREFIX}/"
               break
             fi
 
             if [[ "${WAIT_FOR_READY}" != "true" || "${checks}" -ge "${max_checks}" ]]; then
-              echo "✗ Match run artifacts not ready."
-              echo "  Checked:"
-              echo "  - READY: ${READY_PATH}"
-              echo "  - matches: ${MATCHES_PATH}"
-              echo "  - summary: ${SUMMARY_PATH}"
+              echo "✗ Match run artifacts not ready after ${checks} checks."
+              echo "  Expected:"
+              echo "  - ${MATCHES_PATH}"
+              echo "  - ${SUMMARY_PATH}"
               exit 1
             fi
 
@@ -204,18 +185,17 @@ jobs:
             --analysis-run-attempt "${GITHUB_RUN_ATTEMPT}" \
             --analysis-workflow "${GITHUB_WORKFLOW}"
 
-      - name: Upload narrative to GCS
+      - name: Verify narrative in GCS
         if: env.GENERATE_ANALYSIS == 'true'
         run: |
           set -euo pipefail
           gcloud config set project "${PROJECT_ID}"
-          NARRATIVE_SRC="comparative_analysis.md"
           NARRATIVE_DST="gs://${BUCKET_NAME}/reports/lead_match/${PROJECT_ID}/${WAREHOUSE}/${RUN_ID}/comparative_analysis.md"
-          if [[ -f "${NARRATIVE_SRC}" ]]; then
-            gsutil cp "${NARRATIVE_SRC}" "${NARRATIVE_DST}"
-            echo "✓ Narrative uploaded to ${NARRATIVE_DST}"
+          if gsutil ls "${NARRATIVE_DST}" &>/dev/null; then
+            echo "✓ Narrative exists in GCS: ${NARRATIVE_DST}"
           else
-            echo "⚠ No narrative generated (Gemini may have failed)"
+            echo "⚠ Narrative not found in GCS — Gemini call may have failed"
+            echo "  Expected: ${NARRATIVE_DST}"
           fi
 
       - name: Validate analysis

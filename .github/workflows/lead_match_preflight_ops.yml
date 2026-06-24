@@ -376,6 +376,7 @@ jobs:
 
           set +e
           EXECUTION_NAME="$(gcloud run jobs execute "${SMOKE_JOB}" \
+            --project="${PROJECT_ID}" \
             --region="${REGION}" \
             --update-env-vars="WAREHOUSE=${WAREHOUSE_LABEL},WAREHOUSE_SCOPE=${WAREHOUSE_LABEL}" \
             --wait \
@@ -467,8 +468,6 @@ jobs:
               "required_checks": {
                   "workflow_yaml": os.environ.get("WORKFLOW_YAML_STATUS", "FAIL"),
                   "vertex_path": os.environ.get("VERTEX_PATH_STATUS", "FAIL"),
-                  "cloud_sql_smoke": os.environ.get("CLOUD_SQL_SMOKE_STATUS", "SKIPPED"),
-                  "cloud_sql_indexes": os.environ.get("CLOUD_SQL_INDEX_STATUS", "SKIPPED"),
               },
               "optional_checks": {
                   "cloud_sql_smoke": os.environ.get("CLOUD_SQL_SMOKE_STATUS", "SKIPPED"),

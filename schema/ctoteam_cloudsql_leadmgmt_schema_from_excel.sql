@@ -1,16 +1,15 @@
 -- Generated from: Studio Results 2026-06-20 14_03.xlsx
--- Purpose: Recreate isolated Cloud SQL/PostgreSQL tables in project ctoteam.
--- WARNING: This script drops and recreates schema leadmgmt. Run only against the approved ctoteam Cloud SQL database.
+-- Purpose: Idempotent Cloud SQL/PostgreSQL schema for project ctoteam.
+-- Safe to re-run: uses IF NOT EXISTS throughout, never drops existing objects.
 
 BEGIN;
 
 CREATE EXTENSION IF NOT EXISTS vector;
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
-DROP SCHEMA IF EXISTS "leadmgmt" CASCADE;
-CREATE SCHEMA "leadmgmt";
+CREATE SCHEMA IF NOT EXISTS "leadmgmt";
 
-CREATE TABLE "leadmgmt"."account" (
+CREATE TABLE IF NOT EXISTS "leadmgmt"."account" (
     "account_id" character varying NOT NULL,
     "batch_id" uuid,
     "account_number" bigint,
@@ -30,7 +29,7 @@ CREATE TABLE "leadmgmt"."account" (
     PRIMARY KEY ("account_id")
 );
 
-CREATE TABLE "leadmgmt"."api_audit" (
+CREATE TABLE IF NOT EXISTS "leadmgmt"."api_audit" (
     "id" uuid,
     "batch_id" uuid,
     "data_type" character varying,
@@ -44,7 +43,7 @@ CREATE TABLE "leadmgmt"."api_audit" (
     "comments" text
 );
 
-CREATE TABLE "leadmgmt"."batch_audit" (
+CREATE TABLE IF NOT EXISTS "leadmgmt"."batch_audit" (
     "id" uuid,
     "batch_id" uuid,
     "data_type" character varying,
@@ -58,7 +57,7 @@ CREATE TABLE "leadmgmt"."batch_audit" (
     "comments" text
 );
 
-CREATE TABLE "leadmgmt"."contact" (
+CREATE TABLE IF NOT EXISTS "leadmgmt"."contact" (
     "contact_id" character varying NOT NULL,
     "lead_id" character varying,
     "first_name" character varying,
@@ -73,7 +72,7 @@ CREATE TABLE "leadmgmt"."contact" (
     PRIMARY KEY ("contact_id")
 );
 
-CREATE TABLE "leadmgmt"."error_audit" (
+CREATE TABLE IF NOT EXISTS "leadmgmt"."error_audit" (
     "error_log_id" uuid NOT NULL,
     "entity_type" character varying NOT NULL,
     "entity_id" character varying NOT NULL,
@@ -85,7 +84,7 @@ CREATE TABLE "leadmgmt"."error_audit" (
     PRIMARY KEY ("error_log_id")
 );
 
-CREATE TABLE "leadmgmt"."lead" (
+CREATE TABLE IF NOT EXISTS "leadmgmt"."lead" (
     "lead_id" character varying(20) NOT NULL,
     "lead_source" character varying,
     "account_id" character varying,
@@ -107,7 +106,7 @@ CREATE TABLE "leadmgmt"."lead" (
     PRIMARY KEY ("lead_id")
 );
 
-CREATE TABLE "leadmgmt"."leads_embeddings" (
+CREATE TABLE IF NOT EXISTS "leadmgmt"."leads_embeddings" (
     "lead_id" character varying,
     "combined_field" character varying,
     "business_name" character varying,
@@ -121,7 +120,7 @@ CREATE TABLE "leadmgmt"."leads_embeddings" (
     "fiscal_period" integer
 );
 
-CREATE TABLE "leadmgmt"."match_audit" (
+CREATE TABLE IF NOT EXISTS "leadmgmt"."match_audit" (
     "match_id" uuid NOT NULL,
     "lead_count" integer,
     "pos_count" integer,
@@ -135,14 +134,14 @@ CREATE TABLE "leadmgmt"."match_audit" (
     PRIMARY KEY ("match_id")
 );
 
-CREATE TABLE "leadmgmt"."match_configuration" (
+CREATE TABLE IF NOT EXISTS "leadmgmt"."match_configuration" (
     "confidence_level" character varying,
     "min_score" double precision,
     "max_score" double precision,
     "match_result" character varying
 );
 
-CREATE TABLE "leadmgmt"."pos_embeddings" (
+CREATE TABLE IF NOT EXISTS "leadmgmt"."pos_embeddings" (
     "pos_id" character varying,
     "account_number" bigint,
     "combined_field" character varying,
@@ -158,7 +157,7 @@ CREATE TABLE "leadmgmt"."pos_embeddings" (
     "week" integer
 );
 
-CREATE TABLE "leadmgmt"."pos_transactions" (
+CREATE TABLE IF NOT EXISTS "leadmgmt"."pos_transactions" (
     "pos_id" character varying NOT NULL,
     "sales_reference_id" character varying,
     "account_number" bigint,
@@ -194,7 +193,7 @@ CREATE TABLE "leadmgmt"."pos_transactions" (
     PRIMARY KEY ("pos_id")
 );
 
-CREATE TABLE "leadmgmt"."transaction" (
+CREATE TABLE IF NOT EXISTS "leadmgmt"."transaction" (
     "pos_id" character varying(120) NOT NULL,
     "sales_reference_id" character varying,
     "account_number" bigint,
@@ -261,8 +260,6 @@ CREATE TABLE "leadmgmt"."transaction" (
     PRIMARY KEY ("pos_id")
 );
 
--- For ctoteam_cloudsql_leadmgmt_schema_from_excel.sql
-
 CREATE TABLE IF NOT EXISTS "leadmgmt"."match_decision_detail" (
     -- Core Match Identifiers
     "match_run_id" character varying(100) NOT NULL,
@@ -285,6 +282,9 @@ CREATE TABLE IF NOT EXISTS "leadmgmt"."match_decision_detail" (
     "analyst_comments" text,
     "updated_by_analyst" character varying(100),
     "updated_at_analyst" timestamp with time zone,
+
+    -- AI-Generated Per-Row Analysis (owned exclusively by analysis workflow)
+    "match_reasoning" text,
 
     -- Constraints for Data Integrity
     PRIMARY KEY ("match_run_id", "lead_id", "pos_id"),
