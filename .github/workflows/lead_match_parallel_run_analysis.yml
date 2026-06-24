@@ -1,0 +1,113 @@
+name: Lead Match Parallel Run Analysis
+
+on:
+  workflow_dispatch:
+    inputs:
+      warehouses:
+        description: "Comma-separated warehouse numbers (blank = auto-discover all)"
+        required: false
+        type: string
+      bucket:
+        description: "GCS bucket containing match results"
+        required: false
+        default: "lead-match-ctoteam"
+        type: string
+
+jobs:
+  parallel-run-analysis:
+    name: "parallel-run-analysis"
+    runs-on: ubuntu-latest
+
+    permissions:
+      id-token: write
+      contents: read
+
+    env:
+      PROJECT_ID: ctoteam
+      GOOGLE_CLOUD_PROJECT: ctoteam
+      VERTEX_PROJECT_ID: ctoteam
+      VERTEX_LOCATION: global
+      BUCKET_NAME: ${{ github.event.inputs.bucket || 'lead-match-ctoteam' }}
+      WAREHOUSES: ${{ github.event.inputs.warehouses }}
+      GEMINI_MODEL: gemini-3.5-flash
+      PYTHON_VERSION: "3.11"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Auth to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
+          service_account: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
+          create_credentials_file: true
+          export_environment_variables: true
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install Python dependencies
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          pip install pandas google-cloud-storage google-genai
+
+      - name: Run parallel run analysis
+        run: |
+          set -euo pipefail
+          gcloud config set project "${PROJECT_ID}"
+
+          ARGS="--bucket ${BUCKET_NAME} --project ${PROJECT_ID}"
+          ARGS="${ARGS} --rules-json lead_match_runtime/lead_to_pos_match_rules.json"
+          ARGS="${ARGS} --output-dir /tmp/parallel_run_analysis"
+
+          if [[ -n "${WAREHOUSES}" ]]; then
+            ARGS="${ARGS} --warehouses ${WAREHOUSES}"
+          fi
+
+          python scripts/generate_parallel_run_analysis.py ${ARGS}
+
+      - name: Verify per-warehouse outputs in GCS
+        run: |
+          set -euo pipefail
+          gcloud config set project "${PROJECT_ID}"
+
+          echo "## Per-Warehouse Analysis Artifacts"
+          for analysis in $(gsutil ls "gs://${BUCKET_NAME}/reports/lead_match/${PROJECT_ID}/*/*/analysis.md" 2>/dev/null); do
+            echo "- ${analysis}"
+          done
+
+          echo ""
+          echo "## Project Rollup"
+          ROLLUP="gs://${BUCKET_NAME}/reports/lead_match/${PROJECT_ID}/_project/project_parallel_run_analysis.md"
+          if gsutil ls "${ROLLUP}" &>/dev/null; then
+            echo "- ${ROLLUP}"
+          else
+            echo "⚠ Project rollup not found"
+          fi
+
+      - name: Summary
+        run: |
+          {
+            echo "## Parallel Run Analysis"
+            echo ""
+            echo "- Project: \`${PROJECT_ID}\`"
+            echo "- Bucket: \`${BUCKET_NAME}\`"
+            echo "- Warehouses: \`${WAREHOUSES:-auto-discovered}\`"
+            echo ""
+            echo "### Artifacts"
+            echo "- Project rollup: \`gs://${BUCKET_NAME}/reports/lead_match/${PROJECT_ID}/_project/project_parallel_run_analysis.md\`"
+            echo "- Per-warehouse analysis: \`gs://${BUCKET_NAME}/reports/lead_match/${PROJECT_ID}/<warehouse>/<run>/analysis.md\`"
+            echo ""
+            echo "---"
+            echo ""
+            if [[ -f /tmp/parallel_run_analysis/_project/project_parallel_run_analysis.md ]]; then
+              cat /tmp/parallel_run_analysis/_project/project_parallel_run_analysis.md
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
