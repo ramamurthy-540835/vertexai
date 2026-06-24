@@ -6,7 +6,7 @@ on:
     branches:
       - "feature/**"
     paths:
-      - 'terraform/environments/adt/infra/**.tf'
+      - 'terraform/environments/adt/infra/**'
       - 'terraform/modules/**/**'
       - '.github/workflows/provision_adt.yml'
 

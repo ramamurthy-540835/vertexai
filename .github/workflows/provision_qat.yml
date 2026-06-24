@@ -5,7 +5,7 @@ on:
     branches:
       - main
     paths:
-      - 'terraform/environments/qat/infra/**.tf'
+      - 'terraform/environments/qat/infra/**'
       - 'terraform/modules/**/**'
       - '.github/workflows/provision_qat.yml'
       
