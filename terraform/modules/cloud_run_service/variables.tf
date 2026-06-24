@@ -81,3 +81,8 @@ variable "scheduler_cron" {
   type        = string
   default     = "0 0 * * *"
 }
+
+variable "service_image_tag" {
+  description = "service_image_tag"
+  type        = string
+}
