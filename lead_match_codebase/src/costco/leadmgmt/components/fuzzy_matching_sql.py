@@ -130,36 +130,30 @@ def classify_row_match(row: pd.Series, rules: dict) -> pd.Series:
     match_type = row.get("match_type", "")
 
     # 1. Resolve qualification thresholds from JSON config
-    qualify_min_score = float(rules.get("decision_rules", {}).get("fuzzy_qualify_min_score", 70))
-    exact_min_score = float(rules.get("decision_rules", {}).get("exact_score", 100))
+    dr = rules.get("decision_rules", {})
+    qualify_min_score = float(dr["fuzzy_qualify_min_score"])
+    exact_min_score = float(dr["exact_score"])
+    no_match_state = str(dr.get("no_match_lifecycle_state", "No Match"))
+    fuzzy_lifecycle = str(dr.get("fuzzy_lifecycle_state", "Potential"))
+    exact_types = [str(t).strip() for t in dr.get("exact_match_types", ["Exact", "Deterministic"])]
 
-    is_exact = (match_type in ["Exact", "Deterministic"])
+    is_exact = (match_type in exact_types)
     min_score = exact_min_score if is_exact else qualify_min_score
 
     if score < min_score:
-        row["match_result"] = "No Match"
-        row["confidence_band"] = "No Match"
+        row["match_result"] = no_match_state
+        row["confidence_band"] = no_match_state
         row["closed_existing_flag"] = False
         return row
 
-    # 2. Map score to confidence band using JSON fuzzy_score_bands
-    bands = rules.get("decision_rules", {}).get("fuzzy_score_bands", [])
-    band_name = "No Match"
-    band_state = "No Match"
-    for b in bands:
-        if float(b.get("min_score", 0)) <= score <= float(b.get("max_score", 100)):
-            band_name = b.get("name") or b.get("result", "No Match")
-            band_state = b.get("lifecycle_state", band_name)
+    # 2. Map score to confidence band using JSON subtiers (display-only, all lifecycle = Potential)
+    subtiers = dr.get("optional_confidence_subtiers", {}).get("subtiers", [])
+    band_name = fuzzy_lifecycle
+    band_state = fuzzy_lifecycle
+    for s in sorted(subtiers, key=lambda x: float(x.get("min_score", 0)), reverse=True):
+        if float(s["min_score"]) <= score <= float(s["max_score"]):
+            band_name = s["name"]
             break
-
-    # Fallback: if no band matched and score is above floor, find the highest band that qualifies
-    if band_name == "No Match" and score >= qualify_min_score:
-        sorted_bands = sorted(bands, key=lambda b: float(b.get("min_score", 0)), reverse=True)
-        for b in sorted_bands:
-            if score >= float(b.get("min_score", 0)):
-                band_name = b.get("name", "No Match")
-                band_state = b.get("lifecycle_state", b.get("name", "No Match"))
-                break
 
     # 3. Retrieve Lead Fiscal values
     l_yr = row.get("fiscal_year_primary")
@@ -224,8 +218,9 @@ def classify_row_match(row: pd.Series, rules: dict) -> pd.Series:
                 is_predating = True
 
     # 6. Set results based on fiscal ordering
+    ce_state = str(dr.get("closed_existing_lifecycle_state", "Closed - Existing"))
     if is_predating:
-        row["match_result"] = "Closed - Existing"
+        row["match_result"] = ce_state
         row["confidence_band"] = band_name
         row["closed_existing_flag"] = True
     else:
@@ -236,7 +231,15 @@ def classify_row_match(row: pd.Series, rules: dict) -> pd.Series:
     return row
 
 
-def is_qualifying_match(match_result):
+def is_qualifying_match(match_result, rules=None):
+    if rules:
+        dr = rules.get("decision_rules", {})
+        qualifying = {
+            str(dr.get("exact_lifecycle_state", "Closed - Match")),
+            str(dr.get("closed_existing_lifecycle_state", "Closed - Existing")),
+            str(dr.get("fuzzy_lifecycle_state", "Potential")),
+        }
+        return match_result in qualifying
     return match_result in ["Closed - Match", "Closed - Existing", "Potential"]
 
 
@@ -249,10 +252,11 @@ def fuzzy_matching(file_classified_path: str, config_file_path: str) -> str:
     # INITIALIZATION & RULES LOADING
     # ----------------------------------------------------------
     rules = load_business_rules()
-    qualify_min_score = float(rules.get("decision_rules", {}).get("fuzzy_qualify_min_score", 70))
-    exact_min_score = float(rules.get("decision_rules", {}).get("exact_score", 100))
-    ambiguity_delta = float(rules.get("resolution", {}).get("ambiguity_delta", 3))
-    match_type_semantic = rules.get("override_policy", {}).get("semantic_match_type", "Fuzzy")
+    dr = rules["decision_rules"]
+    qualify_min_score = float(dr["fuzzy_qualify_min_score"])
+    exact_min_score = float(dr["exact_score"])
+    ambiguity_delta = float(rules["resolution"]["ambiguity_delta"])
+    match_type_semantic = str(rules["override_policy"]["semantic_match_type"])
 
     job_config     = JobConfig(config_file_path)
     db_config      = job_config.db_config
@@ -332,10 +336,10 @@ def fuzzy_matching(file_classified_path: str, config_file_path: str) -> str:
         # ----------------------------------------------------------
         # COMPUTE FUZZY SIMILARITY SCORE (PRECISION SCORE FORMULA)
         # ----------------------------------------------------------
-        # Load weights from JSON config
-        embeddings_cfg = rules.get("embeddings", {}).get("fields", {})
-        addr_weight = float(embeddings_cfg.get("full_address", {}).get("weight", 4))
-        name_weight = float(embeddings_cfg.get("business_name", {}).get("weight", 3))
+        # Load weights from JSON config (address_variant / name_variant)
+        embeddings_cfg = rules["embeddings"]["fields"]
+        addr_weight = float(embeddings_cfg["address_variant"]["weight"])
+        name_weight = float(embeddings_cfg["name_variant"]["weight"])
         total_weight = addr_weight + name_weight
 
         # (addr_weight * full_address_score + name_weight * business_name_score) / total_weight
@@ -431,10 +435,8 @@ def fuzzy_matching(file_classified_path: str, config_file_path: str) -> str:
 
     if "manual_review_reason" in merged_df.columns:
         review_mask = update_mask & merged_df["manual_review_reason"].notna()
-        merged_df.loc[review_mask, "match_type"] = rules.get("resolution", {}).get(
-            "ambiguity_match_type", "Manual Review"
-        )
-        merged_df.loc[review_mask, "match_result"] = "Potential"
+        merged_df.loc[review_mask, "match_type"] = str(rules["resolution"]["ambiguity_match_type"])
+        merged_df.loc[review_mask, "match_result"] = str(dr["fuzzy_lifecycle_state"])
 
     merged_df.loc[update_mask, "account_number_primary"]    = pd.to_numeric(merged_df.loc[update_mask, "account_number_fuzzy"], errors="coerce")
     merged_df.loc[update_mask, "fiscal_year_transaction"]   = pd.to_numeric(merged_df.loc[update_mask, "fiscal_year"], errors="coerce")
@@ -565,7 +567,7 @@ def fuzzy_matching(file_classified_path: str, config_file_path: str) -> str:
     )
     merged_df["primary_transaction"] = False
 
-    qualifying_mask = merged_df["match_result"].apply(is_qualifying_match)
+    qualifying_mask = merged_df["match_result"].apply(lambda r: is_qualifying_match(r, rules))
     if qualifying_mask.any():
         merged_df.loc[qualifying_mask, "primary_transaction"] = (
             merged_df[qualifying_mask].groupby("lead_id").cumcount() == 0
@@ -588,7 +590,8 @@ def fuzzy_matching(file_classified_path: str, config_file_path: str) -> str:
     # ----------------------------------------------------------
     # HANDLE NO MATCH ROWS
     # ----------------------------------------------------------
-    no_match_mask = merged_df["match_result"] == "No Match"
+    no_match_label = str(dr.get("no_match_lifecycle_state", "No Match"))
+    no_match_mask = merged_df["match_result"] == no_match_label
     merged_df.loc[no_match_mask, "pos_id"] = ""
     no_match_detail_cols = [
         "membership_number",

@@ -18,6 +18,7 @@ from google.genai import types
 from lead_match_runtime.business_rules import (
     build_embedding_text,
     build_pos_variant_texts,
+    closed_existing_lifecycle_state_from_fiscal_rules,
     confidence_subtier,
     exact_authoritative_score,
     exact_lifecycle_state,
@@ -34,6 +35,15 @@ from lead_match_runtime.business_rules import (
     fuzzy_qualify_min_score,
     fuzzy_score_bands,
     manual_review_match_type,
+    matching_set_address_fields,
+    matching_set_by_id,
+    matching_set_definitions,
+    matching_set_email_fields,
+    matching_set_name_fields,
+    matching_set_phone_fields,
+    fuzzy_boost_rule,
+    pos_embedding_variant_field_aliases,
+    pos_transaction_field_aliases,
     matching_sets as configured_matching_sets,
     no_match_lifecycle_state,
     normalize_email,
@@ -49,10 +59,9 @@ from lead_match_runtime.business_rules import (
 
 logger = logging.getLogger(__name__)
 BUSINESS_RULES = load_business_rules()
-EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", BUSINESS_RULES["embeddings"]["model"])
-EMBEDDING_DIMENSION = int(
-    os.environ.get("EMBEDDING_DIMENSION", BUSINESS_RULES["embeddings"]["output_dimensionality"])
-)
+EMBEDDING_MODEL = BUSINESS_RULES["embeddings"]["model"]
+EMBEDDING_DIMENSION = int(BUSINESS_RULES["embeddings"]["output_dimensionality"])
+EMBEDDING_TASK_TYPE = BUSINESS_RULES["embeddings"].get("task_type", "SEMANTIC_SIMILARITY")
 DEFAULT_FISCAL_YEAR = int(os.environ.get("DEFAULT_FISCAL_YEAR", "2026"))
 DEFAULT_FISCAL_PERIOD = int(os.environ.get("DEFAULT_FISCAL_PERIOD", "10"))
 DEFAULT_BATCH_SIZE = int(os.environ.get("EMBEDDING_BATCH_SIZE", "100"))
@@ -231,8 +240,9 @@ def exact_qualified_min_score():
 def _fuzzy_lifecycle_case(score_expr, params):
     lifecycle = fuzzy_lifecycle_state_label(BUSINESS_RULES)
     floor = fuzzy_qualify_min_score(BUSINESS_RULES)
-    params.extend([floor, lifecycle])
-    return f"CASE WHEN {score_expr} >= %s THEN %s ELSE 'No Match' END"
+    no_match = no_match_lifecycle_state(BUSINESS_RULES)
+    params.extend([floor, lifecycle, no_match])
+    return f"CASE WHEN {score_expr} >= %s THEN %s ELSE %s END"
 
 
 def _exact_type_placeholders(types):
@@ -351,8 +361,15 @@ def vector_literal(values):
         return None
     arr = np.array(values, dtype=np.float32)
     norm = np.linalg.norm(arr)
-    if norm:
-        arr = arr / norm
+    if not norm:
+        return None
+    if np.isnan(norm) or not np.isfinite(norm):
+        return None
+    arr = arr / norm
+    if not np.all(np.isfinite(arr)):
+        return None
+    if not np.any(arr):
+        return None
     return "[" + ",".join(f"{float(value):.8f}" for value in arr.tolist()) + "]"
 
 
@@ -392,7 +409,7 @@ def embed_text_request(client, texts, label, log_success=True):
                 model=EMBEDDING_MODEL,
                 contents=texts,
                 config=types.EmbedContentConfig(
-                    task_type="SEMANTIC_SIMILARITY",
+                    task_type=EMBEDDING_TASK_TYPE,
                     output_dimensionality=EMBEDDING_DIMENSION,
                 ),
             )
@@ -458,6 +475,28 @@ def embed_texts(client, texts, label="embedding"):
         for (idx, _), vector in zip(request_items, request_vectors):
             results[idx] = vector
     return results
+
+
+def _build_row_variant_embeddings(texts_by_row: list[dict[str, str | None]], sources: list[str]):
+    """Build per-source vectors for one semantic group (name/address) with per-row dedupe."""
+    unique_texts = []
+    row_source_index: list[dict[str, int | None]] = []
+    for row in texts_by_row:
+        row_mapping: dict[str, int | None] = {}
+        seen = {}
+        for source in sources:
+            text = row.get(source)
+            if not text:
+                row_mapping[source] = None
+                continue
+            idx = seen.get(text)
+            if idx is None:
+                idx = len(unique_texts)
+                unique_texts.append(text)
+                seen[text] = idx
+            row_mapping[source] = idx
+        row_source_index.append(row_mapping)
+    return unique_texts, row_source_index
 
 
 def embed_field_batches(client, field_texts):
@@ -660,35 +699,72 @@ def build_pos_embedding_insert_rows(client, batch_number, batch, now):
     ]
     variant_texts = [build_pos_variant_texts(r) for r in records]
     combined_texts = [v["combined_field"] for v in variant_texts]
-    address_texts = [v["full_address"] for v in variant_texts]
-    name_texts = [v["business_name"] for v in variant_texts]
-    oms_company_texts = [v["oms_company_name"] for v in variant_texts]
-    oms2_company_texts = [v["oms2_company_name"] for v in variant_texts]
-    oms_addr_texts = [v["oms_address"] for v in variant_texts]
-    oms2_addr_texts = [v["oms2_address"] for v in variant_texts]
+    name_sources = matching_set_name_fields(BUSINESS_RULES)
+    address_sources = matching_set_address_fields(BUSINESS_RULES)
 
-    field_batches = {
-        f"pos_batch_{batch_number}_combined": combined_texts,
-        f"pos_batch_{batch_number}_address": address_texts,
-        f"pos_batch_{batch_number}_name": name_texts,
-    }
-    if any(t for t in oms_company_texts if t):
-        field_batches[f"pos_batch_{batch_number}_oms_company"] = oms_company_texts
-    if any(t for t in oms2_company_texts if t):
-        field_batches[f"pos_batch_{batch_number}_oms2_company"] = oms2_company_texts
-    if any(t for t in oms_addr_texts if t):
-        field_batches[f"pos_batch_{batch_number}_oms_addr"] = oms_addr_texts
-    if any(t for t in oms2_addr_texts if t):
-        field_batches[f"pos_batch_{batch_number}_oms2_addr"] = oms2_addr_texts
+    name_unique_texts, name_row_source_idx = _build_row_variant_embeddings(
+        variant_texts,
+        name_sources,
+    )
+    addr_unique_texts, addr_row_source_idx = _build_row_variant_embeddings(
+        variant_texts,
+        address_sources,
+    )
 
-    vectors = embed_field_batches(client, field_batches)
+    vectors: dict[str, list[str | None]] = {}
+    if name_unique_texts:
+        vectors[f"pos_batch_{batch_number}_names"] = embed_texts(
+            client,
+            name_unique_texts,
+            label=f"pos_batch_{batch_number}_names",
+        )
+    if addr_unique_texts:
+        vectors[f"pos_batch_{batch_number}_addresses"] = embed_texts(
+            client,
+            addr_unique_texts,
+            label=f"pos_batch_{batch_number}_addresses",
+        )
+
+    if any(combined_texts):
+        vectors[f"pos_batch_{batch_number}_combined"] = embed_texts(
+            client,
+            combined_texts,
+            label=f"pos_batch_{batch_number}_combined",
+        )
+    else:
+        vectors[f"pos_batch_{batch_number}_combined"] = [None] * len(batch)
+
+    all_name_sources = {name: [] for name in name_sources}
+    all_address_sources = {name: [] for name in address_sources}
+    for row_idx in range(len(batch)):
+        for source in name_sources:
+            source_index = name_row_source_idx[row_idx].get(source)
+            all_name_sources[source].append(
+                vectors.get(f"pos_batch_{batch_number}_names", [None] * len(batch))[source_index]
+                if source_index is not None and vectors.get(f"pos_batch_{batch_number}_names")
+                else None
+            )
+        for source in address_sources:
+            source_index = addr_row_source_idx[row_idx].get(source)
+            all_address_sources[source].append(
+                vectors.get(f"pos_batch_{batch_number}_addresses", [None] * len(batch))[source_index]
+                if source_index is not None and vectors.get(f"pos_batch_{batch_number}_addresses")
+                else None
+            )
+
+    # Ensure all expected variant vectors exist for deterministic indexing.
+    for source in ["full_address", "full_oms_address", "full_oms2_address"]:
+        all_address_sources.setdefault(source, [None] * len(batch))
+    for source in ["business_name", "oms_company_name", "oms2_company_name"]:
+        all_name_sources.setdefault(source, [None] * len(batch))
+
     combined_vectors = vectors[f"pos_batch_{batch_number}_combined"]
-    address_vectors = vectors[f"pos_batch_{batch_number}_address"]
-    name_vectors = vectors[f"pos_batch_{batch_number}_name"]
-    oms_company_vectors = vectors.get(f"pos_batch_{batch_number}_oms_company", [None] * len(batch))
-    oms2_company_vectors = vectors.get(f"pos_batch_{batch_number}_oms2_company", [None] * len(batch))
-    oms_addr_vectors = vectors.get(f"pos_batch_{batch_number}_oms_addr", [None] * len(batch))
-    oms2_addr_vectors = vectors.get(f"pos_batch_{batch_number}_oms2_addr", [None] * len(batch))
+    name_vectors = {
+        source: all_name_sources[source] for source in name_sources
+    }
+    address_vectors = {
+        source: all_address_sources[source] for source in address_sources
+    }
 
     insert_rows = []
     for i, row in enumerate(batch):
@@ -701,15 +777,15 @@ def build_pos_embedding_insert_rows(client, batch_number, batch, now):
             vt["full_address"],             # business_address text
             vt["oms_company_name"],         # oms_company_name text
             vt["oms2_company_name"],        # oms2_company_name text
-            vt["oms_address"],              # oms_address text
-            vt["oms2_address"],             # oms2_address text
+            vt["full_oms_address"],         # full_oms_address text
+            vt["full_oms2_address"],        # full_oms2_address text
             combined_vectors[i],            # combined_embedding
-            address_vectors[i],             # address_embedding
-            name_vectors[i],                # name_embedding
-            oms_company_vectors[i],         # oms_company_name_embedding
-            oms2_company_vectors[i],        # oms2_company_name_embedding
-            oms_addr_vectors[i],            # oms_address_embedding
-            oms2_addr_vectors[i],           # oms2_address_embedding
+            address_vectors.get("full_address", [None] * len(batch))[i],
+            name_vectors.get("business_name", [None] * len(batch))[i],
+            name_vectors.get("oms_company_name", [None] * len(batch))[i],
+            name_vectors.get("oms2_company_name", [None] * len(batch))[i],
+            address_vectors.get("full_oms_address", [None] * len(batch))[i],
+            address_vectors.get("full_oms2_address", [None] * len(batch))[i],
             now,                            # load_date
             row[2],                         # warehouse_number
             row[3],                         # fiscal_year
@@ -883,6 +959,123 @@ def run_fuzzy_match():
         _run_fuzzy_match(conn, job_started)
     finally:
         conn.close()
+
+
+def _fuzzy_set_sql_fragments(config: dict):
+    sets = matching_set_definitions(config)
+    if not sets:
+        raise RuntimeError("No matching sets configured in business rules")
+
+    alias_map = pos_embedding_variant_field_aliases(config)
+    address_weight, name_weight = semantic_precision_weights(config)
+    denominator = address_weight + name_weight
+
+    score_exprs = []
+    name_score_exprs = []
+    address_score_exprs = []
+    best_set_cases = []
+    boost_email_cases = []
+    boost_phone_cases = []
+    set_source_mapping = []
+    best_name_cases = []
+    best_address_cases = []
+    pos_field_select_exprs = []
+
+    email_sources = set()
+    phone_sources = set()
+    set_score_columns = []
+    set_aliases = []
+
+    for item in sets:
+        set_id = int(item["set"])
+        set_alias = f"set{set_id}"
+        name_source = str(item.get("name_field", "")).strip()
+        address_source = str(item.get("address_field", "")).strip()
+        email_source = str(item.get("email_field", "")).strip()
+        phone_source = str(item.get("phone_field", "")).strip()
+        if not name_source or not address_source:
+            raise RuntimeError(f"Invalid matching set definition: {item}")
+        if name_source not in alias_map:
+            raise RuntimeError(f"Missing embedding alias for name field '{name_source}'")
+        if address_source not in alias_map:
+            raise RuntimeError(f"Missing embedding alias for address field '{address_source}'")
+
+        name_col = alias_map[name_source]
+        address_col = alias_map[address_source]
+        name_score_exprs.append(
+            f"CASE WHEN s.{name_col} IS NOT NULL AND l_name_emb IS NOT NULL "
+            f"THEN (1 - (s.{name_col} <=> l_name_emb)) * 100 END AS {set_alias}_name_score"
+        )
+        address_score_exprs.append(
+            f"CASE WHEN s.{address_col} IS NOT NULL AND l_addr_emb IS NOT NULL "
+            f"THEN (1 - (s.{address_col} <=> l_addr_emb)) * 100 END AS {set_alias}_address_score"
+        )
+        score_exprs.append(
+            f"CASE WHEN s.{name_col} IS NOT NULL AND s.{address_col} IS NOT NULL "
+            f"THEN ({address_weight} * (1 - (s.{address_col} <=> l_addr_emb)) * 100 "
+            f"+ {name_weight} * (1 - COALESCE(NULLIF(s.{name_col} <=> l_name_emb, 'NaN'::float), 1)) * 100) / {denominator} "
+            f"END AS {set_alias}_score"
+        )
+        set_aliases.append(set_alias)
+        set_score_columns.append(f"{set_alias}_score")
+        best_set_cases.append(f"WHEN {set_alias}_score IS NOT NULL THEN {set_id}")
+        boost_email_cases.append(
+            f"WHEN winning_set = {set_id} AND lower(trim(COALESCE(lead_email, ''))) <> '' "
+            f"AND lower(trim(COALESCE(set{set_id}_pos_email, ''))) = lower(trim(COALESCE(lead_email, ''))) "
+            f"THEN %s"
+        )
+        boost_phone_cases.append(
+            f"WHEN winning_set = {set_id} AND regexp_replace(COALESCE(lead_phone, ''), '\\D', '', 'g') <> '' "
+            f"AND regexp_replace(COALESCE(lead_phone, ''), '\\D', '', 'g') "
+            f"= regexp_replace(COALESCE(set{set_id}_pos_phone, ''), '\\D', '', 'g') "
+            f"THEN %s"
+        )
+        best_name_cases.append(f"WHEN winning_set = {set_id} THEN {set_alias}_name_score")
+        best_address_cases.append(
+            f"WHEN winning_set = {set_id} THEN {set_alias}_address_score"
+        )
+        set_source_mapping.append((set_id, str(item.get("source", "")).strip()))
+
+        email_field = str(item.get("email_field", "")).strip()
+        phone_field = str(item.get("phone_field", "")).strip()
+        if email_field:
+            email_sources.add(email_field)
+            pos_field_select_exprs.append(f"\n            t.{email_field} AS set{set_id}_pos_email")
+        if phone_field:
+            phone_sources.add(phone_field)
+            pos_field_select_exprs.append(f"\n            t.{phone_field} AS set{set_id}_pos_phone")
+
+    if any(name_source not in alias_map for name_source in matching_set_name_fields(config)):
+        logger.warning(
+            "Missing name source alias mapping for one or more fuzzy sets;"
+            " fallback to configured set mappings only"
+        )
+    if any(address_source not in alias_map for address_source in matching_set_address_fields(config)):
+        logger.warning(
+            "Missing address source alias mapping for one or more fuzzy sets;"
+            " fallback to configured set mappings only"
+        )
+
+    return {
+        "sets": sets,
+        "score_exprs": score_exprs,
+        "name_score_exprs": name_score_exprs,
+        "address_score_exprs": address_score_exprs,
+        "winner_case": best_set_cases,
+        "best_name_case": best_name_cases,
+        "best_address_case": best_address_cases,
+        "boost_email_cases": boost_email_cases,
+        "boost_phone_cases": boost_phone_cases,
+        "set_source_mapping": set_source_mapping,
+        "pos_field_selects": pos_field_select_exprs,
+        "set_score_columns": set_score_columns,
+        "set_aliases": set_aliases,
+        "email_sources": sorted(email_sources),
+        "phone_sources": sorted(phone_sources),
+        "denominator": denominator,
+        "address_weight": address_weight,
+        "name_weight": name_weight,
+    }
 
 
 def write_back_match_results(conn, cursor, schema, run_id):

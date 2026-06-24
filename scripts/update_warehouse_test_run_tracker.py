@@ -41,6 +41,29 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import openpyxl
+
+RULES_PATH = Path(__file__).resolve().parent.parent / "lead_match_runtime" / "lead_to_pos_match_rules.json"
+
+
+def _load_subtier_bounds():
+    """Load score subtier boundaries from JSON for band counting."""
+    try:
+        with open(RULES_PATH) as f:
+            rules = json.load(f)
+        dr = rules["decision_rules"]
+        subtiers = sorted(
+            dr.get("optional_confidence_subtiers", {}).get("subtiers", []),
+            key=lambda s: float(s["min_score"]),
+        )
+        fuzzy_floor = float(dr["fuzzy_qualify_min_score"])
+        fuzzy_ceiling = float(dr["fuzzy_max_score"])
+        exact_score = float(dr["exact_score"])
+        return subtiers, fuzzy_floor, fuzzy_ceiling, exact_score
+    except Exception:
+        return [], 70, 99.999, 100
+
+
+_SUBTIERS, _FUZZY_FLOOR, _FUZZY_CEILING, _EXACT_SCORE = _load_subtier_bounds()
 from openpyxl.styles import Alignment, Font, PatternFill, numbers
 from openpyxl.utils import get_column_letter
 
@@ -285,13 +308,13 @@ def analyze_matches_csv(matches_path: Path) -> dict:
                 continue
 
             non_exact_scores.append(score)
-            if score >= 100:
+            if score >= _EXACT_SCORE:
                 result["non_exact_gte_100"] += 1
-            elif 90 <= score < 100:
+            elif len(_SUBTIERS) >= 3 and score >= float(_SUBTIERS[2]["min_score"]):
                 result["matching_high"] += 1
-            elif 85 <= score < 90:
+            elif len(_SUBTIERS) >= 2 and score >= float(_SUBTIERS[1]["min_score"]):
                 result["potential_medium"] += 1
-            elif 70 <= score < 85:
+            elif score >= _FUZZY_FLOOR:
                 result["potential_low"] += 1
             else:
                 result["below_70"] += 1

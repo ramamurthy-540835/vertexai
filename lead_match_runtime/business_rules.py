@@ -191,7 +191,7 @@ def fuzzy_lifecycle_state(score: float, config: dict[str, Any]) -> str:
     floor = float(dr["fuzzy_qualify_min_score"])
     if float(score) >= floor:
         return str(dr.get("fuzzy_lifecycle_state", "Potential"))
-    return "No Match"
+    return str(dr.get("no_match_lifecycle_state", "No Match"))
 
 
 def lifecycle_state_for_match_type(
@@ -509,7 +509,96 @@ def assign_lifecycle_state(match: dict[str, Any], config: dict[str, Any]) -> str
 # ─────────────────────────────────────────────────────────────
 
 def matching_sets(config: dict[str, Any]) -> list[dict[str, Any]]:
-    return list(config["matching_sets"]["sets"])
+    return sorted(
+        list(config["matching_sets"]["sets"]),
+        key=lambda item: int(item["set"]),
+    )
+
+
+def matching_set_definitions(config: dict[str, Any]) -> list[dict[str, Any]]:
+    return matching_sets(config)
+
+
+def matching_set_by_id(config: dict[str, Any], set_id: int) -> dict[str, Any] | None:
+    for item in matching_sets(config):
+        if int(item.get("set", -1)) == int(set_id):
+            return dict(item)
+    return None
+
+
+def matching_sets_fields(config: dict[str, Any]) -> set[str]:
+    fields: set[str] = set()
+    for item in matching_sets(config):
+        fields.add(str(item.get("name_field", "")).strip())
+        fields.add(str(item.get("address_field", "")).strip())
+        fields.add(str(item.get("email_field", "")).strip())
+        fields.add(str(item.get("phone_field", "")).strip())
+    return fields
+
+
+def matching_set_email_fields(config: dict[str, Any]) -> list[str]:
+    fields = [str(item.get("email_field", "")).strip() for item in matching_sets(config)]
+    return list(dict.fromkeys(field for field in fields if field))
+
+
+def matching_set_phone_fields(config: dict[str, Any]) -> list[str]:
+    fields = [str(item.get("phone_field", "")).strip() for item in matching_sets(config)]
+    return list(dict.fromkeys(field for field in fields if field))
+
+
+def matching_set_name_fields(config: dict[str, Any]) -> list[str]:
+    fields = [str(item.get("name_field", "")).strip() for item in matching_sets(config)]
+    return list(dict.fromkeys(field for field in fields if field))
+
+
+def matching_set_address_fields(config: dict[str, Any]) -> list[str]:
+    fields = [str(item.get("address_field", "")).strip() for item in matching_sets(config)]
+    return list(dict.fromkeys(field for field in fields if field))
+
+
+def closed_existing_lifecycle_state_from_fiscal_rules(config: dict[str, Any]) -> str:
+    classification = config["fiscal_rules"].get("classification", [])
+    if classification:
+        for rule in classification:
+            if str(rule.get("name", "")).lower().startswith("closed"):
+                state = rule.get("lifecycle_state")
+                if state:
+                    return str(state)
+    return str(config["semantic_definitions"].get("closed_existing", "Closed - Existing"))
+
+
+def fuzzy_boost_rule(config: dict[str, Any]) -> dict[str, Any]:
+    return dict(config["scoring"].get("deterministic_boosts", {}))
+
+
+def fuzzy_denom(config: dict[str, Any]) -> float:
+    return float(
+        semantic_precision_weights(config)[0] + semantic_precision_weights(config)[1]
+    )
+
+
+def pos_embedding_variant_field_aliases(config: dict[str, Any]) -> dict[str, str]:
+    """Map business rule variant names to current pos_embeddings vector columns."""
+    return {
+        "full_address": "address_embedding",
+        "full_oms_address": "oms_address_embedding",
+        "full_oms2_address": "oms2_address_embedding",
+        "business_name": "name_embedding",
+        "oms_company_name": "oms_company_name_embedding",
+        "oms2_company_name": "oms2_company_name_embedding",
+        "combined_field": "combined_embedding",
+    }
+
+
+def pos_transaction_field_aliases(config: dict[str, Any]) -> dict[str, str]:
+    return {
+        "email": "email",
+        "phone": "phone",
+        "email_1_oms": "email_1_oms",
+        "phone_1_oms": "phone_1_oms",
+        "email_2_oms": "email_2_oms",
+        "phone_2_oms": "phone_2_oms",
+    }
 
 
 def matching_set_selection_rule(config: dict[str, Any]) -> str:
@@ -588,6 +677,6 @@ def build_pos_variant_texts(record: dict[str, Any]) -> dict[str, str | None]:
         "full_address": identity.get("full_address") or None,
         "oms_company_name": oms_company or None,
         "oms2_company_name": oms2_company or None,
-        "oms_address": oms_addr or None,
-        "oms2_address": oms2_addr or None,
+        "full_oms_address": oms_addr or None,
+        "full_oms2_address": oms2_addr or None,
     }

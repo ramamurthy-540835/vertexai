@@ -212,6 +212,13 @@
 
   "decision_rules": {
     "exact_owns_100": true,
+    "exact_score": 100,
+    "exact_authoritative_score": 100,
+    "exact_match_type": "Exact",
+    "exact_match_types": ["Exact", "Deterministic", "Exact Match", "Direct Match", "Close Match"],
+    "exact_lifecycle_state": "Closed - Match",
+    "closed_existing_lifecycle_state": "Closed - Existing",
+    "no_match_lifecycle_state": "No Match",
     "fuzzy_match_type": "Fuzzy",
     "manual_review_match_type": "Manual Review",
     "fuzzy_qualify_min_score": 70,

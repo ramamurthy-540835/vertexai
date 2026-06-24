@@ -23,7 +23,7 @@ MAX_WORKERS = int(os.environ.get("MAX_WORKERS", "5"))
 PROJECT_ID = os.environ.get("PROJECT_ID")
 
 def load_embedding_config():
-    """Load embedding model and dimension from business rules JSON."""
+    """Load embedding model and dimension from business rules JSON. Fails fast if not found."""
     env_path = os.environ.get("LEAD_POS_RULES_PATH")
     repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))))
     paths = [
@@ -37,18 +37,17 @@ def load_embedding_config():
         try:
             with open(path, "r") as f:
                 rules = json.load(f)
+                emb = rules["embeddings"]
                 return {
-                    "model": rules.get("embeddings", {}).get("model", "gemini-embedding-001"),
-                    "task_type": rules.get("embeddings", {}).get("task_type", "SEMANTIC_SIMILARITY"),
-                    "output_dimensionality": rules.get("embeddings", {}).get("output_dimensionality", 768),
+                    "model": emb["model"],
+                    "task_type": emb["task_type"],
+                    "output_dimensionality": emb["output_dimensionality"],
                 }
         except Exception as e:
-            pass
-    return {
-        "model": "gemini-embedding-001",
-        "task_type": "SEMANTIC_SIMILARITY",
-        "output_dimensionality": 768,
-    }
+            print(f"[WARN] Failed to parse rules from {path}: {e}")
+    raise FileNotFoundError(
+        "Business rules JSON not found. Set LEAD_POS_RULES_PATH or ensure lead_to_pos_match_rules.json exists."
+    )
 
 embedding_config = load_embedding_config()
 MODEL_NAME = embedding_config["model"]

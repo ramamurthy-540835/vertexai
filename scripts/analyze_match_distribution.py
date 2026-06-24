@@ -119,28 +119,30 @@ def load_rules_json(rules_path: str) -> dict:
 
 
 def _extract_scoring_params(rules: dict) -> tuple[float, float, float]:
-    """Read weights/denominator from rules JSON with safe defaults."""
-    fields = rules.get("embeddings", {}).get("fields", {})
-    addr_w = float(fields.get("full_address", {}).get("weight", 4))
-    name_w = float(fields.get("business_name", {}).get("weight", 3))
-    denom = float(fields.get("full_address", {}).get("weight", 4) + fields.get("business_name", {}).get("weight", 3))
-    if addr_w <= 0 or name_w <= 0 or denom <= 0:
-        return 4.0, 3.0, 7.0
+    """Read weights/denominator from rules JSON."""
+    fields = rules["embeddings"]["fields"]
+    addr_w = float(fields["address_variant"]["weight"])
+    name_w = float(fields["name_variant"]["weight"])
+    denom = addr_w + name_w
+    if denom <= 0:
+        raise ValueError("Scoring weights must sum to a positive value")
     return addr_w, name_w, denom
 
 
 def _extract_recall_gate(rules: dict) -> float:
-    return float(rules.get("candidate_retrieval", {}).get("recall_gate_min_similarity", 65))
+    return float(rules["candidate_retrieval"]["recall_gate_min_similarity"])
+
+
+def _extract_subtiers(rules: dict) -> list[dict]:
+    """Return the configured confidence subtiers from JSON."""
+    return rules.get("decision_rules", {}).get("optional_confidence_subtiers", {}).get("subtiers", [])
 
 
 def _band_for_score(score: float, rules: dict) -> str:
-    """Return the configured confidence band label for a final score."""
-    decision_rules = rules.get("decision_rules", {})
-    for band in decision_rules.get("fuzzy_score_bands", []):
-        min_score = float(band.get("min_score", float("-inf")))
-        max_score = float(band.get("max_score", float("inf")))
-        if min_score <= score <= max_score:
-            return str(band.get("label") or band.get("name") or "Unknown")
+    """Return the configured confidence subtier label for a final score."""
+    for s in _extract_subtiers(rules):
+        if float(s["min_score"]) <= score <= float(s["max_score"]):
+            return str(s.get("name", "Unknown"))
 
     exact_score = float(decision_rules.get("exact_score", 100))
     if score >= exact_score:
@@ -241,8 +243,17 @@ def compute_distribution_facts(df: pd.DataFrame, rules: dict) -> dict:
     if scores.empty:
         raise ValueError("matches.csv does not contain any numeric final_score values")
 
+    # Read band boundaries from JSON
+    subtiers = _extract_subtiers(rules)
+    dr = rules.get("decision_rules", {})
+    fuzzy_floor = float(dr["fuzzy_qualify_min_score"])
+    fuzzy_ceiling = float(dr["fuzzy_max_score"])
+    subtier_bounds = sorted(subtiers, key=lambda s: float(s["min_score"]))
+    mid_cutoff = float(subtier_bounds[1]["min_score"]) if len(subtier_bounds) > 1 else fuzzy_floor
+    high_cutoff = float(subtier_bounds[2]["min_score"]) if len(subtier_bounds) > 2 else mid_cutoff
+
     # Build histogram
-    hist, bin_edges = pd.cut(scores, bins=range(70, 102, 1), right=False, retbins=True)
+    hist, bin_edges = pd.cut(scores, bins=range(int(fuzzy_floor), 102, 1), right=False, retbins=True)
     hist_counts = hist.value_counts().sort_index()
     histogram = {str(interval): int(count) for interval, count in hist_counts.items()}
 
@@ -262,12 +273,12 @@ def compute_distribution_facts(df: pd.DataFrame, rules: dict) -> dict:
     peak_bin = hist_counts.idxmax() if len(hist_counts) > 0 else None
     peak_value = int(hist_counts.max()) if len(hist_counts) > 0 else 0
 
-    # Tail volume (70-84.999)
-    tail_mask = (scores >= 70) & (scores < 85)
+    # Tail volume (Low subtier)
+    tail_mask = (scores >= fuzzy_floor) & (scores < mid_cutoff)
     tail_volume = int(tail_mask.sum())
 
-    # Review workload (Potential + Manual Review = 70-89.999)
-    review_mask = (scores >= 70) & (scores < 90)
+    # Review workload (Potential: all fuzzy below High)
+    review_mask = (scores >= fuzzy_floor) & (scores < high_cutoff)
     review_workload = int(review_mask.sum())
 
     # Artifact check: any single bin with >15% of total or single-value spike

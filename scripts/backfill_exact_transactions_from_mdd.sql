@@ -10,7 +10,7 @@ SELECT COUNT(*) AS dry_count
 FROM leadmgmt.transaction t
 JOIN leadmgmt.match_decision_detail m ON m.pos_id = t.pos_id
 WHERE m.match_type = 'Exact'
-  AND m.final_score >= 80
+  AND m.final_score = 100
   AND m.warehouse_number = :warehouse
   AND (t.match_type IS NULL OR t.match_type <> 'Exact');
 
@@ -27,6 +27,6 @@ SET
 FROM leadmgmt.match_decision_detail m
 WHERE m.pos_id = t.pos_id
   AND m.match_type = 'Exact'
-  AND m.final_score >= 80
+  AND m.final_score = 100
   AND m.warehouse_number = :warehouse
   AND (t.match_type IS NULL OR t.match_type <> 'Exact');
