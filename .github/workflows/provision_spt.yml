@@ -50,7 +50,7 @@ jobs:
 
       - name: "Terraform Plan"
         working-directory: ./terraform/environments/${{ matrix.env }}/infra
-        run: terraform plan -out=plan.tfplan -input=false -lock-timeout=10m
+        run: terraform plan -out=plan.tfplan -input=false -lock-timeout=10m -var-file="${{ matrix.env }}.auto.tfvars"
 
       - name: "Terraform Apply"
         if: startsWith(github.ref, 'refs/tags/release-spt')
