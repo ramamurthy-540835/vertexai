@@ -113,13 +113,6 @@ module "service_now_client_secret" {
   secret_value  = var.service_now_client_secret
 }
 
-module "costco_tlsi_cert" {
-  source        = "../../../modules/secret_manager"
-  project       = var.projectId
-  secret_id     = "costco_tlsi_cert"
-  secret_value  = var.costco_tlsi_cert
-}
-
 module "cloud_sql_instance" {
   source              = "../../../modules/database"
   project             = var.projectId
