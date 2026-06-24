@@ -94,3 +94,9 @@ variable "costco_tlsi_cert" {
   type        = string
   sensitive   = true
 }
+
+variable "service_image_tag" {
+  description = "image tag for cloud run service"
+  type        = string
+  sensitive   = true
+}
