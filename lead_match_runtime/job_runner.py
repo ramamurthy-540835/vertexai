@@ -2020,7 +2020,7 @@ def _run_fuzzy_match(conn, job_started):
 
         if not DRY_RUN:
             ce_params = [*lead_ids, recall_gate, nearest_neighbor_limit,
-                         periods_per_year, ce_window, ce_window,
+                         periods_per_year, ce_window,
                          run_id, ce_lifecycle, weight_formula, EMBEDDING_MODEL]
             cursor.execute(
                 f"""
