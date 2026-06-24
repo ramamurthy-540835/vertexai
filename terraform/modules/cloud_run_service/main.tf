@@ -7,6 +7,9 @@ resource "google_cloud_run_v2_service" "this" {
   template {
     service_account = var.service_account_email
     timeout         = "${var.timeout_seconds}s"
+    labels = {
+    image-tag = var.service_image_tag
+  }
 
     scaling {
       min_instance_count = var.min_instances
