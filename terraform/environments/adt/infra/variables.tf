@@ -104,5 +104,4 @@ variable "lead_mgmt_service_private_key"{
 variable "service_image_tag" {
   description = "image tag for cloud run service"
   type        = string
-  sensitive   = true
 }
