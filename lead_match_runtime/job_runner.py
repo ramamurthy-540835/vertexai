@@ -1631,7 +1631,6 @@ def _run_fuzzy_match(conn, job_started):
         ce_lifecycle = str(rules["fiscal_rules"]["classification"][0]["lifecycle_state"])
         email_boost_val = float(rules["scoring"]["deterministic_boosts"]["email_exact_match"])
         phone_boost_val = float(rules["scoring"]["deterministic_boosts"]["phone_exact_match"])
-        boost_cap = float(rules["scoring"]["deterministic_boosts"]["cap"])
 
         params.extend([
             recall_gate,
@@ -1663,7 +1662,6 @@ def _run_fuzzy_match(conn, job_started):
             phone_boost_val,
             phone_boost_val,
             phone_boost_val,
-            boost_cap,
             fuzzy_ceiling,
             qualify_min,
         ])
