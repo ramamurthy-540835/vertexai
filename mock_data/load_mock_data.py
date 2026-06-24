@@ -13,6 +13,13 @@ ENV_FILE = os.path.join(PROJECT_DIR, '.env.local')
 ROOT_LEADS_FILE = os.path.join(SCRIPT_DIR, 'leads_corrected.xlsx')
 ROOT_POS_FILE = os.path.join(SCRIPT_DIR, 'pos_corrected.xlsx')
 
+COLUMN_RENAMES = {
+    "fiscal_year_lead": "fiscal_year",
+    "fiscal_period_lead": "fiscal_period",
+    "fiscal_year_transaction": "fiscal_year",
+    "fiscal_period_transaction": "fiscal_period",
+}
+
 def load_env_file(path=ENV_FILE):
     if not os.path.exists(path):
         return
@@ -145,7 +152,9 @@ def load_leads(cursor, conn, leads_file, limit=None):
         return False
 
     # Convert all NaN/Null values to None using map (compatible with pandas 3.0)
-    df_leads = df_leads_raw.map(clean_val)
+    df_leads = df_leads_raw.rename(
+        columns={k: v for k, v in COLUMN_RENAMES.items() if k in df_leads_raw.columns}
+    ).map(clean_val)
 
     # We will populate 'account', 'lead', and 'contact' tables
     accounts_to_insert = []
@@ -226,16 +235,16 @@ def load_leads(cursor, conn, leads_file, limit=None):
             None,                               # confidence_level
             row.get('membership_number'),       # membership_number
             row.get('warehouse_number'),        # warehouse_number
-            None,                               # fiscal_period
-            None,                               # fiscal_year
-            None,                               # closed_fiscal_period
-            None,                               # closed_fiscal_year
+            row.get('fiscal_period'),             # fiscal_period
+            row.get('fiscal_year'),              # fiscal_year
+            row.get('closed_fiscal_period'),     # closed_fiscal_period
+            row.get('closed_fiscal_year'),       # closed_fiscal_year
             batch_id,                           # batch_id
             current_time,                       # load_date
             'mock_loader',                      # updated_by
             current_time,                       # updated_date
-            None,                               # match_result
-            None                                # week
+            row.get('match_result'),             # match_result
+            row.get('week'),                    # week
         ))
 
         # Prepare Contact row
@@ -316,7 +325,9 @@ def load_pos(cursor, conn, pos_file, limit=None):
         return False
 
     # Convert all NaN/Null values to None using map (compatible with pandas 3.0)
-    df_pos = df_pos_raw.map(clean_val)
+    df_pos = df_pos_raw.rename(
+        columns={k: v for k, v in COLUMN_RENAMES.items() if k in df_pos_raw.columns}
+    ).map(clean_val)
 
     pos_tx_to_insert = []
     tx_to_insert = []
@@ -482,6 +493,52 @@ def load_pos(cursor, conn, pos_file, limit=None):
         conn.rollback()
         return False
 
+def clean_warehouse(cursor, conn, warehouse_number):
+    wh = int(warehouse_number)
+    print(f"\nCleaning all data for warehouse {wh}...")
+    cursor.execute(
+        'DELETE FROM "leadmgmt"."match_decision_detail" WHERE warehouse_number = %s', (wh,)
+    )
+    print(f"  match_decision_detail: {cursor.rowcount} rows deleted")
+    cursor.execute(
+        'DELETE FROM "leadmgmt"."leads_embeddings" WHERE warehouse_number = %s', (wh,)
+    )
+    print(f"  leads_embeddings: {cursor.rowcount} rows deleted")
+    cursor.execute(
+        'DELETE FROM "leadmgmt"."pos_embeddings" WHERE warehouse_number = %s', (wh,)
+    )
+    print(f"  pos_embeddings: {cursor.rowcount} rows deleted")
+    cursor.execute(
+        """DELETE FROM "leadmgmt"."contact"
+           WHERE lead_id IN (
+               SELECT lead_id FROM "leadmgmt"."lead" WHERE warehouse_number = %s
+           )""",
+        (wh,),
+    )
+    print(f"  contact: {cursor.rowcount} rows deleted")
+    cursor.execute(
+        'DELETE FROM "leadmgmt"."lead" WHERE warehouse_number = %s', (wh,)
+    )
+    print(f"  lead: {cursor.rowcount} rows deleted")
+    cursor.execute(
+        'DELETE FROM "leadmgmt"."transaction" WHERE warehouse_number = %s', (wh,)
+    )
+    print(f"  transaction: {cursor.rowcount} rows deleted")
+    cursor.execute(
+        'DELETE FROM "leadmgmt"."pos_transactions" WHERE warehouse_number = %s', (wh,)
+    )
+    print(f"  pos_transactions: {cursor.rowcount} rows deleted")
+    cursor.execute(
+        """DELETE FROM "leadmgmt"."account"
+           WHERE account_id NOT IN (
+               SELECT DISTINCT account_id FROM "leadmgmt"."lead"
+           )"""
+    )
+    print(f"  account (orphaned): {cursor.rowcount} rows deleted")
+    conn.commit()
+    print(f"Warehouse {wh} cleaned.")
+
+
 def show_summary(cursor):
     print("\n--- Summary of Loaded Data ---")
     try:
@@ -506,6 +563,8 @@ def main():
                         help="Load only the first N rows from each selected Excel file")
     parser.add_argument('--summary-only', action='store_true',
                         help="Connect and print table counts without loading data")
+    parser.add_argument('--clean', action='store_true',
+                        help="Delete existing data for this warehouse before loading (requires --warehouse-number)")
     args = parser.parse_args()
     target = args.target or args.table
 
@@ -539,6 +598,12 @@ def main():
         show_summary(cursor)
         conn.close()
         return
+
+    if args.clean:
+        if not warehouse_number:
+            print("--clean requires --warehouse-number")
+            sys.exit(1)
+        clean_warehouse(cursor, conn, warehouse_number)
 
     success = True
     if target in ['lead', 'all']:

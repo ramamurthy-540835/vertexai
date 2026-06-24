@@ -23,6 +23,9 @@ from lead_match_runtime.business_rules import (  # noqa: E402
     assign_confidence_band,
     assign_lifecycle_state,
     classify_fiscal_relationship,
+    closed_existing_lifecycle_state,
+    exact_authoritative_score,
+    exact_lifecycle_state,
     load_business_rules,
     resolve_pos_to_single_lead,
     select_primary_transaction,
@@ -199,41 +202,70 @@ def run_rule_checks() -> list[RuleCheck]:
     checks.append(
         RuleCheck(
             name="fiscal_new_match",
-            status="PASS" if classify_fiscal_relationship(lead, pos_same_warehouse_after) == "Closed - Match" else "FAIL",
-            detail=classify_fiscal_relationship(lead, pos_same_warehouse_after),
+            status=(
+                "PASS"
+                if classify_fiscal_relationship(lead, pos_same_warehouse_after, rules)
+                == exact_lifecycle_state(rules)
+                else "FAIL"
+            ),
+            detail=classify_fiscal_relationship(lead, pos_same_warehouse_after, rules),
         )
     )
     checks.append(
         RuleCheck(
             name="fiscal_closed_existing",
-            status="PASS" if classify_fiscal_relationship(lead, pos_before_lead) == "Closed - Existing" else "FAIL",
-            detail=classify_fiscal_relationship(lead, pos_before_lead),
+            status=(
+                "PASS"
+                if classify_fiscal_relationship(lead, pos_before_lead, rules)
+                == closed_existing_lifecycle_state(rules)
+                else "FAIL"
+            ),
+            detail=classify_fiscal_relationship(lead, pos_before_lead, rules),
         )
     )
 
-    exact_wins = apply_override_policy({"score": 85, "match_type": "Exact"}, {"score": 99, "match_type": "Fuzzy"}, rules)
+    exact_wins = apply_override_policy(
+        {"score": exact_authoritative_score(rules), "match_type": rules["decision_rules"]["exact_match_type"]},
+        {
+            "score": min(99, rules["decision_rules"]["fuzzy_max_score"]),
+            "match_type": rules["decision_rules"]["fuzzy_match_type"],
+        },
+        rules,
+    )
     checks.append(
         RuleCheck(
             name="exact_is_authoritative",
-            status="PASS" if exact_wins and exact_wins["match_type"] == "Exact" else "FAIL",
+            status=(
+                "PASS"
+                if exact_wins
+                and exact_wins["match_type"] == rules["decision_rules"]["exact_match_type"]
+                else "FAIL"
+            ),
             detail=str(exact_wins),
         )
     )
 
     boosted = apply_deterministic_boost(90, lead, pos_same_warehouse_after, rules)
+    boost_cap = rules["scoring"]["deterministic_boosts"]["cap"]
     checks.append(
         RuleCheck(
             name="deterministic_boost_cap",
-            status="PASS" if boosted <= 100 else "FAIL",
+            status="PASS" if boosted <= boost_cap else "FAIL",
             detail=f"boosted_score={boosted}",
         )
     )
 
     band = assign_confidence_band(93, rules)
+    expected_band = rules["decision_rules"]["fuzzy_score_bands"][0]
     checks.append(
         RuleCheck(
             name="confidence_band_high",
-            status="PASS" if band["name"] == "High" and band["state"] == "Closed - Match" else "FAIL",
+            status=(
+                "PASS"
+                if band["name"] == expected_band["name"]
+                and band["state"] == expected_band["lifecycle_state"]
+                else "FAIL"
+            ),
             detail=str(band),
         )
     )
@@ -275,7 +307,11 @@ def run_rule_checks() -> list[RuleCheck]:
     checks.append(
         RuleCheck(
             name="pos_to_lead_resolution",
-            status="PASS" if resolved and resolved[0]["match_type"] == "Manual Review" else "FAIL",
+            status=(
+                "PASS"
+                if resolved and resolved[0]["match_type"] == rules["resolution"]["ambiguity_match_type"]
+                else "FAIL"
+            ),
             detail=str(resolved),
         )
     )
@@ -284,7 +320,7 @@ def run_rule_checks() -> list[RuleCheck]:
     checks.append(
         RuleCheck(
             name="lifecycle_closed_existing",
-            status="PASS" if lifecycle == "Closed - Existing" else "FAIL",
+            status="PASS" if lifecycle == closed_existing_lifecycle_state(rules) else "FAIL",
             detail=lifecycle,
         )
     )

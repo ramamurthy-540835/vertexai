@@ -1,0 +1,27 @@
+[project]
+name = "Costco_Lead_Managment"
+version = "0.0.7"
+authors = [
+  { name="Gnanaprakash Mani", email="c_gmani@example.com" },
+]
+description = "Matching Lead and POS data "
+readme = "README.md"
+requires-python = ">=3.8"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+license = "MIT"
+license-files = ["LICEN[CS]E*"]
+
+[project.urls]
+Homepage = "https://github.com/upandey_costco/membership-bc-lead-management"
+Issues = "https://github.com/upandey_costco/membership-bc-lead-management"
+
+
+[build-system]
+requires = ["setuptools >= 77.0.3", "cython", "google-cloud-storage" ,"cloud-sql-python-connector[pg8000]"
+    ,"pandas" ,"google-cloud-secret-manager" ,"requests" ,"sqlalchemy" ,"fsspec" ,"gcsfs" ,"pydantic","configparser",
+    "kfp==2.4.0","google-cloud-aiplatform","google-cloud-pipeline-components","unidecode","numpy","pgvector"
+]
+build-backend = "setuptools.build_meta"

@@ -1,4 +1,5 @@
 import { AnnotationForm } from "@/components/AnnotationForm";
+import { AnalysisPanel } from "@/components/AnalysisPanel";
 import { latestSummary, searchMatches } from "@/lib/reports";
 
 export const dynamic = "force-dynamic";
@@ -151,6 +152,12 @@ export default async function SearchPage({ searchParams }: { searchParams: Promi
           <AnnotationForm runId={runId} leadId={firstRow?.lead_id} posId={firstRow?.pos_id} />
         ) : null}
       </section>
+
+      {runId ? (
+        <aside className="card">
+          <AnalysisPanel warehouse={warehouse} runId={runId} />
+        </aside>
+      ) : null}
     </div>
   );
 }

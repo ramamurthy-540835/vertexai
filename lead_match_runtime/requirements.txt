@@ -2,3 +2,4 @@ google-genai
 google-cloud-storage
 numpy
 pg8000
+pytest
