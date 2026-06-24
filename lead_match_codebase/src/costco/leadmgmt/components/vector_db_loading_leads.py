@@ -1,5 +1,6 @@
 import os
 import concurrent.futures
+import json
 import pandas as pd
 from datetime import datetime
 from pgvector.sqlalchemy import Vector
@@ -18,12 +19,41 @@ from costco.leadmgmt.util.apputil import load_file_from_gcs
 from costco.leadmgmt.database.DBUtil import load_data_from_cloudsql
 from costco.leadmgmt.util.fiscal_year import get_costco_fiscal_info
 
-# Get the base image from environment variables
 MAX_WORKERS = int(os.environ.get("MAX_WORKERS", "5"))
 PROJECT_ID = os.environ.get("PROJECT_ID")
-MODEL_NAME = "gemini-embedding-001"
-TASK_TYPE = "SEMANTIC_SIMILARITY"
-OUTPUT_DIMENSIONALITY = 768
+
+def load_embedding_config():
+    """Load embedding model and dimension from business rules JSON."""
+    env_path = os.environ.get("LEAD_POS_RULES_PATH")
+    repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))))
+    paths = [
+        env_path,
+        os.path.join(repo_root, "lead_match_runtime/lead_to_pos_match_rules.json"),
+        os.path.join(os.getcwd(), "lead_match_runtime/lead_to_pos_match_rules.json"),
+    ]
+    for path in paths:
+        if not path or not os.path.exists(path):
+            continue
+        try:
+            with open(path, "r") as f:
+                rules = json.load(f)
+                return {
+                    "model": rules.get("embeddings", {}).get("model", "gemini-embedding-001"),
+                    "task_type": rules.get("embeddings", {}).get("task_type", "SEMANTIC_SIMILARITY"),
+                    "output_dimensionality": rules.get("embeddings", {}).get("output_dimensionality", 768),
+                }
+        except Exception as e:
+            pass
+    return {
+        "model": "gemini-embedding-001",
+        "task_type": "SEMANTIC_SIMILARITY",
+        "output_dimensionality": 768,
+    }
+
+embedding_config = load_embedding_config()
+MODEL_NAME = embedding_config["model"]
+TASK_TYPE = embedding_config["task_type"]
+OUTPUT_DIMENSIONALITY = embedding_config["output_dimensionality"]
 
 client = genai.Client(
     vertexai=True,
@@ -49,14 +79,14 @@ def get_lead_class(insert_lead_table_name, schema_name):
         __table_args__ = {"schema": schema_name}
         lead_id = Column(Text, primary_key=True)
         combined_field = Column(Text)
-        combined_embedding = Column(Vector(768))
+        combined_embedding = Column(Vector(OUTPUT_DIMENSIONALITY))
         updated_date = Column(DateTime)
         warehouse_number = Column(Integer)
         load_date = Column(DateTime)
         business_address = Column(Text)
         business_name = Column(Text)
-        address_embedding = Column(Vector(768))
-        name_embedding = Column(Vector(768))
+        address_embedding = Column(Vector(OUTPUT_DIMENSIONALITY))
+        name_embedding = Column(Vector(OUTPUT_DIMENSIONALITY))
 
     return Lead
 
@@ -216,9 +246,9 @@ def insert_operation_leads(engine, table_name, schema_name, data_frame):
             table_name, con=engine, if_exists='append', index=False,
             schema=schema_name, method='multi', chunksize=1000,
             dtype={
-                "combined_embedding": Vector(768),
-                "address_embedding":  Vector(768),
-                "name_embedding":     Vector(768),
+                "combined_embedding": Vector(OUTPUT_DIMENSIONALITY),
+                "address_embedding":  Vector(OUTPUT_DIMENSIONALITY),
+                "name_embedding":     Vector(OUTPUT_DIMENSIONALITY),
                 "updated_date":       TIMESTAMP,
             }
         )

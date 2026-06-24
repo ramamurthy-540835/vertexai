@@ -10,12 +10,12 @@ from costco.leadmgmt.util.fiscal_year import get_costco_fiscal_info
 
 
 # ==============================================================
-# RULE SET LOADER (SOURCE OF TRUTH)
+# RULE SET LOADER (IMPORTS FROM SHARED BUSINESS RULES)
 # ==============================================================
 def load_business_rules() -> dict:
     """
-    Loads matching business rules from lead_match_runtime/lead_to_pos_match_rules.json
-    with standard fallback.
+    Loads matching business rules from lead_to_pos_match_rules.json.
+    Uses the same loader as lead_match_runtime/business_rules.py to ensure single source of truth.
     """
     env_path = os.environ.get("LEAD_POS_RULES_PATH")
     this_dir = os.path.dirname(os.path.abspath(__file__))
@@ -38,29 +38,7 @@ def load_business_rules() -> dict:
             except Exception as e:
                 print(f"[WARN] Failed to parse rules from {norm_path}: {e}")
 
-    print("[WARN] Using minimal default business rules (fallback)")
-    return {
-        "confidence_bands": {
-            "qualify_min_score": 78,
-            "bands": [
-                {"name": "High", "state": "Closed - Match", "min_score": 92, "max_score": 100},
-                {"name": "Medium", "state": "Potential", "min_score": 85, "max_score": 91.999},
-                {"name": "Review", "state": "Potential", "min_score": 78, "max_score": 84.999},
-                {"name": "No Match", "state": "No Match", "min_score": 0, "max_score": 77.999}
-            ]
-        },
-        "exact_match_engine": {
-            "minimum_score": 80
-        },
-        "resolution": {
-            "ambiguity_delta": 3,
-            "ambiguity_match_type": "Manual Review"
-        },
-        "override_policy": {
-            "exact_qualified_min_score": 80,
-            "semantic_match_type": "Fuzzy"
-        }
-    }
+    raise FileNotFoundError("Business rules file not found. Set LEAD_POS_RULES_PATH or ensure lead_to_pos_match_rules.json exists.")
 
 
 # ==============================================================
@@ -151,9 +129,9 @@ def classify_row_match(row: pd.Series, rules: dict) -> pd.Series:
 
     match_type = row.get("match_type", "")
 
-    # 1. Resolve qualification thresholds
-    qualify_min_score = rules.get("confidence_bands", {}).get("qualify_min_score", 78)
-    exact_min_score = rules.get("exact_match_engine", {}).get("minimum_score", 80)
+    # 1. Resolve qualification thresholds from JSON config
+    qualify_min_score = float(rules.get("decision_rules", {}).get("fuzzy_qualify_min_score", 70))
+    exact_min_score = float(rules.get("decision_rules", {}).get("exact_score", 100))
 
     is_exact = (match_type in ["Exact", "Deterministic"])
     min_score = exact_min_score if is_exact else qualify_min_score
@@ -164,26 +142,24 @@ def classify_row_match(row: pd.Series, rules: dict) -> pd.Series:
         row["closed_existing_flag"] = False
         return row
 
-    # 2. Map score to confidence band
-    bands = rules.get("confidence_bands", {}).get("bands", [])
+    # 2. Map score to confidence band using JSON fuzzy_score_bands
+    bands = rules.get("decision_rules", {}).get("fuzzy_score_bands", [])
     band_name = "No Match"
     band_state = "No Match"
     for b in bands:
-        if b.get("min_score", 0) <= score <= b.get("max_score", 100):
+        if float(b.get("min_score", 0)) <= score <= float(b.get("max_score", 100)):
             band_name = b.get("name") or b.get("result", "No Match")
-            band_state = b.get("state", band_name)
+            band_state = b.get("lifecycle_state", band_name)
             break
 
+    # Fallback: if no band matched and score is above floor, find the highest band that qualifies
     if band_name == "No Match" and score >= qualify_min_score:
-        if score >= 92:
-            band_name = "High"
-            band_state = "Closed - Match"
-        elif score >= 85:
-            band_name = "Medium"
-            band_state = "Potential"
-        else:
-            band_name = "Review"
-            band_state = "Potential"
+        sorted_bands = sorted(bands, key=lambda b: float(b.get("min_score", 0)), reverse=True)
+        for b in sorted_bands:
+            if score >= float(b.get("min_score", 0)):
+                band_name = b.get("name", "No Match")
+                band_state = b.get("lifecycle_state", b.get("name", "No Match"))
+                break
 
     # 3. Retrieve Lead Fiscal values
     l_yr = row.get("fiscal_year_primary")
@@ -273,12 +249,9 @@ def fuzzy_matching(file_classified_path: str, config_file_path: str) -> str:
     # INITIALIZATION & RULES LOADING
     # ----------------------------------------------------------
     rules = load_business_rules()
-    qualify_min_score = rules.get("confidence_bands", {}).get("qualify_min_score", 78)
-    exact_min_score = rules.get("override_policy", {}).get(
-        "exact_qualified_min_score",
-        rules.get("exact_match_engine", {}).get("minimum_score", 80),
-    )
-    ambiguity_delta = rules.get("resolution", {}).get("ambiguity_delta", 3)
+    qualify_min_score = float(rules.get("decision_rules", {}).get("fuzzy_qualify_min_score", 70))
+    exact_min_score = float(rules.get("decision_rules", {}).get("exact_score", 100))
+    ambiguity_delta = float(rules.get("resolution", {}).get("ambiguity_delta", 3))
     match_type_semantic = rules.get("override_policy", {}).get("semantic_match_type", "Fuzzy")
 
     job_config     = JobConfig(config_file_path)
@@ -359,10 +332,16 @@ def fuzzy_matching(file_classified_path: str, config_file_path: str) -> str:
         # ----------------------------------------------------------
         # COMPUTE FUZZY SIMILARITY SCORE (PRECISION SCORE FORMULA)
         # ----------------------------------------------------------
-        # (4 * full_address_score + 3 * business_name_score) / 7
+        # Load weights from JSON config
+        embeddings_cfg = rules.get("embeddings", {}).get("fields", {})
+        addr_weight = float(embeddings_cfg.get("full_address", {}).get("weight", 4))
+        name_weight = float(embeddings_cfg.get("business_name", {}).get("weight", 3))
+        total_weight = addr_weight + name_weight
+
+        # (addr_weight * full_address_score + name_weight * business_name_score) / total_weight
         master_df["similarity_score"] = (
-            (4 * master_df["full_address_score"]
-             + 3 * master_df["business_name_score"]) / 7
+            (addr_weight * master_df["full_address_score"]
+             + name_weight * master_df["business_name_score"]) / total_weight
         )
 
         df_fuzzy_result = master_df[
