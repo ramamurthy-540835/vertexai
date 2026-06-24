@@ -1022,13 +1022,13 @@ def _fuzzy_set_sql_fragments(config: dict):
         boost_email_cases.append(
             f"WHEN winning_set = {set_id} AND lower(trim(COALESCE(lead_email, ''))) <> '' "
             f"AND lower(trim(COALESCE(set{set_id}_pos_email, ''))) = lower(trim(COALESCE(lead_email, ''))) "
-            f"THEN %s"
+            f"THEN %s::double precision"
         )
         boost_phone_cases.append(
             f"WHEN winning_set = {set_id} AND regexp_replace(COALESCE(lead_phone, ''), '\\D', '', 'g') <> '' "
             f"AND regexp_replace(COALESCE(lead_phone, ''), '\\D', '', 'g') "
             f"= regexp_replace(COALESCE(set{set_id}_pos_phone, ''), '\\D', '', 'g') "
-            f"THEN %s"
+            f"THEN %s::double precision"
         )
         best_name_cases.append(f"WHEN winning_set = {set_id} THEN {set_alias}_name_score")
         best_address_cases.append(
@@ -1835,30 +1835,30 @@ def _run_fuzzy_match(conn, job_started):
                 SELECT *,
                     CASE WHEN winning_set IN (1, 2) AND lower(trim(COALESCE(lead_email, ''))) <> ''
                          AND lower(trim(COALESCE(lead_email, ''))) = lower(trim(COALESCE(pos_email, '')))
-                         THEN %s
+                         THEN %s::double precision
                          WHEN winning_set IN (3, 4) AND lower(trim(COALESCE(lead_email, ''))) <> ''
                          AND lower(trim(COALESCE(lead_email, ''))) = lower(trim(COALESCE(oms_email_1, '')))
-                         THEN %s
+                         THEN %s::double precision
                          WHEN winning_set IN (5, 6) AND lower(trim(COALESCE(lead_email, ''))) <> ''
                          AND lower(trim(COALESCE(lead_email, ''))) = lower(trim(COALESCE(oms_email_2, '')))
-                         THEN %s
+                         THEN %s::double precision
                          ELSE 0
                     END AS email_boost,
                     CASE WHEN winning_set IN (1, 2)
                          AND regexp_replace(COALESCE(lead_phone, ''), '\\D', '', 'g') <> ''
                          AND regexp_replace(COALESCE(lead_phone, ''), '\\D', '', 'g')
                            = regexp_replace(COALESCE(pos_phone, ''), '\\D', '', 'g')
-                         THEN %s
+                         THEN %s::double precision
                          WHEN winning_set IN (3, 4)
                          AND regexp_replace(COALESCE(lead_phone, ''), '\\D', '', 'g') <> ''
                          AND regexp_replace(COALESCE(lead_phone, ''), '\\D', '', 'g')
                            = regexp_replace(COALESCE(oms_phone_1, ''), '\\D', '', 'g')
-                         THEN %s
+                         THEN %s::double precision
                          WHEN winning_set IN (5, 6)
                          AND regexp_replace(COALESCE(lead_phone, ''), '\\D', '', 'g') <> ''
                          AND regexp_replace(COALESCE(lead_phone, ''), '\\D', '', 'g')
                            = regexp_replace(COALESCE(oms_phone_2, ''), '\\D', '', 'g')
-                         THEN %s
+                         THEN %s::double precision
                          ELSE 0
                     END AS phone_boost
                 FROM best_set
