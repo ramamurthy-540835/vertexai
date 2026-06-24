@@ -103,6 +103,7 @@ CREATE TABLE IF NOT EXISTS "leadmgmt"."lead" (
     "updated_date" timestamp with time zone,
     "match_result" character varying,
     "week" integer,
+    "match_type" character varying,
     PRIMARY KEY ("lead_id")
 );
 

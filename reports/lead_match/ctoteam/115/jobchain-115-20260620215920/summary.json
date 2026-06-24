@@ -1,0 +1,35 @@
+{
+  "project": "ctoteam",
+  "schema": "leadmgmt",
+  "warehouse": "115",
+  "match_run_id": "jobchain-115-20260620215920",
+  "generated_at": "2026-06-20T22:45:41.543152+00:00",
+  "cloudsql_connection_name": "ctoteam:us-central1:lead-mgmt-db",
+  "cloudsql_backend_pid": 26521,
+  "cloudsql_session_state_counts": {
+    "active": 1,
+    "idle": 2,
+    "unknown": 6
+  },
+  "embedding_model": "gemini-embedding-001",
+  "embedding_dimension": 768,
+  "lead_rows": 630,
+  "pos_rows": 18900,
+  "lead_embedding_rows": 630,
+  "pos_embedding_rows": 18900,
+  "match_rows": 4953,
+  "match_type_counts": {
+    "Fuzzy": 3934,
+    "Manual Review": 1019
+  },
+  "lifecycle_state_counts": {
+    "Closed - Match": 3934,
+    "Potential": 1019
+  },
+  "primary_transaction_count": 479,
+  "report_uris": {
+    "summary_json": "gs://lead-match-ctoteam/reports/lead_match/ctoteam/115/jobchain-115-20260620215920/summary.json",
+    "matches_csv": "gs://lead-match-ctoteam/reports/lead_match/ctoteam/115/jobchain-115-20260620215920/matches.csv",
+    "report_md": "gs://lead-match-ctoteam/reports/lead_match/ctoteam/115/jobchain-115-20260620215920/report.md"
+  }
+}

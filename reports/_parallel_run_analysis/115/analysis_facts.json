@@ -1,0 +1,91 @@
+{
+  "warehouse": "115",
+  "run_id": "codex-20260623031813-115",
+  "generated_at": "2026-06-24T05:55:43.970651+00:00",
+  "facts": {
+    "counts": {
+      "leads": 630,
+      "pos": 18900,
+      "lead_embeddings": 630,
+      "pos_embeddings": 18900,
+      "exact": 285,
+      "fuzzy": 6799,
+      "manual_review": 1712,
+      "total_rows": 8796,
+      "primary_transactions": 431
+    },
+    "band_counts": {
+      "Potential (Medium)": 4755,
+      "Matching (High)": 3728,
+      "Exact / Complete": 285,
+      "Potential (Low)": 28
+    },
+    "band_summary": {
+      "matching_high_90_99": 3728,
+      "potential_medium_85_89": 4755,
+      "potential_low_70_84": 28
+    },
+    "score_stats": {
+      "min": 83.6,
+      "max": 99.67,
+      "mean": 90.454,
+      "median": 89.61,
+      "std": 3.167,
+      "peak_bin": "[88, 89)",
+      "peak_count": 1646
+    },
+    "histogram": {
+      "[70, 71)": 0,
+      "[71, 72)": 0,
+      "[72, 73)": 0,
+      "[73, 74)": 0,
+      "[74, 75)": 0,
+      "[75, 76)": 0,
+      "[76, 77)": 0,
+      "[77, 78)": 0,
+      "[78, 79)": 0,
+      "[79, 80)": 0,
+      "[80, 81)": 0,
+      "[81, 82)": 0,
+      "[82, 83)": 0,
+      "[83, 84)": 2,
+      "[84, 85)": 26,
+      "[85, 86)": 144,
+      "[86, 87)": 443,
+      "[87, 88)": 983,
+      "[88, 89)": 1646,
+      "[89, 90)": 1539,
+      "[90, 91)": 1144,
+      "[91, 92)": 670,
+      "[92, 93)": 443,
+      "[93, 94)": 281,
+      "[94, 95)": 175,
+      "[95, 96)": 183,
+      "[96, 97)": 205,
+      "[97, 98)": 284,
+      "[98, 99)": 235,
+      "[99, 100)": 108,
+      "[100, 101)": 0
+    },
+    "lifecycle_split": {
+      "closed_match_total": 4013,
+      "closed_match_exact": 285,
+      "closed_match_fuzzy_high": 3728,
+      "potential_total": 4783
+    },
+    "review_workload_rows": 4783,
+    "review_workload_pct": 54.38
+  },
+  "data_integrity": {
+    "exact_claimed_leads": 40,
+    "exact_claimed_pos": 285,
+    "actual_unembedded_leads": 0,
+    "actual_unembedded_pos": 0,
+    "expected_unembedded_leads": 40,
+    "expected_unembedded_pos": 285,
+    "lead_gap": 0,
+    "pos_gap": 0,
+    "status": "clean",
+    "flags": []
+  }
+}

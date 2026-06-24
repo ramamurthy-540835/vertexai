@@ -88,6 +88,7 @@ TRACKER_COLUMNS = [
 ]
 
 KNOWN_RUNS = {
+    "947": "github-28033272045-1-947",
     "1581": "github-28023202257-1-1581",
 }
 

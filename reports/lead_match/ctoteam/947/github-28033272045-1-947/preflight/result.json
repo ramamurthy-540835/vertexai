@@ -1,0 +1,18 @@
+{
+  "project": "ctoteam",
+  "warehouse": "947",
+  "status": "PASS",
+  "ready": true,
+  "required_checks": {
+    "workflow_yaml": "PASS",
+    "vertex_path": "PASS",
+    "cloud_sql_smoke": "SKIPPED",
+    "cloud_sql_indexes": "SKIPPED"
+  },
+  "optional_checks": {
+    "cloud_sql_smoke": "SKIPPED",
+    "cloud_sql_indexes": "SKIPPED"
+  },
+  "report_uri": "gs://lead-match-ctoteam/preflight/lead_match/ctoteam/947/report.md",
+  "ready_uri": "gs://lead-match-ctoteam/preflight/lead_match/ctoteam/947/READY"
+}

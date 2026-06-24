@@ -91,12 +91,25 @@ STREET_SUFFIX_VARIANTS = {
 SCENARIO_WEIGHTS = {
     "exact_single": 0.10,
     "exact_multi": 0.08,
-    "partial_single": 0.07,
-    "partial_multi": 0.06,
-    "closed_existing_only": 0.10,
-    "late_cycle_unmatched": 0.05,
-    "unmatched": 0.54,
+    "fuzzy_single": 0.07,
+    "fuzzy_multi": 0.06,
+    "unmatched": 0.69,
 }
+
+
+def randomize_scenario_weights(rng: random.Random, base_weights: dict[str, float] | None = None) -> dict[str, float]:
+    """Apply ±5% random variance to scenario weights and normalize to 100%."""
+    weights = (base_weights or SCENARIO_WEIGHTS).copy()
+    variance = 0.05
+
+    randomized = {}
+    for scenario, weight in weights.items():
+        factor = 1.0 + rng.gauss(0, variance / 2)
+        randomized[scenario] = max(0.001, weight * factor)
+
+    total = sum(randomized.values())
+    return {scenario: w / total for scenario, w in randomized.items()}
+
 
 PLAN_COLUMNS = [
     "warehouse_number",
@@ -241,45 +254,41 @@ def normalize_plan_value(value, fallback):
     return value
 
 
-def plan_to_weights(plan: dict[str, object] | None) -> dict[str, float]:
+def plan_to_weights(plan: dict[str, object] | None, rng: random.Random | None = None) -> dict[str, float]:
     plan = {**DEFAULT_PLAN, **(plan or {})}
     exact_pct = float(normalize_plan_value(plan.get("exact_match_pct"), 18.0))
-    potential_pct = float(normalize_plan_value(plan.get("potential_match_pct"), 15.0))
-    closed_existing_pct = float(normalize_plan_value(plan.get("closed_existing_pct"), 10.0))
+    fuzzy_pct = float(normalize_plan_value(plan.get("potential_match_pct"), 15.0))
     unmatched_pct = float(normalize_plan_value(plan.get("unmatched_pct"), 0.0))
-    late_cycle_pct = float(normalize_plan_value(plan.get("late_cycle_unmatched_pct"), 5.0))
 
     exact_total = max(0.0, exact_pct)
-    potential_total = max(0.0, potential_pct)
-    closed_total = max(0.0, closed_existing_pct)
-    late_total = max(0.0, late_cycle_pct)
+    fuzzy_total = max(0.0, fuzzy_pct)
     unmatched_total = max(0.0, unmatched_pct)
 
-    remaining = 100.0 - (exact_total + potential_total + closed_total + late_total + unmatched_total)
+    remaining = 100.0 - (exact_total + fuzzy_total + unmatched_total)
     if remaining > 0:
         unmatched_total += remaining
 
     exact_single = exact_total * 0.55
     exact_multi = exact_total * 0.45
-    partial_single = potential_total * 0.55
-    partial_multi = potential_total * 0.45
-    closed_existing_only = closed_total
-    late_cycle_unmatched = late_total
+    fuzzy_single = fuzzy_total * 0.55
+    fuzzy_multi = fuzzy_total * 0.45
     unmatched = unmatched_total
 
-    total = exact_single + exact_multi + partial_single + partial_multi + closed_existing_only + late_cycle_unmatched + unmatched
+    total = exact_single + exact_multi + fuzzy_single + fuzzy_multi + unmatched
     if total <= 0:
         return SCENARIO_WEIGHTS.copy()
 
-    return {
+    base_weights = {
         "exact_single": exact_single / total,
         "exact_multi": exact_multi / total,
-        "partial_single": partial_single / total,
-        "partial_multi": partial_multi / total,
-        "closed_existing_only": closed_existing_only / total,
-        "late_cycle_unmatched": late_cycle_unmatched / total,
+        "fuzzy_single": fuzzy_single / total,
+        "fuzzy_multi": fuzzy_multi / total,
         "unmatched": unmatched / total,
     }
+
+    if rng:
+        return randomize_scenario_weights(rng, base_weights)
+    return base_weights
 
 
 def normalize_for_variant(text: str) -> str:
@@ -288,7 +297,13 @@ def normalize_for_variant(text: str) -> str:
     return text
 
 
-def mutate_business_name(name: str, rng: random.Random) -> str:
+def mutate_business_name(name: str, rng: random.Random, intensity: str = "medium") -> str:
+    """Mutate business name with controlled intensity.
+
+    intensity: 'minor' (1-2 changes, 90-99% similarity),
+              'medium' (2-3 changes, 80-89% similarity),
+              'major' (3+ changes, 70-79% similarity)
+    """
     parts = normalize_for_variant(name).split()
     if not parts:
         return name
@@ -306,27 +321,48 @@ def mutate_business_name(name: str, rng: random.Random) -> str:
         "SERVICES": "SVCS",
     }
 
-    transformed = [mutations.get(part.upper(), part) for part in parts]
-    if rng.random() < 0.5 and len(transformed) > 1:
+    intensity_config = {
+        "minor": {"abbrev_prob": 0.3, "remove_prob": 0.2, "add_suffix_prob": 0.15},
+        "medium": {"abbrev_prob": 0.5, "remove_prob": 0.4, "add_suffix_prob": 0.35},
+        "major": {"abbrev_prob": 0.7, "remove_prob": 0.6, "add_suffix_prob": 0.5},
+    }
+    config = intensity_config.get(intensity, intensity_config["medium"])
+
+    transformed = [mutations.get(part.upper(), part) if rng.random() < config["abbrev_prob"] else part for part in parts]
+    if rng.random() < config["remove_prob"] and len(transformed) > 1:
         transformed.pop(rng.randrange(len(transformed)))
-    if rng.random() < 0.4:
+    if rng.random() < config["add_suffix_prob"]:
         transformed.append(rng.choice(["LLC", "Inc", "Co", "Group"]))
     return " ".join(transformed)
 
 
-def mutate_address(address: str, rng: random.Random) -> str:
+def mutate_address(address: str, rng: random.Random, intensity: str = "medium") -> str:
+    """Mutate address with controlled intensity.
+
+    intensity: 'minor' (1-2 changes, 90-99% similarity),
+              'medium' (2-3 changes, 80-89% similarity),
+              'major' (3+ changes, 70-79% similarity)
+    """
     parts = normalize_for_variant(address).upper().split()
     if not parts:
         return address
 
-    if parts[-1] in STREET_SUFFIX_VARIANTS:
-        parts[-1] = STREET_SUFFIX_VARIANTS[parts[-1]]
-    elif len(parts) >= 2 and parts[-2] in STREET_SUFFIX_VARIANTS:
-        parts[-2] = STREET_SUFFIX_VARIANTS[parts[-2]]
+    intensity_config = {
+        "minor": {"suffix_prob": 0.3, "suite_prob": 0.2, "number_prob": 0.15},
+        "medium": {"suffix_prob": 0.5, "suite_prob": 0.35, "number_prob": 0.3},
+        "major": {"suffix_prob": 0.7, "suite_prob": 0.5, "number_prob": 0.45},
+    }
+    config = intensity_config.get(intensity, intensity_config["medium"])
 
-    if rng.random() < 0.35:
+    if rng.random() < config["suffix_prob"]:
+        if parts[-1] in STREET_SUFFIX_VARIANTS:
+            parts[-1] = STREET_SUFFIX_VARIANTS[parts[-1]]
+        elif len(parts) >= 2 and parts[-2] in STREET_SUFFIX_VARIANTS:
+            parts[-2] = STREET_SUFFIX_VARIANTS[parts[-2]]
+
+    if rng.random() < config["suite_prob"]:
         parts.insert(-1, f"STE {rng.randint(100, 299)}")
-    elif rng.random() < 0.35:
+    elif rng.random() < config["number_prob"]:
         parts[0] = str(int(re.sub(r"\D", "", parts[0]) or "1") + rng.randint(1, 9))
     return " ".join(parts)
 
@@ -486,6 +522,7 @@ def lead_identity_row(plan: LeadPlan, rng: random.Random, warehouse_number: int)
         "batch_id": f"BATCH-{warehouse_number}-{plan.created_at:%Y%m%d}",
         "load_date": plan.created_at,
         "updated_by": "mock_generator",
+        "match_type": "Exact" if plan.scenario.startswith("exact") else "",
     }
 
 
@@ -498,7 +535,7 @@ def build_pos_row(
     fake: Faker,
     seq: int,
 ) -> dict[str, object]:
-    same_family = scenario in {"exact_single", "exact_multi", "partial_single", "partial_multi", "closed_existing_only"}
+    same_family = scenario in {"exact_single", "exact_multi", "fuzzy_single", "fuzzy_multi"}
     base_name = plan.canonical_name if same_family else build_business_name(fake, rng)
     base_address = plan.canonical_address if same_family else fake.street_address().replace(",", "")
     city = plan.city if same_family else fake.city()
@@ -519,27 +556,24 @@ def build_pos_row(
         pos_period = min(13, plan.lead_fiscal_period + seq)
         pos_year = fiscal_year
         pos_week = min(5, max(plan.lead_week, min(5, seq + plan.lead_week)))
-    elif scenario == "partial_single":
-        business_name = mutate_business_name(base_name, rng)
-        address_line_one = mutate_address(base_address, rng)
+    elif scenario == "fuzzy_single":
+        intensity = rng.choice(["minor", "medium", "major"])
+        business_name = mutate_business_name(base_name, rng, intensity)
+        address_line_one = mutate_address(base_address, rng, intensity)
         pos_period = min(13, plan.lead_fiscal_period + rng.randint(0, 3))
         pos_year = fiscal_year
         pos_week = min(5, max(plan.lead_week, rng.randint(plan.lead_week, 5)))
-    elif scenario == "partial_multi":
-        business_name = mutate_business_name(base_name, rng) if seq == 1 else base_name
-        address_line_one = mutate_address(base_address, rng) if seq == 1 else base_address
+    elif scenario == "fuzzy_multi":
+        intensity = rng.choice(["minor", "medium", "major"])
+        business_name = mutate_business_name(base_name, rng, intensity) if seq == 1 else base_name
+        address_line_one = mutate_address(base_address, rng, intensity) if seq == 1 else base_address
         pos_period = min(13, plan.lead_fiscal_period + seq)
         pos_year = fiscal_year
         pos_week = min(5, max(plan.lead_week, min(5, seq + plan.lead_week)))
-    elif scenario == "closed_existing_only":
-        business_name = base_name
-        address_line_one = base_address
-        pos_year = fiscal_year
-        pos_period = max(1, plan.lead_fiscal_period - rng.randint(1, 4))
-        pos_week = max(1, plan.lead_week - rng.randint(0, 2))
     else:
-        business_name = base_name if rng.random() < 0.15 else mutate_business_name(base_name, rng)
-        address_line_one = base_address if rng.random() < 0.15 else mutate_address(base_address, rng)
+        intensity = rng.choice(["minor", "medium", "major"])
+        business_name = base_name if rng.random() < 0.15 else mutate_business_name(base_name, rng, intensity)
+        address_line_one = base_address if rng.random() < 0.15 else mutate_address(base_address, rng, intensity)
         pos_year = fiscal_year
         pos_period = rng.randint(1, 13)
         pos_week = rng.randint(1, 5)
@@ -582,6 +616,7 @@ def build_pos_row(
         "updated_date": pos_date,
         "expected_relation": scenario,
         "expected_lead_id": plan.lead_id,
+        "match_type": "Exact" if scenario.startswith("exact") else "",
     }
 
 
@@ -803,7 +838,7 @@ def main() -> int:
     seed = int(normalize_plan_value(args.seed, normalize_plan_value(plan.get("seed"), DEFAULT_PLAN["seed"])))
     rng = make_rng(seed)
     fake = make_faker(seed)
-    weights = plan_to_weights(plan)
+    weights = plan_to_weights(plan, rng)
 
     output_dir = Path(args.output_dir or Path.cwd() / str(warehouse_number))
     output_dir.mkdir(parents=True, exist_ok=True)

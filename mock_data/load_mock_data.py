@@ -245,6 +245,7 @@ def load_leads(cursor, conn, leads_file, limit=None):
             current_time,                       # updated_date
             row.get('match_result'),             # match_result
             row.get('week'),                    # week
+            row.get('match_type'),               # match_type
         ))
 
         # Prepare Contact row
@@ -286,10 +287,10 @@ def load_leads(cursor, conn, leads_file, limit=None):
                     lead_id, lead_source, account_id, account_number, lead_status, confidence_level,
                     membership_number, warehouse_number, fiscal_period, fiscal_year,
                     closed_fiscal_period, closed_fiscal_year, batch_id, load_date, updated_by,
-                    updated_date, match_result, week
+                    updated_date, match_result, week, match_type
                 )""",
             leads_to_insert,
-            18,
+            19,
         )
         # Contacts
         print(f"Inserting {len(contacts_to_insert)} contacts...")
@@ -349,7 +350,7 @@ def load_pos(cursor, conn, pos_file, limit=None):
             row.get('account_number'),          # account_number
             None,                               # lead_id
             None,                               # match_score
-            None,                               # match_type
+            row.get('match_type'),              # match_type
             batch_id_pos,                       # batch_id
             row.get('membership_number'),       # membership_number
             row.get('order_amount'),            # order_amount
@@ -385,7 +386,7 @@ def load_pos(cursor, conn, pos_file, limit=None):
             row.get('account_number'),          # account_number
             None,                               # lead_id
             None,                               # match_score
-            None,                               # match_type
+            row.get('match_type'),              # match_type
             batch_id_pos,                       # batch_id
             row.get('membership_number'),       # membership_number
             row.get('order_amount'),            # order_amount

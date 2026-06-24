@@ -263,6 +263,10 @@ def exact_lead_exclusion_clause(schema, lead_expr, params):
             AND lower(exact_t.match_type) IN ({placeholders})
             AND (exact_t.match_score IS NULL OR exact_t.match_score >= %s)
       )
+      AND COALESCE(
+          (SELECT l.match_type FROM "{schema}"."lead" l WHERE l.lead_id = {lead_expr}),
+          ''
+      ) != 'Exact'
     """
 
 
@@ -287,6 +291,7 @@ def exact_pos_exclusion_clause(schema, pos_expr, params):
             AND lower(exact_t.match_type) IN ({placeholders})
             AND (exact_t.match_score IS NULL OR exact_t.match_score >= %s)
       )
+      AND COALESCE(t.match_type, '') != 'Exact'
     """
 
 

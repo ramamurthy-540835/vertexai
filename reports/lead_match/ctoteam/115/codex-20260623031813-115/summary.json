@@ -1,0 +1,41 @@
+{
+  "project": "ctoteam",
+  "schema": "leadmgmt",
+  "warehouse": "115",
+  "match_run_id": "codex-20260623031813-115",
+  "dry_run": false,
+  "generated_at": "2026-06-23T03:35:31.481665+00:00",
+  "cloudsql_connection_name": "ctoteam:us-central1:lead-mgmt-db",
+  "cloudsql_backend_pid": 140187,
+  "cloudsql_session_state_counts": {
+    "active": 1,
+    "idle": 2,
+    "unknown": 6
+  },
+  "embedding_model": "gemini-embedding-001",
+  "embedding_dimension": 768,
+  "lead_rows": 630,
+  "pos_rows": 18900,
+  "lead_embedding_rows": 630,
+  "pos_embedding_rows": 18900,
+  "match_rows": 8796,
+  "match_type_counts": {
+    "Exact": 285,
+    "Fuzzy": 6799,
+    "Manual Review": 1712
+  },
+  "lifecycle_state_counts": {
+    "Closed - Match": 4013,
+    "Potential": 4783
+  },
+  "primary_transaction_count": 431,
+  "fuzzy_score_band": {
+    "floor": 70.0,
+    "ceiling": 99.999
+  },
+  "report_uris": {
+    "summary_json": "gs://lead-match-ctoteam/reports/lead_match/ctoteam/115/codex-20260623031813-115/summary.json",
+    "matches_csv": "gs://lead-match-ctoteam/reports/lead_match/ctoteam/115/codex-20260623031813-115/matches.csv",
+    "report_md": "gs://lead-match-ctoteam/reports/lead_match/ctoteam/115/codex-20260623031813-115/report.md"
+  }
+}

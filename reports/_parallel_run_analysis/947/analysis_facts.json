@@ -1,0 +1,91 @@
+{
+  "warehouse": "947",
+  "run_id": "github-28033272045-1-947",
+  "generated_at": "2026-06-24T05:55:43.970651+00:00",
+  "facts": {
+    "counts": {
+      "leads": 310,
+      "pos": 8100,
+      "lead_embeddings": 216,
+      "pos_embeddings": 7941,
+      "exact": 159,
+      "fuzzy": 2888,
+      "manual_review": 416,
+      "total_rows": 3463,
+      "primary_transactions": 222
+    },
+    "band_counts": {
+      "Potential (Medium)": 2439,
+      "Matching (High)": 551,
+      "Potential (Low)": 314,
+      "Exact / Complete": 159
+    },
+    "band_summary": {
+      "matching_high_90_99": 551,
+      "potential_medium_85_89": 2439,
+      "potential_low_70_84": 314
+    },
+    "score_stats": {
+      "min": 79.64,
+      "max": 99.79,
+      "mean": 88.093,
+      "median": 88.29,
+      "std": 2.416,
+      "peak_bin": "[89, 90)",
+      "peak_count": 663
+    },
+    "histogram": {
+      "[70, 71)": 0,
+      "[71, 72)": 0,
+      "[72, 73)": 0,
+      "[73, 74)": 0,
+      "[74, 75)": 0,
+      "[75, 76)": 0,
+      "[76, 77)": 0,
+      "[77, 78)": 0,
+      "[78, 79)": 0,
+      "[79, 80)": 1,
+      "[80, 81)": 0,
+      "[81, 82)": 6,
+      "[82, 83)": 23,
+      "[83, 84)": 90,
+      "[84, 85)": 194,
+      "[85, 86)": 324,
+      "[86, 87)": 409,
+      "[87, 88)": 445,
+      "[88, 89)": 598,
+      "[89, 90)": 663,
+      "[90, 91)": 364,
+      "[91, 92)": 110,
+      "[92, 93)": 24,
+      "[93, 94)": 2,
+      "[94, 95)": 1,
+      "[95, 96)": 5,
+      "[96, 97)": 5,
+      "[97, 98)": 9,
+      "[98, 99)": 6,
+      "[99, 100)": 25,
+      "[100, 101)": 0
+    },
+    "lifecycle_split": {
+      "closed_match_total": 710,
+      "closed_match_exact": 159,
+      "closed_match_fuzzy_high": 551,
+      "potential_total": 2753
+    },
+    "review_workload_rows": 2753,
+    "review_workload_pct": 79.5
+  },
+  "data_integrity": {
+    "exact_claimed_leads": 94,
+    "exact_claimed_pos": 159,
+    "actual_unembedded_leads": 94,
+    "actual_unembedded_pos": 159,
+    "expected_unembedded_leads": 94,
+    "expected_unembedded_pos": 159,
+    "lead_gap": 0,
+    "pos_gap": 0,
+    "status": "clean",
+    "flags": []
+  }
+}
