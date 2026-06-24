@@ -17,19 +17,27 @@ from google.genai import types
 
 from lead_match_runtime.business_rules import (
     build_embedding_text,
+    build_pos_variant_texts,
+    confidence_subtier,
     exact_authoritative_score,
     exact_lifecycle_state,
     exact_match_type,
     exact_match_types as configured_exact_match_types,
     exact_score,
+    fiscal_ce_period_window,
+    fiscal_periods_per_year,
     fuzzy_artifact_score,
     fuzzy_lifecycle_state,
+    fuzzy_lifecycle_state_label,
     fuzzy_match_type,
     fuzzy_max_score,
     fuzzy_qualify_min_score,
     fuzzy_score_bands,
     manual_review_match_type,
+    matching_sets as configured_matching_sets,
     no_match_lifecycle_state,
+    normalize_email,
+    normalize_phone,
     get_project_id,
     get_schema,
     get_warehouse_scope,
@@ -221,16 +229,10 @@ def exact_qualified_min_score():
 
 
 def _fuzzy_lifecycle_case(score_expr, params):
-    case_parts = []
-    for band in fuzzy_score_bands(BUSINESS_RULES):
-        params.extend([
-            float(band["min_score"]),
-            float(band["max_score"]),
-            str(band["lifecycle_state"]),
-        ])
-        case_parts.append(f"WHEN {score_expr} >= %s AND {score_expr} <= %s THEN %s")
-    params.append(str(BUSINESS_RULES["decision_rules"]["below_floor"]["lifecycle_state"]))
-    return "CASE " + " ".join(case_parts) + " ELSE %s END"
+    lifecycle = fuzzy_lifecycle_state_label(BUSINESS_RULES)
+    floor = fuzzy_qualify_min_score(BUSINESS_RULES)
+    params.extend([floor, lifecycle])
+    return f"CASE WHEN {score_expr} >= %s THEN %s ELSE 'No Match' END"
 
 
 def _exact_type_placeholders(types):
@@ -562,11 +564,22 @@ def pos_source_rows(cursor):
             COALESCE(t.address_line_one, '') AS address_line_one,
             COALESCE(t.city, '') AS city,
             COALESCE(t.state, '') AS state,
-            COALESCE(t.zip_code, '') AS zip_code
+            COALESCE(t.zip_code, '') AS zip_code,
+            COALESCE(t.oms_company, '') AS oms_company_name,
+            COALESCE(t.oms_company_2, '') AS oms2_company_name,
+            COALESCE(t.oms_address_line_1, '') AS oms_address_line_1,
+            COALESCE(t.oms_city, '') AS oms_city,
+            COALESCE(t.oms_state, '') AS oms_state,
+            COALESCE(t.oms_zip, '') AS oms_zip,
+            COALESCE(t.oms_address_line_1_v2, '') AS oms_address_line_1_v2,
+            COALESCE(t.oms_city_2, '') AS oms_city_2,
+            COALESCE(t.oms_state_2, '') AS oms_state_2,
+            COALESCE(t.oms_zip_2, '') AS oms_zip_2
         FROM "{schema}"."transaction" t
         WHERE NOT EXISTS (
             SELECT 1 FROM "{schema}"."pos_embeddings" e WHERE e.pos_id = t.pos_id
         )
+          AND t.is_processed = false
           {warehouse_clause}
           {exact_pos_clause}
         ORDER BY t.pos_id
@@ -632,41 +645,76 @@ def build_pos_embedding_insert_rows(client, batch_number, batch, now):
             "city": row[8],
             "state": row[9],
             "zip_code": row[10],
+            "oms_company_name": row[11],
+            "oms2_company_name": row[12],
+            "oms_address_line_1": row[13],
+            "oms_city": row[14],
+            "oms_state": row[15],
+            "oms_zip": row[16],
+            "oms_address_line_1_v2": row[17],
+            "oms_city_2": row[18],
+            "oms_state_2": row[19],
+            "oms_zip_2": row[20],
         }
         for row in batch
     ]
-    combined_texts = [build_embedding_text(record, "combined_field") for record in records]
-    address_texts = [build_embedding_text(record, "full_address") for record in records]
-    name_texts = [build_embedding_text(record, "business_name") for record in records]
-    vectors = embed_field_batches(
-        client,
-        {
-            f"pos_batch_{batch_number}_combined": combined_texts,
-            f"pos_batch_{batch_number}_address": address_texts,
-            f"pos_batch_{batch_number}_name": name_texts,
-        },
-    )
+    variant_texts = [build_pos_variant_texts(r) for r in records]
+    combined_texts = [v["combined_field"] for v in variant_texts]
+    address_texts = [v["full_address"] for v in variant_texts]
+    name_texts = [v["business_name"] for v in variant_texts]
+    oms_company_texts = [v["oms_company_name"] for v in variant_texts]
+    oms2_company_texts = [v["oms2_company_name"] for v in variant_texts]
+    oms_addr_texts = [v["oms_address"] for v in variant_texts]
+    oms2_addr_texts = [v["oms2_address"] for v in variant_texts]
+
+    field_batches = {
+        f"pos_batch_{batch_number}_combined": combined_texts,
+        f"pos_batch_{batch_number}_address": address_texts,
+        f"pos_batch_{batch_number}_name": name_texts,
+    }
+    if any(t for t in oms_company_texts if t):
+        field_batches[f"pos_batch_{batch_number}_oms_company"] = oms_company_texts
+    if any(t for t in oms2_company_texts if t):
+        field_batches[f"pos_batch_{batch_number}_oms2_company"] = oms2_company_texts
+    if any(t for t in oms_addr_texts if t):
+        field_batches[f"pos_batch_{batch_number}_oms_addr"] = oms_addr_texts
+    if any(t for t in oms2_addr_texts if t):
+        field_batches[f"pos_batch_{batch_number}_oms2_addr"] = oms2_addr_texts
+
+    vectors = embed_field_batches(client, field_batches)
     combined_vectors = vectors[f"pos_batch_{batch_number}_combined"]
     address_vectors = vectors[f"pos_batch_{batch_number}_address"]
     name_vectors = vectors[f"pos_batch_{batch_number}_name"]
+    oms_company_vectors = vectors.get(f"pos_batch_{batch_number}_oms_company", [None] * len(batch))
+    oms2_company_vectors = vectors.get(f"pos_batch_{batch_number}_oms2_company", [None] * len(batch))
+    oms_addr_vectors = vectors.get(f"pos_batch_{batch_number}_oms_addr", [None] * len(batch))
+    oms2_addr_vectors = vectors.get(f"pos_batch_{batch_number}_oms2_addr", [None] * len(batch))
+
     insert_rows = []
-    for row, record, combined, address, name in zip(
-        batch, records, combined_vectors, address_vectors, name_vectors
-    ):
+    for i, row in enumerate(batch):
+        vt = variant_texts[i]
         insert_rows.append((
-            row[0],
-            row[1],
-            build_embedding_text(record, "combined_field"),
-            build_embedding_text(record, "business_name"),
-            build_embedding_text(record, "full_address"),
-            combined,
-            address,
-            name,
-            now,
-            row[2],
-            row[3],
-            row[4],
-            row[5],
+            row[0],                         # pos_id
+            row[1],                         # account_number
+            vt["combined_field"],           # combined_field text
+            vt["business_name"],            # business_name text
+            vt["full_address"],             # business_address text
+            vt["oms_company_name"],         # oms_company_name text
+            vt["oms2_company_name"],        # oms2_company_name text
+            vt["oms_address"],              # oms_address text
+            vt["oms2_address"],             # oms2_address text
+            combined_vectors[i],            # combined_embedding
+            address_vectors[i],             # address_embedding
+            name_vectors[i],                # name_embedding
+            oms_company_vectors[i],         # oms_company_name_embedding
+            oms2_company_vectors[i],        # oms2_company_name_embedding
+            oms_addr_vectors[i],            # oms_address_embedding
+            oms2_addr_vectors[i],           # oms2_address_embedding
+            now,                            # load_date
+            row[2],                         # warehouse_number
+            row[3],                         # fiscal_year
+            row[4],                         # fiscal_period
+            row[5],                         # week
         ))
     return batch_number, insert_rows, time.monotonic() - batch_started
 
@@ -801,12 +849,15 @@ def _generate_pos_embeddings(conn, job_started, client):
             f"""
             INSERT INTO "{schema}"."pos_embeddings" (
                 pos_id, account_number, combined_field, business_name, business_address,
-                combined_embedding, address_embedding, name_embedding, load_date,
-                warehouse_number, fiscal_year, fiscal_period, week
+                oms_company_name, oms2_company_name, oms_address, oms2_address,
+                combined_embedding, address_embedding, name_embedding,
+                oms_company_name_embedding, oms2_company_name_embedding,
+                oms_address_embedding, oms2_address_embedding,
+                load_date, warehouse_number, fiscal_year, fiscal_period, week
             )
             """,
             insert_rows,
-            13,
+            21,
             conflict_clause="ON CONFLICT (pos_id) DO NOTHING",
         )
 
@@ -1381,23 +1432,52 @@ def _run_fuzzy_match(conn, job_started):
             "s.pos_id",
             params,
         )
+        periods_per_year = fiscal_periods_per_year(rules)
+        ce_window = fiscal_ce_period_window(rules)
+        fuzzy_lifecycle = fuzzy_lifecycle_state_label(rules)
+        ce_lifecycle = str(rules["fiscal_rules"]["classification"][0]["lifecycle_state"])
+        email_boost_val = float(rules["scoring"]["deterministic_boosts"]["email_exact_match"])
+        phone_boost_val = float(rules["scoring"]["deterministic_boosts"]["phone_exact_match"])
+        boost_cap = float(rules["scoring"]["deterministic_boosts"]["cap"])
+
         params.extend([
             recall_gate,
             nearest_neighbor_limit,
+            periods_per_year,
+            ce_window,
             address_weight,
             business_weight,
             precision_weight_total,
+            address_weight,
+            business_weight,
+            precision_weight_total,
+            address_weight,
+            business_weight,
+            precision_weight_total,
+            address_weight,
+            business_weight,
+            precision_weight_total,
+            address_weight,
+            business_weight,
+            precision_weight_total,
+            address_weight,
+            business_weight,
+            precision_weight_total,
+            email_boost_val,
+            phone_boost_val,
+            boost_cap,
             fuzzy_ceiling,
-            qualify_min,
             qualify_min,
         ])
         query_started = time.monotonic()
         match_cte = f"""
             WITH lead_batch AS (
-                SELECT *
-                FROM "{schema}"."leads_embeddings"
-                WHERE combined_embedding IS NOT NULL
-                  AND lead_id IN ({lead_placeholders})
+                SELECT l.*, le.email AS lead_email, le.phone AS lead_phone
+                FROM "{schema}"."leads_embeddings" l
+                LEFT JOIN "{schema}"."lead" ld ON ld.lead_id = l.lead_id
+                LEFT JOIN "{schema}"."account" le ON le.account_id = ld.account_id
+                WHERE l.combined_embedding IS NOT NULL
+                  AND l.lead_id IN ({lead_placeholders})
             ),
             candidates AS (
                 SELECT
@@ -1410,60 +1490,171 @@ def _run_fuzzy_match(conn, job_started):
                     s.fiscal_period AS pos_fiscal_period,
                     s.week AS pos_week,
                     (1 - (s.combined_embedding <=> l.combined_embedding)) * 100 AS combined_field_score,
-                    (1 - (s.address_embedding <=> l.address_embedding)) * 100 AS full_address_score,
-                    (1 - COALESCE(NULLIF(s.name_embedding <=> l.name_embedding, 'NaN'::float), 1)) * 100 AS business_name_score
+                    l.address_embedding AS l_addr_emb,
+                    l.name_embedding AS l_name_emb,
+                    s.address_embedding AS s_addr_emb,
+                    s.name_embedding AS s_name_emb,
+                    s.oms_company_name_embedding AS s_oms_co_emb,
+                    s.oms2_company_name_embedding AS s_oms2_co_emb,
+                    s.oms_address_embedding AS s_oms_addr_emb,
+                    s.oms2_address_embedding AS s_oms2_addr_emb,
+                    l.lead_email,
+                    l.lead_phone,
+                    t.email AS pos_email,
+                    t.phone AS pos_phone,
+                    t.oms_email_1,
+                    t.oms_phone_1,
+                    t.oms_email_2,
+                    t.oms_phone_2
                 FROM lead_batch l
                 CROSS JOIN LATERAL (
-                    SELECT *
-                    FROM "{schema}"."pos_embeddings" s
-                    WHERE s.combined_embedding IS NOT NULL
-                      AND s.warehouse_number = l.warehouse_number
+                    SELECT s_inner.*
+                    FROM "{schema}"."pos_embeddings" s_inner
+                    WHERE s_inner.combined_embedding IS NOT NULL
+                      AND s_inner.warehouse_number = l.warehouse_number
                       {exact_pos_clause}
-                      AND (1 - (s.combined_embedding <=> l.combined_embedding)) * 100 >= %s
-                    ORDER BY s.combined_embedding <=> l.combined_embedding
+                      AND (1 - (s_inner.combined_embedding <=> l.combined_embedding)) * 100 >= %s
+                    ORDER BY s_inner.combined_embedding <=> l.combined_embedding
                     LIMIT %s
                 ) s
+                JOIN "{schema}"."transaction" t ON t.pos_id = s.pos_id
             ),
-            raw_scored AS (
-                SELECT
-                    lead_id,
-                    pos_id,
-                    warehouse_number,
-                    pos_fiscal_year,
-                    pos_fiscal_period,
-                    pos_week,
-                    combined_field_score,
-                    full_address_score,
-                    business_name_score,
-                    (
-                        %s * full_address_score
-                        + %s * business_name_score
-                    ) / %s AS raw_final_score
+            fiscal_classified AS (
+                SELECT *,
+                    (%s * (lead_fiscal_year - pos_fiscal_year)
+                     + (lead_fiscal_period - pos_fiscal_period)) AS period_gap,
+                    CASE
+                        WHEN (pos_fiscal_year < lead_fiscal_year)
+                          OR (pos_fiscal_year = lead_fiscal_year AND pos_fiscal_period < lead_fiscal_period)
+                        THEN true ELSE false
+                    END AS pos_before_lead
                 FROM candidates
             ),
-            scored AS (
+            classified AS (
+                SELECT *,
+                    CASE
+                        WHEN pos_before_lead AND period_gap <= %s THEN 'CE'
+                        WHEN pos_before_lead AND period_gap > %s THEN 'OAF'
+                        ELSE 'NORMAL'
+                    END AS fiscal_class
+                FROM fiscal_classified
+            ),
+            normal_candidates AS (
+                SELECT * FROM classified WHERE fiscal_class = 'NORMAL'
+            ),
+            six_set_scores AS (
                 SELECT
-                    lead_id,
-                    pos_id,
-                    warehouse_number,
-                    pos_fiscal_year,
-                    pos_fiscal_period,
-                    pos_week,
+                    lead_id, pos_id, warehouse_number,
+                    pos_fiscal_year, pos_fiscal_period, pos_week,
                     combined_field_score,
-                    full_address_score,
-                    business_name_score,
-                    raw_final_score,
+                    lead_email, lead_phone,
+                    pos_email, pos_phone,
+                    oms_email_1, oms_phone_1,
+                    oms_email_2, oms_phone_2,
+                    -- Set 1: business_name × full_address
+                    CASE WHEN s_name_emb IS NOT NULL AND s_addr_emb IS NOT NULL THEN
+                        (%s * (1 - (s_addr_emb <=> l_addr_emb)) * 100
+                         + %s * (1 - COALESCE(NULLIF(s_name_emb <=> l_name_emb, 'NaN'::float), 1)) * 100
+                        ) / %s
+                    END AS set1_score,
+                    -- Set 2: oms_company_name × full_address
+                    CASE WHEN s_oms_co_emb IS NOT NULL AND s_addr_emb IS NOT NULL THEN
+                        (%s * (1 - (s_addr_emb <=> l_addr_emb)) * 100
+                         + %s * (1 - COALESCE(NULLIF(s_oms_co_emb <=> l_name_emb, 'NaN'::float), 1)) * 100
+                        ) / %s
+                    END AS set2_score,
+                    -- Set 3: business_name × full_oms_address
+                    CASE WHEN s_name_emb IS NOT NULL AND s_oms_addr_emb IS NOT NULL THEN
+                        (%s * (1 - (s_oms_addr_emb <=> l_addr_emb)) * 100
+                         + %s * (1 - COALESCE(NULLIF(s_name_emb <=> l_name_emb, 'NaN'::float), 1)) * 100
+                        ) / %s
+                    END AS set3_score,
+                    -- Set 4: oms_company_name × full_oms_address
+                    CASE WHEN s_oms_co_emb IS NOT NULL AND s_oms_addr_emb IS NOT NULL THEN
+                        (%s * (1 - (s_oms_addr_emb <=> l_addr_emb)) * 100
+                         + %s * (1 - COALESCE(NULLIF(s_oms_co_emb <=> l_name_emb, 'NaN'::float), 1)) * 100
+                        ) / %s
+                    END AS set4_score,
+                    -- Set 5: business_name × full_oms2_address
+                    CASE WHEN s_name_emb IS NOT NULL AND s_oms2_addr_emb IS NOT NULL THEN
+                        (%s * (1 - (s_oms2_addr_emb <=> l_addr_emb)) * 100
+                         + %s * (1 - COALESCE(NULLIF(s_name_emb <=> l_name_emb, 'NaN'::float), 1)) * 100
+                        ) / %s
+                    END AS set5_score,
+                    -- Set 6: oms2_company_name × full_oms2_address
+                    CASE WHEN s_oms2_co_emb IS NOT NULL AND s_oms2_addr_emb IS NOT NULL THEN
+                        (%s * (1 - (s_oms2_addr_emb <=> l_addr_emb)) * 100
+                         + %s * (1 - COALESCE(NULLIF(s_oms2_co_emb <=> l_name_emb, 'NaN'::float), 1)) * 100
+                        ) / %s
+                    END AS set6_score
+                FROM normal_candidates
+            ),
+            best_set AS (
+                SELECT *,
+                    GREATEST(
+                        COALESCE(set1_score, -1), COALESCE(set2_score, -1),
+                        COALESCE(set3_score, -1), COALESCE(set4_score, -1),
+                        COALESCE(set5_score, -1), COALESCE(set6_score, -1)
+                    ) AS best_set_score,
+                    CASE GREATEST(
+                        COALESCE(set1_score, -1), COALESCE(set2_score, -1),
+                        COALESCE(set3_score, -1), COALESCE(set4_score, -1),
+                        COALESCE(set5_score, -1), COALESCE(set6_score, -1)
+                    )
+                        WHEN set1_score THEN 1
+                        WHEN set2_score THEN 2
+                        WHEN set3_score THEN 3
+                        WHEN set4_score THEN 4
+                        WHEN set5_score THEN 5
+                        WHEN set6_score THEN 6
+                        ELSE 1
+                    END AS winning_set
+                FROM six_set_scores
+            ),
+            boosted AS (
+                SELECT *,
+                    CASE WHEN winning_set IN (1, 2) AND lower(trim(COALESCE(lead_email, ''))) <> ''
+                         AND lower(trim(COALESCE(lead_email, ''))) = lower(trim(COALESCE(pos_email, '')))
+                         THEN %s
+                         WHEN winning_set IN (3, 4) AND lower(trim(COALESCE(lead_email, ''))) <> ''
+                         AND lower(trim(COALESCE(lead_email, ''))) = lower(trim(COALESCE(oms_email_1, '')))
+                         THEN %s
+                         WHEN winning_set IN (5, 6) AND lower(trim(COALESCE(lead_email, ''))) <> ''
+                         AND lower(trim(COALESCE(lead_email, ''))) = lower(trim(COALESCE(oms_email_2, '')))
+                         THEN %s
+                         ELSE 0
+                    END AS email_boost,
+                    CASE WHEN winning_set IN (1, 2)
+                         AND regexp_replace(COALESCE(lead_phone, ''), '\\D', '', 'g') <> ''
+                         AND regexp_replace(COALESCE(lead_phone, ''), '\\D', '', 'g')
+                           = regexp_replace(COALESCE(pos_phone, ''), '\\D', '', 'g')
+                         THEN %s
+                         WHEN winning_set IN (3, 4)
+                         AND regexp_replace(COALESCE(lead_phone, ''), '\\D', '', 'g') <> ''
+                         AND regexp_replace(COALESCE(lead_phone, ''), '\\D', '', 'g')
+                           = regexp_replace(COALESCE(oms_phone_1, ''), '\\D', '', 'g')
+                         THEN %s
+                         WHEN winning_set IN (5, 6)
+                         AND regexp_replace(COALESCE(lead_phone, ''), '\\D', '', 'g') <> ''
+                         AND regexp_replace(COALESCE(lead_phone, ''), '\\D', '', 'g')
+                           = regexp_replace(COALESCE(oms_phone_2, ''), '\\D', '', 'g')
+                         THEN %s
+                         ELSE 0
+                    END AS phone_boost
+                FROM best_set
+                WHERE best_set_score >= 0
+            ),
+            scored AS (
+                SELECT *,
                     LEAST(
                         %s,
-                        ROUND(raw_final_score::numeric, 2)::double precision
-                    ) AS final_score
-                FROM raw_scored
+                        ROUND((best_set_score + email_boost + phone_boost)::numeric, 2)::double precision
+                    ) AS final_score,
+                    best_set_score AS raw_final_score
+                FROM boosted
             ),
             ranked AS (
-                SELECT *
-                FROM scored
-                WHERE raw_final_score >= %s
-                  AND raw_final_score >= %s
+                SELECT * FROM scored WHERE final_score >= %s
             ),
             best_unique_pos AS (
                 SELECT *,
@@ -1507,6 +1698,7 @@ def _run_fuzzy_match(conn, job_started):
             ambiguity_delta,
             manual_review_type,
             fuzzy_type,
+            fuzzy_lifecycle,
             weight_formula,
             EMBEDDING_MODEL,
         ])
@@ -1528,6 +1720,8 @@ def _run_fuzzy_match(conn, job_started):
                 INSERT INTO "{schema}"."match_decision_detail" (
                     match_run_id, lead_id, pos_id, warehouse_number, match_type, final_score,
                     combined_field_score, full_address_score, business_name_score,
+                    winning_set, name_score, address_score, email_boost, phone_boost,
+                    lifecycle_state,
                     weight_formula, embedding_model, created_date
                 )
                 SELECT
@@ -1543,8 +1737,14 @@ def _run_fuzzy_match(conn, job_started):
                     END,
                     final_score,
                     combined_field_score,
-                    full_address_score,
-                    business_name_score,
+                    COALESCE(set1_score, 0),
+                    COALESCE(set1_score, 0),
+                    winning_set,
+                    best_set_score,
+                    best_set_score,
+                    email_boost,
+                    phone_boost,
+                    %s,
                     %s,
                     %s,
                     CURRENT_TIMESTAMP
@@ -1686,7 +1886,12 @@ def _ensure_indexes(conn, job_started):
     )
 
     required_tables = ("leads_embeddings", "pos_embeddings")
-    vector_columns = ("combined_embedding", "address_embedding", "name_embedding")
+    lead_vector_columns = ("combined_embedding", "address_embedding", "name_embedding")
+    pos_vector_columns = (
+        "combined_embedding", "address_embedding", "name_embedding",
+        "oms_company_name_embedding", "oms2_company_name_embedding",
+        "oms_address_embedding", "oms2_address_embedding",
+    )
     missing_tables = [
         table
         for table in required_tables
@@ -1747,40 +1952,53 @@ def _ensure_indexes(conn, job_started):
             )
 
     for table in required_tables:
+        vector_columns = pos_vector_columns if table == "pos_embeddings" else lead_vector_columns
+        attname_list = ", ".join(f"'{c}'" for c in vector_columns)
         current_types = {
             row[0]: row[1]
             for row in fetchall(
-                """
+                f"""
                 SELECT a.attname, format_type(a.atttypid, a.atttypmod)
                 FROM pg_attribute a
                 JOIN pg_class c ON c.oid = a.attrelid
                 JOIN pg_namespace n ON n.oid = c.relnamespace
                 WHERE n.nspname = %s
                   AND c.relname = %s
-                  AND a.attname IN ('combined_embedding', 'address_embedding', 'name_embedding')
+                  AND a.attname IN ({attname_list})
                 """,
                 (schema, table),
             )
         }
+        required_vec_cols = lead_vector_columns if table == "leads_embeddings" else lead_vector_columns
         missing_columns = [
             column
-            for column in vector_columns
+            for column in required_vec_cols
             if column not in current_types
         ]
         if missing_columns:
             raise RuntimeError(
                 f"{schema}.{table} is missing vector columns: {missing_columns}"
             )
-        if any(current_types.get(column) != f"vector({dimension})" for column in vector_columns):
+        cols_needing_alter = [
+            c for c in vector_columns
+            if c in current_types and current_types[c] != f"vector({dimension})"
+        ]
+        if cols_needing_alter:
+            alter_parts = ", ".join(
+                f"ALTER COLUMN {c} TYPE vector({dimension}) USING {c}::vector({dimension})"
+                for c in cols_needing_alter
+            )
             execute(
                 f"dimension {table} vector columns",
-                f"""
-                ALTER TABLE {qualified_name(schema, table)}
-                    ALTER COLUMN combined_embedding TYPE vector({dimension}) USING combined_embedding::vector({dimension}),
-                    ALTER COLUMN address_embedding TYPE vector({dimension}) USING address_embedding::vector({dimension}),
-                    ALTER COLUMN name_embedding TYPE vector({dimension}) USING name_embedding::vector({dimension})
-                """,
+                f"ALTER TABLE {qualified_name(schema, table)} {alter_parts}",
             )
+        if table == "pos_embeddings":
+            for col in pos_vector_columns:
+                if col not in current_types and col not in lead_vector_columns:
+                    execute(
+                        f"add {col} to {table}",
+                        f"ALTER TABLE {qualified_name(schema, table)} ADD COLUMN IF NOT EXISTS {col} vector({dimension})",
+                    )
 
     duplicate_checks = (
         ("leads_embeddings", "lead_id"),
@@ -1833,6 +2051,15 @@ def _ensure_indexes(conn, job_started):
         ON {qualified_name(schema, "pos_embeddings")}
         USING hnsw (combined_embedding vector_cosine_ops)
         WITH (m = {HNSW_M}, ef_construction = {HNSW_EF_CONSTRUCTION})
+        """,
+    )
+
+    execute(
+        "create transaction unprocessed partial index",
+        f"""
+        CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_transaction_unprocessed
+        ON {qualified_name(schema, "transaction")} (warehouse_number)
+        WHERE is_processed = false
         """,
     )
 

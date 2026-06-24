@@ -147,9 +147,17 @@ CREATE TABLE IF NOT EXISTS "leadmgmt"."pos_embeddings" (
     "combined_field" character varying,
     "business_name" character varying,
     "business_address" character varying,
+    "oms_company_name" character varying,
+    "oms2_company_name" character varying,
+    "oms_address" character varying,
+    "oms2_address" character varying,
     "combined_embedding" vector(768),
     "address_embedding" vector(768),
     "name_embedding" vector(768),
+    "oms_company_name_embedding" vector(768),
+    "oms2_company_name_embedding" vector(768),
+    "oms_address_embedding" vector(768),
+    "oms2_address_embedding" vector(768),
     "load_date" timestamp with time zone,
     "warehouse_number" integer,
     "fiscal_year" integer,
@@ -283,6 +291,15 @@ CREATE TABLE IF NOT EXISTS "leadmgmt"."match_decision_detail" (
     "updated_by_analyst" character varying(100),
     "updated_at_analyst" timestamp with time zone,
 
+    -- Six-set scoring (v2.3)
+    "winning_set" integer,
+    "winning_set_source" character varying(100),
+    "name_score" double precision,
+    "address_score" double precision,
+    "email_boost" double precision DEFAULT 0,
+    "phone_boost" double precision DEFAULT 0,
+    "lifecycle_state" character varying(50),
+
     -- AI-Generated Per-Row Analysis (owned exclusively by analysis workflow)
     "match_reasoning" text,
 
@@ -295,6 +312,10 @@ CREATE TABLE IF NOT EXISTS "leadmgmt"."match_decision_detail" (
 -- Indexes for fast lookup of match history
 CREATE INDEX IF NOT EXISTS "idx_mdd_run" ON "leadmgmt"."match_decision_detail" ("match_run_id");
 CREATE INDEX IF NOT EXISTS "idx_mdd_lead_id" ON "leadmgmt"."match_decision_detail" ("lead_id");
+
+-- Partial index for unprocessed transactions (efficient candidate pool filtering)
+CREATE INDEX IF NOT EXISTS "idx_transaction_unprocessed"
+ON "leadmgmt"."transaction" ("warehouse_number") WHERE "is_processed" = false;
 
 
 CREATE INDEX IF NOT EXISTS "idx_account_account_number" ON "leadmgmt"."account" ("account_number");
