@@ -1622,7 +1622,7 @@ def _run_fuzzy_match(conn, job_started):
         params = [*lead_ids]
         exact_pos_clause = exact_pos_exclusion_clause(
             schema,
-            "s.pos_id",
+            "s_inner.pos_id",
             params,
         )
         periods_per_year = fiscal_periods_per_year(rules)
