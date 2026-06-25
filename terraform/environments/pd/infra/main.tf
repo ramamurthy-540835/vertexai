@@ -125,18 +125,6 @@ module "monitoring_alert" {
   second_condition_display_name = "SNOW Sync Job Failure Condition"
 }
 
-/*module "iam_management" {
-  source     = "../../../modules/iam_management"
-  project_id = var.projectId
-  bucket_iam_bindings = [
-    {
-      bucket = "gcp-gcs-lead-mgmt-us-prd"
-      role   = "roles/storage.legacyBucketOwner"
-      member = "serviceAccount:${var.service_account_email}"
-    }
-  ]
-}*/
-
 module "workflows" {
   source                = "../../../modules/workflows"
   project_id            = var.projectId
@@ -208,7 +196,7 @@ module "gcs_eventarc_workflow_trigger" {
   location              = var.region
   trigger_name          = "pos-manifest-trigger"
   pubsub_topic_id       = module.gcs_pubsub_trigger.topic_id
-  workflow_name         = "pos_ingestion_workflow"
+  workflow_name         = module.pos_ingestion_workflow.workflow_name
   workflow_location     = var.region
   service_account_email = var.service_account_email
 }
