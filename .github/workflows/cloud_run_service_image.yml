@@ -1,15 +1,13 @@
 name: cloud_run_service_image_creation
-
 # ─────────────────────────────────────────────────────────────
 # Build the Cloud Run service image on feature pushes and deploy to adt.
 # main and release-spt pushes deploy directly (no rebuild) via
 # cloud_run_service_deployment.yml's own push triggers.
 # ─────────────────────────────────────────────────────────────
-
 on:
   push:
     branches:
-      - 'feature/**' 
+      - 'feature/**'
     paths:
       - .github/workflows/cloud_run_service_image.yml
       - cloud_run_service/**
@@ -17,16 +15,25 @@ on:
 jobs:
   build-and-push-container:
     name: Build and Push Cloud Run service image
-    runs-on: 
+    runs-on:
       - self-hosted
       - us-central1
     permissions:
       id-token: write
       contents: read
       packages: write
+    outputs:
+      image_tag: ${{ steps.set-tag.outputs.image_tag }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Set image tag (short SHA)
+        id: set-tag
+        run: |
+          TAG="${GITHUB_SHA::12}"
+          echo "image_tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "Resolved image tag: ${TAG}"
 
       - name: Login to GitHub Container Registry
         uses: docker/login-action@v3
@@ -69,15 +76,19 @@ jobs:
           context: ./cloud_run_service
           file: ./cloud_run_service/Dockerfile
           push: true
-          labels: ${{ steps.meta.outputs.labels }} 
-          tags: us-docker.pkg.dev/gcp-prj-images/gcp-gar-repo-mbrshp/cloud-run-service:latest
+          labels: ${{ steps.meta.outputs.labels }}
+          tags: |
+            us-docker.pkg.dev/gcp-prj-images/gcp-gar-repo-mbrshp/cloud-run-service:${{ steps.set-tag.outputs.image_tag }}
+            us-docker.pkg.dev/gcp-prj-images/gcp-gar-repo-mbrshp/cloud-run-service:latest
 
-  deploy-cloud-run-service:
-    name: Trigger Workflow to Deploy Cloud Run Service
-    needs: build-and-push-container
-    uses: ./.github/workflows/cloud_run_service_deployment.yml
-    with:
-      workflow_trigger_event: "True" 
-    secrets:
-      GCP_WORKLOAD_IDENTITY_PROVIDER_ID: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
-      GCP_WORKLOAD_IDENTITY_SA_EMAIL: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
+      - name: Summary
+        run: |
+          {
+            echo "## Image Build — cloud-run-service"
+            echo ""
+            echo "**Image tag (SHA-based):** \`${{ steps.set-tag.outputs.image_tag }}\`"
+            echo "**Full image ref:** \`us-docker.pkg.dev/gcp-prj-images/gcp-gar-repo-mbrshp/cloud-run-service:${{ steps.set-tag.outputs.image_tag }}\`"
+            echo "**Commit:** \`${{ github.sha }}\`"
+            echo ""
+            echo "Use this tag for \`TF_VAR_image_tag\` when running Terraform apply."
+          } >> $GITHUB_STEP_SUMMARY

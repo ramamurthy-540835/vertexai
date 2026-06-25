@@ -113,11 +113,18 @@ module "service_now_client_secret" {
   secret_value  = var.service_now_client_secret
 }
 
-module "costco_tlsi_cert" {
+module "lead_mgmt_cert" {
   source        = "../../../modules/secret_manager"
   project       = var.projectId
-  secret_id     = "costco_tlsi_cert"
-  secret_value  = var.costco_tlsi_cert
+  secret_id     = "lead_mgmt_service_cert"
+  secret_value  = var.lead_mgmt_service_cert
+}
+
+module "lead_mgmt_private_key" {
+  source        = "../../../modules/secret_manager"
+  project       = var.projectId
+  secret_id     = "lead_mgmt_service_private_key"
+  secret_value  = var.lead_mgmt_service_private_key
 }
 
 module "cloud_sql_instance" {
@@ -274,3 +281,27 @@ resource "google_compute_project_cloud_armor_tier" "cloud_armor_tier" {
   project          = var.projectId
   cloud_armor_tier = "CA_ENTERPRISE_ANNUAL"
 }
+
+###############################################################################
+# Cloud run service deployment
+###############################################################################
+
+module "cloud_run_service" {
+  source                 = "../../../modules/cloud_run_service"
+  project_id             = var.projectId
+  region                 = var.region
+  service_name           = "lead-mgmt-service"
+  service_account_email  = module.project_init.service_account_email
+  network                = "projects/gcp-prj-transit-hub/global/networks/gcp-vpc-np-host"
+  subnet                 = "projects/gcp-prj-transit-hub/regions/us-central1/subnetworks/gcp-snt-np-usc1-601-cloudrunjobs-np"
+  env_vars               = local.parsed_env_vars["service"]
+  service_image_tag      = var.service_image_tag
+}
+
+module "lead_mgmt_glb_backend" {
+  source                 = "../../../modules/glb_backend"
+  project_id             = var.projectId
+  region                 = var.region
+  cloud_run_service_name = module.cloud_run_service.service_name
+}
+

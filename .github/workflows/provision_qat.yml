@@ -5,7 +5,7 @@ on:
     branches:
       - main
     paths:
-      - 'terraform/environments/qat/infra/**.tf'
+      - 'terraform/environments/qat/infra/**'
       - 'terraform/modules/**/**'
       - '.github/workflows/provision_qat.yml'
       
@@ -29,6 +29,8 @@ jobs:
       TF_VAR_service_now_username: ${{ secrets.SERVICE_NOW_USERNAME }}
       TF_VAR_service_now_password: ${{ secrets.SERVICE_NOW_PASSWORD }}
       TF_VAR_db_password: ${{secrets.CLOUD_SQL_QAT_PASSWORD}}
+      TF_VAR_lead_mgmt_service_cert: ${{ secrets.LEAD_MGMT_APP_CERT }}
+      TF_VAR_lead_mgmt_service_private_key: ${{ secrets.LEAD_MGMT_APP_PRIVATE_KEY }}
 
     steps:
       - name: "Checkout code"
@@ -52,7 +54,7 @@ jobs:
 
       - name: "Terraform Plan"
         working-directory: ./terraform/environments/${{ matrix.env }}/infra
-        run: terraform plan -out=plan.tfplan -input=false -lock-timeout=10m
+        run: terraform plan -out=plan.tfplan -input=false -lock-timeout=10m -var-file="${{ matrix.env }}.auto.tfvars"
 
       - name: "Terraform Apply"
         working-directory: ./terraform/environments/${{ matrix.env }}/infra

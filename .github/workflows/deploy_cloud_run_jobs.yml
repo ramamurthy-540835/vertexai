@@ -1,4 +1,4 @@
-name: deploy_all_environments
+name: deploy_cloud_run_jobs
 # One entry point for promotion. A push to main (QAT) or a release tag
 # (SPT / PRD) fires this once, and it fans out to every child deploy workflow.
 # You never run the children individually.
