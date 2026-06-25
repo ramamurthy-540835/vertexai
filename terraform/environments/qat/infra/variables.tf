@@ -87,3 +87,20 @@ variable "sql_scripts" {
   }))
   default = {}
 }
+
+variable "lead_mgmt_service_cert" {
+  description = "SSL certificate for Global load balancer"
+  type        = string
+  sensitive   = true
+}
+
+variable "lead_mgmt_service_private_key"{
+  description = "private key for Global load balancer"
+  type        = string
+  sensitive   = true
+}
+
+variable "service_image_tag" {
+  description = "image tag for cloud run service"
+  type        = string
+}
