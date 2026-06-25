@@ -26,7 +26,7 @@ log = logging.getLogger(__name__)
 app = Flask(__name__)
 
 
-@app.route("/")
+@app.route("/trigger-workflow")
 def trigger_workflow():
     location = "us-central1"
     workflow_id = "snow_sync_workflow"
