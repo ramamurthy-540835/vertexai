@@ -19,45 +19,27 @@ from costco.leadmgmt.util.apputil import load_file_from_gcs
 from costco.leadmgmt.database.DBUtil import load_data_from_cloudsql
 from costco.leadmgmt.util.fiscal_year import get_costco_fiscal_info
 
-MAX_WORKERS = int(os.environ.get("MAX_WORKERS", "5"))
-PROJECT_ID = os.environ.get("PROJECT_ID")
+from lead_match_runtime.business_rules import (
+    get_tuning_float,
+    get_tuning_int,
+    get_vertex_location,
+    get_vertex_project,
+    load_business_rules as _load_rules,
+)
 
-def load_embedding_config():
-    """Load embedding model and dimension from business rules JSON. Fails fast if not found."""
-    env_path = os.environ.get("LEAD_POS_RULES_PATH")
-    repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))))
-    paths = [
-        env_path,
-        os.path.join(repo_root, "lead_match_runtime/lead_to_pos_match_rules.json"),
-        os.path.join(os.getcwd(), "lead_match_runtime/lead_to_pos_match_rules.json"),
-    ]
-    for path in paths:
-        if not path or not os.path.exists(path):
-            continue
-        try:
-            with open(path, "r") as f:
-                rules = json.load(f)
-                emb = rules["embeddings"]
-                return {
-                    "model": emb["model"],
-                    "task_type": emb["task_type"],
-                    "output_dimensionality": emb["output_dimensionality"],
-                }
-        except Exception as e:
-            print(f"[WARN] Failed to parse rules from {path}: {e}")
-    raise FileNotFoundError(
-        "Business rules JSON not found. Set LEAD_POS_RULES_PATH or ensure lead_to_pos_match_rules.json exists."
-    )
-
-embedding_config = load_embedding_config()
-MODEL_NAME = embedding_config["model"]
-TASK_TYPE = embedding_config["task_type"]
-OUTPUT_DIMENSIONALITY = embedding_config["output_dimensionality"]
+_RULES = _load_rules()
+MAX_WORKERS = get_tuning_int(_RULES, "max_workers")
+_EMBEDDING_MAX_RETRIES = get_tuning_int(_RULES, "embedding_max_retries")
+_EMBEDDING_RETRY_BASE_DELAY = get_tuning_float(_RULES, "embedding_retry_base_delay")
+_EMBEDDING_RETRY_MAX_DELAY = get_tuning_float(_RULES, "embedding_retry_max_delay")
+MODEL_NAME = _RULES["embeddings"]["model"]
+TASK_TYPE = _RULES["embeddings"]["task_type"]
+OUTPUT_DIMENSIONALITY = _RULES["embeddings"]["output_dimensionality"]
 
 client = genai.Client(
     vertexai=True,
-    project=PROJECT_ID,
-    location="us-central1",
+    project=get_vertex_project(_RULES),
+    location=get_vertex_location(_RULES),
     http_options=types.HttpOptions(api_version='v1')
 )
 
@@ -107,7 +89,7 @@ def data_extraction(leads_df, leads_insert_id, leads_update_id):
     return leads_insert_df, leads_update_df
 
 
-def batch_embedding(text_list, max_retries=5, base_delay=1.0, max_delay=60.0):
+def batch_embedding(text_list, max_retries=_EMBEDDING_MAX_RETRIES, base_delay=_EMBEDDING_RETRY_BASE_DELAY, max_delay=_EMBEDDING_RETRY_MAX_DELAY):
     """Generate embeddings for a batch of texts"""
     text_list = [str(text).strip() for text in text_list]
     if not any(text_list):
@@ -150,7 +132,7 @@ def process_in_batch(df, embedding_column_name, column_name):
     df[column_name] = df[column_name].fillna('')
     df_to_embed = df[df[column_name].str.strip() != ''].copy()
 
-    batch_size = 250
+    batch_size = get_tuning_int(_RULES, "embedding_lead_batch_size")
     batches = [
         df_to_embed[column_name].iloc[i:i + batch_size].tolist()
         for i in range(0, len(df_to_embed), batch_size)

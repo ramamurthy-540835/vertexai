@@ -12,9 +12,110 @@
 
   "environment": {
     "project_id": "ctoteam",
-    "schema": "leadmgmt",
     "region": "us-central1",
-    "configurable_by_env": true
+    "schema": "leadmgmt",
+    "label": "ctoteam-isolated",
+    "configurable_by_env": true,
+
+    "vertex_ai": {
+      "project_id": "ctoteam",
+      "location": "us-central1",
+      "timeout_seconds": 120.0
+    },
+
+    "models": {
+      "gemini_flash": "gemini-3.5-flash",
+      "gemini_flash_note": "Used by reporting app (Talk with Data). Change here to switch model globally.",
+      "embedding": "gemini-embedding-001",
+      "embedding_lock_note": "LOCKED. Cross-model cosine similarity is invalid. See embeddings.model_lock_note.",
+      "backup_models": ["gemini-2.5-flash", "gemini-2.5-pro"]
+    },
+
+    "cloud_sql": {
+      "connection_name": "ctoteam:us-central1:lead-mgmt-db",
+      "instance": "lead-mgmt-db",
+      "socket_dir": "/cloudsql",
+      "host": "35.188.0.193",
+      "port": 5432,
+      "database": "postgres",
+      "schema": "leadmgmt",
+      "credentials": {
+        "source": "secret_manager",
+        "secret_user": "db-user",
+        "secret_password": "db-password",
+        "note": "Never store credentials in this file. Load from GCP Secret Manager at runtime."
+      }
+    },
+
+    "gcs": {
+      "report_bucket": "lead-match-ctoteam"
+    },
+
+    "cloud_run": {
+      "service_name": "lead-match-endpoint",
+      "health_path": "/health"
+    },
+
+    "safety_flags": {
+      "allow_client_gcp": false,
+      "allow_local_db": false,
+      "allow_production": false,
+      "dry_run": false
+    },
+
+    "tuning": {
+      "embedding_batch_size": 100,
+      "embedding_batch_workers": 5,
+      "embedding_max_workers": 5,
+      "embedding_max_texts_per_request": 0,
+      "embedding_max_retries": 6,
+      "embedding_retry_base_delay": 1.5,
+      "embedding_retry_max_delay": 90,
+      "embedding_request_log_every": 100,
+      "embedding_qps_limit": 10,
+      "normalize_embeddings": true,
+      "normalize_note": "Required for 768-dim gemini-embedding-001. Google docs: non-default dimensions must be manually normalized.",
+      "match_batch_size": 100,
+      "match_statement_timeout_ms": 900000,
+      "max_workers": 5,
+      "vector_top_k": 100,
+      "vector_top_k_note": "Retrieve top-K POS candidates per lead from pgvector. Start 100; test 500 if recall needs it.",
+      "explain_fuzzy_plan": true,
+      "db_write_batch_size": 100,
+      "db_pool_max": 5,
+      "embedding_lead_batch_size": 250,
+      "embedding_pos_internal_batch_size": 25,
+      "pos_embedding_chunk_size": 2000,
+      "embedding_request_size_cap": 250,
+      "match_lead_limit_default": 1000000,
+      "analysis_db_batch_size": 1000
+    },
+
+    "hnsw_index": {
+      "m": 16,
+      "ef_construction": 64,
+      "ef_search": 100,
+      "maintenance_work_mem": "512MB",
+      "safe_build_note": "M=16/ef_construction=64 are pgvector defaults. Safer for first 22M-row HNSW build. Scale to M=32/ef_construction=128 after SPT proves stable."
+    },
+
+    "dry_run_controls": {
+      "match_row_limit": 1000,
+      "writeback_business_tables": false
+    },
+
+    "rollout_phases": [
+      {"phase": 1, "row_limit": 1000,  "writeback": false, "note": "Validation only"},
+      {"phase": 2, "row_limit": 10000, "writeback": false, "note": "Scale test, no writes"},
+      {"phase": 3, "row_limit": 10000, "writeback": true,  "note": "First real writes"},
+      {"phase": 4, "row_limit": 50000, "writeback": true,  "note": "Half-scale production"},
+      {"phase": 5, "row_limit": 80000, "writeback": true,  "note": "Full production"}
+    ],
+
+    "fiscal_defaults": {
+      "fiscal_year": 2026,
+      "fiscal_period": 10
+    }
   },
 
   "warehouse_scope": {
@@ -192,7 +293,24 @@
       { "set": 5, "source": "OMS secondary business", "name_field": "business_name",     "address_field": "full_oms2_address", "email_field": "email_2_oms", "phone_field": "phone_2_oms" },
       { "set": 6, "source": "OMS secondary company",  "name_field": "oms2_company_name", "address_field": "full_oms2_address", "email_field": "email_2_oms", "phone_field": "phone_2_oms" }
     ],
-    "field_mapping_note": "OMS column names (oms_company_name, oms2_company_name, full_oms_address, full_oms2_address, email_1_oms, phone_1_oms, email_2_oms, phone_2_oms) must be mapped to the actual transaction/OMS table columns during ingest."
+    "field_mapping_note": "OMS column names (oms_company_name, oms2_company_name, full_oms_address, full_oms2_address, email_1_oms, phone_1_oms, email_2_oms, phone_2_oms) must be mapped to the actual transaction/OMS table columns during ingest.",
+    "embedding_column_mapping": {
+      "full_address": "address_embedding",
+      "full_oms_address": "oms_address_embedding",
+      "full_oms2_address": "oms2_address_embedding",
+      "business_name": "name_embedding",
+      "oms_company_name": "oms_company_name_embedding",
+      "oms2_company_name": "oms2_company_name_embedding",
+      "combined_field": "combined_embedding"
+    },
+    "transaction_field_mapping": {
+      "email": "email",
+      "phone": "phone",
+      "email_1_oms": "email_1_oms",
+      "phone_1_oms": "phone_1_oms",
+      "email_2_oms": "email_2_oms",
+      "phone_2_oms": "phone_2_oms"
+    }
   },
 
   "scoring": {

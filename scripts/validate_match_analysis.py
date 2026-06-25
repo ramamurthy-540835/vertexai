@@ -19,6 +19,11 @@ import pandas as pd
 from google.cloud import storage
 import sqlalchemy
 
+from lead_match_runtime.business_rules import load_business_rules, get_schema, get_report_bucket, get_project_id
+
+_RULES = load_business_rules()
+_SCHEMA = get_schema(_RULES)
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
@@ -95,8 +100,8 @@ def validate_cloud_sql_reasoning(
             return False
         with engine.connect() as conn:
             # Count reasoning rows
-            query = sqlalchemy.text("""
-                SELECT COUNT(*) as cnt FROM "leadmgmt"."match_decision_detail"
+            query = sqlalchemy.text(f"""
+                SELECT COUNT(*) as cnt FROM "{_SCHEMA}"."match_decision_detail"
                 WHERE "match_run_id" = :run_id AND "match_reasoning" IS NOT NULL
             """)
             result = conn.execute(query, {"run_id": match_run_id})
@@ -111,8 +116,8 @@ def validate_cloud_sql_reasoning(
                 return False
 
             # Verify engine columns are untouched (check a sample)
-            query = sqlalchemy.text("""
-                SELECT COUNT(*) as cnt FROM "leadmgmt"."match_decision_detail"
+            query = sqlalchemy.text(f"""
+                SELECT COUNT(*) as cnt FROM "{_SCHEMA}"."match_decision_detail"
                 WHERE "match_run_id" = :run_id
                   AND ("match_type" IS NULL OR "final_score" IS NULL)
             """)
@@ -164,8 +169,8 @@ def validate_reasoning_arithmetic(
             final_score = float(row["final_score"])
 
             with engine.connect() as conn:
-                query = sqlalchemy.text("""
-                    SELECT "match_reasoning" FROM "leadmgmt"."match_decision_detail"
+                query = sqlalchemy.text(f"""
+                    SELECT "match_reasoning" FROM "{_SCHEMA}"."match_decision_detail"
                     WHERE "match_run_id" = :run_id
                       AND "lead_id" = :lead_id
                       AND "pos_id" = :pos_id
@@ -246,12 +251,12 @@ def main():
     )
     parser.add_argument(
         "--bucket",
-        default="lead-match-ctoteam",
+        default=get_report_bucket(_RULES),
         help="GCS bucket",
     )
     parser.add_argument(
         "--project",
-        default="ctoteam",
+        default=get_project_id(_RULES),
         help="GCP project ID",
     )
     parser.add_argument(

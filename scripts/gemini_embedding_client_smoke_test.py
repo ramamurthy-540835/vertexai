@@ -12,6 +12,15 @@ import google.auth
 from google.auth import impersonated_credentials
 from google import genai
 
+try:
+    from lead_match_runtime.business_rules import load_business_rules, get_embedding_model, get_vertex_location
+    _RULES = load_business_rules()
+    _DEFAULT_MODEL = get_embedding_model(_RULES)
+    _DEFAULT_LOCATION = get_vertex_location(_RULES)
+except Exception:
+    _DEFAULT_MODEL = "gemini-embedding-001"
+    _DEFAULT_LOCATION = "us-central1"
+
 
 def get_credentials():
     target_service_account = os.environ.get("TARGET_SERVICE_ACCOUNT")
@@ -31,8 +40,8 @@ def get_credentials():
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run a Gemini embedding client smoke test.")
     parser.add_argument("--project-id", required=True, help="Google Cloud project ID")
-    parser.add_argument("--location", default="us-central1", help="Vertex AI location")
-    parser.add_argument("--model", default="gemini-embedding-001", help="Embedding model name")
+    parser.add_argument("--location", default=_DEFAULT_LOCATION, help="Vertex AI location")
+    parser.add_argument("--model", default=_DEFAULT_MODEL, help="Embedding model name")
     parser.add_argument(
         "--output",
         default="gemini_embedding_client_smoke_test_results.json",

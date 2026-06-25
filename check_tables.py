@@ -4,6 +4,12 @@ import os
 import sqlalchemy
 from google.cloud.sql.connector import Connector
 
+from lead_match_runtime.business_rules import load_business_rules, get_cloudsql_connection_name, get_schema
+
+_RULES = load_business_rules()
+_CONNECTION_NAME = get_cloudsql_connection_name(_RULES)
+_SCHEMA = get_schema(_RULES)
+
 def getconn():
     password = os.environ.get("DB_PASSWORD")
     if not password:
@@ -11,7 +17,7 @@ def getconn():
 
     with Connector() as connector:
         conn = connector.connect(
-            os.environ.get("CLOUDSQL_CONNECTION_NAME", "ctoteam:us-central1:lead-mgmt-db"),
+            os.environ.get("CLOUDSQL_CONNECTION_NAME", _CONNECTION_NAME),
             "pg8000",
             user=os.environ.get("DB_USER", "postgres"),
             password=password,
@@ -26,8 +32,8 @@ def main():
     )
     with engine.connect() as db_conn:
         inspector = sqlalchemy.inspect(db_conn)
-        tables = inspector.get_table_names(schema="leadmgmt")
-        print("Tables in schema 'leadmgmt':")
+        tables = inspector.get_table_names(schema=_SCHEMA)
+        print(f"Tables in schema '{_SCHEMA}':")
         for table in tables:
             print(table)
 

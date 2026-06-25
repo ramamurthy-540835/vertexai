@@ -19,43 +19,25 @@ from costco.leadmgmt.database.DBUtil import load_data_from_cloudsql
 from costco.leadmgmt.util.fiscal_year import get_costco_fiscal_info
 
 
-# ============================================================
-# CONFIGURATION
-# ============================================================
-def load_embedding_config():
-    """Load embedding model and dimension from business rules JSON. Fails fast if not found."""
-    env_path = os.environ.get("LEAD_POS_RULES_PATH")
-    repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))))
-    paths = [
-        env_path,
-        os.path.join(repo_root, "lead_match_runtime/lead_to_pos_match_rules.json"),
-        os.path.join(os.getcwd(), "lead_match_runtime/lead_to_pos_match_rules.json"),
-    ]
-    for path in paths:
-        if not path or not os.path.exists(path):
-            continue
-        try:
-            with open(path, "r") as f:
-                rules = json.load(f)
-                emb = rules["embeddings"]
-                return {
-                    "model": emb["model"],
-                    "task_type": emb["task_type"],
-                    "output_dimensionality": emb["output_dimensionality"],
-                }
-        except Exception as e:
-            print(f"[WARN] Failed to parse rules from {path}: {e}")
-    raise FileNotFoundError(
-        "Business rules JSON not found. Set LEAD_POS_RULES_PATH or ensure lead_to_pos_match_rules.json exists."
-    )
+from lead_match_runtime.business_rules import (
+    build_oms_address,
+    get_tuning_int,
+    get_tuning_float,
+    get_vertex_location,
+    load_business_rules as _load_rules,
+    normalize_text,
+)
 
-embedding_config = load_embedding_config()
-MODEL_NAME = embedding_config["model"]
-TASK_TYPE = embedding_config["task_type"]
-OUTPUT_DIMENSIONALITY = embedding_config["output_dimensionality"]
-CHUNK_SIZE = 2000
-MAX_WORKERS = 5
-INTERNAL_BATCH_SIZE = 25
+_RULES = _load_rules()
+MODEL_NAME = _RULES["embeddings"]["model"]
+TASK_TYPE = _RULES["embeddings"]["task_type"]
+OUTPUT_DIMENSIONALITY = _RULES["embeddings"]["output_dimensionality"]
+CHUNK_SIZE = get_tuning_int(_RULES, "pos_embedding_chunk_size")
+MAX_WORKERS = get_tuning_int(_RULES, "max_workers")
+INTERNAL_BATCH_SIZE = get_tuning_int(_RULES, "embedding_pos_internal_batch_size")
+_EMBEDDING_MAX_RETRIES = get_tuning_int(_RULES, "embedding_max_retries")
+_EMBEDDING_RETRY_BASE_DELAY = get_tuning_float(_RULES, "embedding_retry_base_delay")
+_EMBEDDING_RETRY_MAX_DELAY = get_tuning_float(_RULES, "embedding_retry_max_delay")
 
 
 def l2_normalize(vector):
@@ -142,7 +124,7 @@ def mark_chunk_status(engine, schema_name, run_data: dict):
         conn.commit()
 
 
-def batch_embedding(client, text_list, max_retries=6, base_delay=1.5, max_delay=90.0):
+def batch_embedding(client, text_list, max_retries=_EMBEDDING_MAX_RETRIES, base_delay=_EMBEDDING_RETRY_BASE_DELAY, max_delay=_EMBEDDING_RETRY_MAX_DELAY):
     text_list = [str(text).strip() for text in text_list]
     if not any(text_list):
         return [None] * len(text_list)
@@ -215,10 +197,27 @@ def process_in_batch(client, df, embedding_column_name, column_name, max_workers
     return df
 
 
+def _build_oms_fields(df):
+    df["oms_company_name"] = df.apply(
+        lambda r: normalize_text(r.get("oms_company"), uppercase=True) or "", axis=1
+    )
+    df["oms2_company_name"] = df.apply(
+        lambda r: normalize_text(r.get("oms_company_2"), uppercase=True) or "", axis=1
+    )
+    df["full_oms_address"] = df.apply(lambda r: build_oms_address(r, "oms"), axis=1)
+    df["full_oms2_address"] = df.apply(lambda r: build_oms_address(r, "oms2"), axis=1)
+    return df
+
+
 def embed_chunk(client, chunk_df, max_workers):
+    chunk_df = _build_oms_fields(chunk_df)
     chunk_df = process_in_batch(client, chunk_df, 'combined_embedding', 'combined_field', max_workers)
     chunk_df = process_in_batch(client, chunk_df, 'address_embedding', 'full_address', max_workers)
     chunk_df = process_in_batch(client, chunk_df, 'name_embedding', 'business_name', max_workers)
+    chunk_df = process_in_batch(client, chunk_df, 'oms_company_name_embedding', 'oms_company_name', max_workers)
+    chunk_df = process_in_batch(client, chunk_df, 'oms2_company_name_embedding', 'oms2_company_name', max_workers)
+    chunk_df = process_in_batch(client, chunk_df, 'oms_address_embedding', 'full_oms_address', max_workers)
+    chunk_df = process_in_batch(client, chunk_df, 'oms2_address_embedding', 'full_oms2_address', max_workers)
     return chunk_df
 
 
@@ -243,7 +242,11 @@ def insert_operation_transaction(engine, schema_name, table_name, data_frame):
             "combined_embedding": Vector(OUTPUT_DIMENSIONALITY),
             "address_embedding": Vector(OUTPUT_DIMENSIONALITY),
             "name_embedding": Vector(OUTPUT_DIMENSIONALITY),
-            "load_date": TIMESTAMP
+            "oms_company_name_embedding": Vector(OUTPUT_DIMENSIONALITY),
+            "oms2_company_name_embedding": Vector(OUTPUT_DIMENSIONALITY),
+            "oms_address_embedding": Vector(OUTPUT_DIMENSIONALITY),
+            "oms2_address_embedding": Vector(OUTPUT_DIMENSIONALITY),
+            "load_date": TIMESTAMP,
         }
     )
 
@@ -254,7 +257,7 @@ def embedding_generation(file_pos: str, config_file_path: str, project_id: str,
     client = genai.Client(
         vertexai=True,
         project=project_id,
-        location="us-central1",
+        location=get_vertex_location(_RULES),
         http_options=HttpOptions(api_version='v1')
     )
 
@@ -317,7 +320,7 @@ def embedding_generation(file_pos: str, config_file_path: str, project_id: str,
         try:
             chunk_df = embed_chunk(client, chunk_df, MAX_WORKERS)
             chunk_df_final = chunk_df.dropna(
-                subset=["combined_embedding", "address_embedding", "name_embedding"]
+                subset=["combined_embedding"]
             )
 
             rows_inserted = len(chunk_df_final)
@@ -331,15 +334,21 @@ def embedding_generation(file_pos: str, config_file_path: str, project_id: str,
 
                 chunk_df_final = chunk_df_final.rename(columns={
                     "full_address": "business_address",
+                    "full_oms_address": "oms_address",
+                    "full_oms2_address": "oms2_address",
                     "fiscal_year_transaction": "fiscal_year",
-                    "fiscal_period_transaction": "fiscal_period"
+                    "fiscal_period_transaction": "fiscal_period",
                 })
 
-                # Filter only target columns
                 target_cols = [
                     "pos_id", "account_number", "business_name", "business_address",
                     "combined_field", "warehouse_number", "fiscal_year", "fiscal_period", "week",
-                    "combined_embedding", "address_embedding", "name_embedding", "load_date"
+                    "combined_embedding", "address_embedding", "name_embedding",
+                    "oms_company_name", "oms2_company_name",
+                    "oms_address", "oms2_address",
+                    "oms_company_name_embedding", "oms2_company_name_embedding",
+                    "oms_address_embedding", "oms2_address_embedding",
+                    "load_date",
                 ]
                 chunk_df_final = chunk_df_final[
                     [col for col in target_cols if col in chunk_df_final.columns]

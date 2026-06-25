@@ -116,13 +116,13 @@ def fuzzy_artifact_score(config: dict[str, Any]) -> float:
 
 
 def fuzzy_reject_below_floor(config: dict[str, Any]) -> bool:
-    return bool(decision_rules(config).get("fuzzy_reject_below_floor", True))
+    return bool(decision_rules(config)["fuzzy_reject_below_floor"])
 
 
 def fuzzy_score_bands(config: dict[str, Any]) -> list[dict[str, Any]]:
     dr = decision_rules(config)
-    lifecycle = str(dr.get("fuzzy_lifecycle_state", "Potential"))
-    match_type = str(dr.get("fuzzy_match_type", "Fuzzy"))
+    lifecycle = str(dr["fuzzy_lifecycle_state"])
+    match_type = str(dr["fuzzy_match_type"])
     subtiers = dr.get("optional_confidence_subtiers", {}).get("subtiers", [])
     if subtiers:
         bands = [
@@ -138,7 +138,7 @@ def fuzzy_score_bands(config: dict[str, Any]) -> list[dict[str, Any]]:
     else:
         bands = [
             {
-                "name": "Potential",
+                "name": lifecycle,
                 "min_score": float(dr["fuzzy_qualify_min_score"]),
                 "max_score": float(dr["fuzzy_max_score"]),
                 "lifecycle_state": lifecycle,
@@ -177,8 +177,8 @@ def confidence_bands(config: dict[str, Any]) -> list[dict[str, Any]]:
     ]
     bands.append(
         {
-            "name": "No Match",
-            "state": "No Match",
+            "name": str(dr["no_match_lifecycle_state"]),
+            "state": str(dr["no_match_lifecycle_state"]),
             "min_score": 0,
             "max_score": float(dr["no_match_max_score"]),
         }
@@ -190,8 +190,8 @@ def fuzzy_lifecycle_state(score: float, config: dict[str, Any]) -> str:
     dr = decision_rules(config)
     floor = float(dr["fuzzy_qualify_min_score"])
     if float(score) >= floor:
-        return str(dr.get("fuzzy_lifecycle_state", "Potential"))
-    return str(dr.get("no_match_lifecycle_state", "No Match"))
+        return str(dr["fuzzy_lifecycle_state"])
+    return str(dr["no_match_lifecycle_state"])
 
 
 def lifecycle_state_for_match_type(
@@ -204,12 +204,170 @@ def lifecycle_state_for_match_type(
     return fuzzy_lifecycle_state(float(score or 0), config)
 
 
+def _require(section: dict[str, Any], key: str, section_name: str) -> Any:
+    if key not in section:
+        raise KeyError(f"Missing '{key}' in '{section_name}' — add it to lead_to_pos_match_rules.json")
+    return section[key]
+
+
+def _env(config: dict[str, Any]) -> dict[str, Any]:
+    return _require(config, "environment", "root")
+
+
+def _tuning(config: dict[str, Any]) -> dict[str, Any]:
+    return _require(_env(config), "tuning", "environment")
+
+
+def _hnsw(config: dict[str, Any]) -> dict[str, Any]:
+    return _require(_env(config), "hnsw_index", "environment")
+
+
+def _safety(config: dict[str, Any]) -> dict[str, Any]:
+    return _require(_env(config), "safety_flags", "environment")
+
+
+def _cloud_sql(config: dict[str, Any]) -> dict[str, Any]:
+    return _require(_env(config), "cloud_sql", "environment")
+
+
+def _vertex_ai(config: dict[str, Any]) -> dict[str, Any]:
+    return _require(_env(config), "vertex_ai", "environment")
+
+
+def _models(config: dict[str, Any]) -> dict[str, Any]:
+    return _require(_env(config), "models", "environment")
+
+
+def _dry_run_controls(config: dict[str, Any]) -> dict[str, Any]:
+    return _require(_env(config), "dry_run_controls", "environment")
+
+
+def _fiscal_defaults(config: dict[str, Any]) -> dict[str, Any]:
+    return _require(_env(config), "fiscal_defaults", "environment")
+
+
+def _gcs(config: dict[str, Any]) -> dict[str, Any]:
+    return _require(_env(config), "gcs", "environment")
+
+
+def _cloud_run(config: dict[str, Any]) -> dict[str, Any]:
+    return _require(_env(config), "cloud_run", "environment")
+
+
 def get_schema(config: dict[str, Any]) -> str:
-    return os.environ.get("DB_SCHEMA") or config["environment"]["schema"]
+    return str(_require(_cloud_sql(config), "schema", "environment.cloud_sql"))
 
 
 def get_project_id(config: dict[str, Any]) -> str:
-    return os.environ.get("GOOGLE_CLOUD_PROJECT") or config["environment"]["project_id"]
+    return str(_require(_env(config), "project_id", "environment"))
+
+
+def get_vertex_project(config: dict[str, Any]) -> str:
+    return str(_require(_vertex_ai(config), "project_id", "environment.vertex_ai"))
+
+
+def get_vertex_location(config: dict[str, Any]) -> str:
+    return str(_require(_vertex_ai(config), "location", "environment.vertex_ai"))
+
+
+def get_vertex_timeout(config: dict[str, Any]) -> float:
+    return float(_require(_vertex_ai(config), "timeout_seconds", "environment.vertex_ai"))
+
+
+def get_gemini_model(config: dict[str, Any]) -> str:
+    return str(_require(_models(config), "gemini_flash", "environment.models"))
+
+
+def get_embedding_model(config: dict[str, Any]) -> str:
+    return str(_require(_models(config), "embedding", "environment.models"))
+
+
+def get_report_bucket(config: dict[str, Any]) -> str:
+    return str(_require(_gcs(config), "report_bucket", "environment.gcs"))
+
+
+def get_cloud_run_service(config: dict[str, Any]) -> str:
+    return str(_require(_cloud_run(config), "service_name", "environment.cloud_run"))
+
+
+def get_cloud_run_health_path(config: dict[str, Any]) -> str:
+    return str(_require(_cloud_run(config), "health_path", "environment.cloud_run"))
+
+
+def get_cloudsql_connection_name(config: dict[str, Any]) -> str:
+    return str(_require(_cloud_sql(config), "connection_name", "environment.cloud_sql"))
+
+
+def get_cloudsql_socket_dir(config: dict[str, Any]) -> str:
+    return str(_require(_cloud_sql(config), "socket_dir", "environment.cloud_sql"))
+
+
+def get_db_host(config: dict[str, Any]) -> str:
+    return str(_require(_cloud_sql(config), "host", "environment.cloud_sql"))
+
+
+def get_db_port(config: dict[str, Any]) -> int:
+    return int(_require(_cloud_sql(config), "port", "environment.cloud_sql"))
+
+
+def get_db_name(config: dict[str, Any]) -> str:
+    return str(_require(_cloud_sql(config), "database", "environment.cloud_sql"))
+
+
+def get_env_label(config: dict[str, Any]) -> str:
+    return str(_require(_env(config), "label", "environment"))
+
+
+def get_safety_flag(config: dict[str, Any], flag: str) -> bool:
+    return bool(_require(_safety(config), flag, "environment.safety_flags"))
+
+
+def get_dry_run(config: dict[str, Any]) -> bool:
+    return bool(_require(_safety(config), "dry_run", "environment.safety_flags"))
+
+
+def get_dry_run_match_row_limit(config: dict[str, Any]) -> int:
+    return int(_require(_dry_run_controls(config), "match_row_limit", "environment.dry_run_controls"))
+
+
+def get_dry_run_writeback(config: dict[str, Any]) -> bool:
+    return bool(_require(_dry_run_controls(config), "writeback_business_tables", "environment.dry_run_controls"))
+
+
+def get_fiscal_year(config: dict[str, Any]) -> int:
+    return int(_require(_fiscal_defaults(config), "fiscal_year", "environment.fiscal_defaults"))
+
+
+def get_fiscal_period(config: dict[str, Any]) -> int:
+    return int(_require(_fiscal_defaults(config), "fiscal_period", "environment.fiscal_defaults"))
+
+
+def get_tuning_int(config: dict[str, Any], key: str) -> int:
+    return int(_require(_tuning(config), key, "environment.tuning"))
+
+
+def get_tuning_float(config: dict[str, Any], key: str) -> float:
+    return float(_require(_tuning(config), key, "environment.tuning"))
+
+
+def get_tuning_bool(config: dict[str, Any], key: str) -> bool:
+    return bool(_require(_tuning(config), key, "environment.tuning"))
+
+
+def get_hnsw_m(config: dict[str, Any]) -> int:
+    return int(_require(_hnsw(config), "m", "environment.hnsw_index"))
+
+
+def get_hnsw_ef_construction(config: dict[str, Any]) -> int:
+    return int(_require(_hnsw(config), "ef_construction", "environment.hnsw_index"))
+
+
+def get_hnsw_ef_search(config: dict[str, Any]) -> int:
+    return int(_require(_hnsw(config), "ef_search", "environment.hnsw_index"))
+
+
+def get_hnsw_maintenance_work_mem(config: dict[str, Any]) -> str:
+    return str(_require(_hnsw(config), "maintenance_work_mem", "environment.hnsw_index"))
 
 
 def get_warehouse_scope(config: dict[str, Any]) -> WarehouseScope:
@@ -564,7 +722,7 @@ def closed_existing_lifecycle_state_from_fiscal_rules(config: dict[str, Any]) ->
                 state = rule.get("lifecycle_state")
                 if state:
                     return str(state)
-    return str(config["semantic_definitions"].get("closed_existing", "Closed - Existing"))
+    return closed_existing_lifecycle_state(config)
 
 
 def fuzzy_boost_rule(config: dict[str, Any]) -> dict[str, Any]:
@@ -579,26 +737,11 @@ def fuzzy_denom(config: dict[str, Any]) -> float:
 
 def pos_embedding_variant_field_aliases(config: dict[str, Any]) -> dict[str, str]:
     """Map business rule variant names to current pos_embeddings vector columns."""
-    return {
-        "full_address": "address_embedding",
-        "full_oms_address": "oms_address_embedding",
-        "full_oms2_address": "oms2_address_embedding",
-        "business_name": "name_embedding",
-        "oms_company_name": "oms_company_name_embedding",
-        "oms2_company_name": "oms2_company_name_embedding",
-        "combined_field": "combined_embedding",
-    }
+    return dict(config["matching_sets"]["embedding_column_mapping"])
 
 
 def pos_transaction_field_aliases(config: dict[str, Any]) -> dict[str, str]:
-    return {
-        "email": "email",
-        "phone": "phone",
-        "email_1_oms": "email_1_oms",
-        "phone_1_oms": "phone_1_oms",
-        "email_2_oms": "email_2_oms",
-        "phone_2_oms": "phone_2_oms",
-    }
+    return dict(config["matching_sets"]["transaction_field_mapping"])
 
 
 def matching_set_selection_rule(config: dict[str, Any]) -> str:
@@ -610,7 +753,7 @@ def matching_set_scoring_formula(config: dict[str, Any]) -> str:
 
 
 def skip_set_if_variant_blank(config: dict[str, Any]) -> bool:
-    return bool(config["matching_sets"].get("skip_set_if_variant_blank", True))
+    return bool(config["matching_sets"]["skip_set_if_variant_blank"])
 
 
 def fiscal_periods_per_year(config: dict[str, Any]) -> int:
@@ -630,7 +773,7 @@ def address_variant_sources(config: dict[str, Any]) -> list[str]:
 
 
 def fuzzy_lifecycle_state_label(config: dict[str, Any]) -> str:
-    return str(decision_rules(config).get("fuzzy_lifecycle_state", "Potential"))
+    return str(decision_rules(config)["fuzzy_lifecycle_state"])
 
 
 def confidence_subtier(score: float, config: dict[str, Any]) -> str | None:
