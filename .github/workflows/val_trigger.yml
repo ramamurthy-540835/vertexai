@@ -1,0 +1,111 @@
+name: Debug Eventarc Pub/Sub Trigger (SPT)
+
+on:
+  workflow_dispatch:
+    inputs:
+      bucket:
+        description: 'GCS bucket name'
+        required: true
+        default: 'gcp-gcs-lead-mgmt-us-spt-pos-raw'
+      object_prefix:
+        description: 'Object prefix to check (notification filter)'
+        required: true
+        default: 'manifests/'
+      workflow_name:
+        description: 'Target GCP Workflow name'
+        required: true
+        default: 'pos_ingestion_workflow'
+      subscription:
+        description: 'Eventarc-backed Pub/Sub subscription name'
+        required: true
+        default: 'eventarc-us-central1-pos-manifest-trigger-sub-793'
+      location:
+        description: 'Region'
+        required: true
+        default: 'us-central1'
+      freshness:
+        description: 'Lookback window for logs (e.g. 2h, 1d)'
+        required: true
+        default: '2h'
+
+env:
+  PROJECT_ID: p-601-np-bcleadsmgmt-spt
+
+jobs:
+  diagnose:
+    runs-on: cw-gcp-us-central1-np
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Authenticate to GCP via WIF
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL_SPT }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: 1. Most recent objects under prefix
+        run: |
+          echo "=== Recent objects under gs://${{ inputs.bucket }}/${{ inputs.object_prefix }} ==="
+          gcloud storage ls --recursive "gs://${{ inputs.bucket }}/${{ inputs.object_prefix }}" \
+            --project="$PROJECT_ID" | tail -10 || echo "No objects found or path invalid"
+
+      - name: 2. Bucket notification configuration
+        run: |
+          echo "=== Notification config for gs://${{ inputs.bucket }} ==="
+          gcloud storage buckets notifications list "gs://${{ inputs.bucket }}" \
+            --project="$PROJECT_ID"
+
+      - name: 3. Workflow execution history
+        run: |
+          echo "=== Last 5 executions of ${{ inputs.workflow_name }} ==="
+          gcloud workflows executions list "${{ inputs.workflow_name }}" \
+            --location="${{ inputs.location }}" \
+            --project="$PROJECT_ID" \
+            --limit=5 \
+            --format="table(name,state,startTime)"
+
+      - name: 4. Pub/Sub subscription health
+        run: |
+          echo "=== Subscription describe: ${{ inputs.subscription }} ==="
+          gcloud pubsub subscriptions describe "${{ inputs.subscription }}" \
+            --project="$PROJECT_ID"
+
+      - name: 5. Pub/Sub / Eventarc delivery warnings
+        run: |
+          echo "=== Delivery warnings/errors (last ${{ inputs.freshness }}) ==="
+          gcloud logging read \
+            'resource.labels.subscription_id="'"${{ inputs.subscription }}"'" AND severity>=WARNING' \
+            --project="$PROJECT_ID" \
+            --limit=20 \
+            --freshness="${{ inputs.freshness }}" \
+            --format=json
+
+      - name: 6. GCS audit log for uploads under prefix
+        run: |
+          echo "=== GCS audit log entries for ${{ inputs.object_prefix }} (last ${{ inputs.freshness }}) ==="
+          gcloud logging read \
+            'resource.type="gcs_bucket" AND protoPayload.resourceName:"'"${{ inputs.object_prefix }}"'"' \
+            --project="$PROJECT_ID" \
+            --limit=10 \
+            --freshness="${{ inputs.freshness }}" \
+            --format=json
+
+      - name: 7. Eventarc trigger IAM check
+        run: |
+          echo "=== IAM roles for trigger SA ==="
+          gcloud projects get-iam-policy "$PROJECT_ID" \
+            --flatten="bindings[].members" \
+            --filter="bindings.members:gco-iam-svc-lead-mgmt-bc-spt@${PROJECT_ID}.iam.gserviceaccount.com" \
+            --format="table(bindings.role)"
+
+      - name: 8. Workflow-level invoker binding
+        run: |
+          echo "=== Workflow IAM policy: ${{ inputs.workflow_name }} ==="
+          gcloud workflows get-iam-policy "${{ inputs.workflow_name }}" \
+            --location="${{ inputs.location }}" \
+            --project="$PROJECT_ID" \
+            --format="table(bindings.role,bindings.members)"
