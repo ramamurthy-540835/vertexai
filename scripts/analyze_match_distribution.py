@@ -20,6 +20,7 @@ import json
 import logging
 import os
 import sys
+import time
 from typing import Any
 import argparse
 
@@ -560,11 +561,28 @@ def write_analysis_audit_metadata(
 
 def write_narrative_to_gcs(narrative: str, bucket_name: str, gcs_path: str):
     """Write narrative markdown to GCS."""
-    client = storage.Client()
-    bucket = client.bucket(bucket_name)
-    blob = bucket.blob(gcs_path)
-    blob.upload_from_string(narrative, content_type="text/markdown")
-    logger.info(f"Wrote narrative to gs://{bucket_name}/{gcs_path}")
+    max_attempts = int(os.getenv("GCS_UPLOAD_MAX_ATTEMPTS", "4"))
+    retry_sleep_seconds = float(os.getenv("GCS_UPLOAD_RETRY_SLEEP_SECONDS", "5"))
+
+    for attempt in range(1, max_attempts + 1):
+        try:
+            client = storage.Client()
+            bucket = client.bucket(bucket_name)
+            blob = bucket.blob(gcs_path)
+            blob.upload_from_string(narrative, content_type="text/markdown")
+            logger.info(f"Wrote narrative to gs://{bucket_name}/{gcs_path}")
+            return
+        except Exception as e:
+            if attempt >= max_attempts:
+                raise
+            logger.warning(
+                "GCS narrative upload failed on attempt %s/%s: %s; retrying in %.1fs",
+                attempt,
+                max_attempts,
+                e,
+                retry_sleep_seconds,
+            )
+            time.sleep(retry_sleep_seconds * attempt)
 
 
 def main():
