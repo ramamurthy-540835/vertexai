@@ -213,27 +213,40 @@ def generate_per_row_reasoning(row: dict, rules: dict, weights: dict, gate_thres
     name_score = float(row.get("business_name_score", 0))
     combined_score = float(row.get("combined_field_score", 0))
     final_score = float(row.get("final_score", 0))
+    email_boost = float(row.get("email_boost", 0))
+    phone_boost = float(row.get("phone_boost", 0))
     band = row.get("band", "Unknown")
 
+    fuzzy_cap = float(rules.get("decision_rules", {}).get("fuzzy_max_score", 99.999))
     addr_w = weights["addr_weight"]
     name_w = weights["name_weight"]
     denom = weights["denom"]
 
-    # Verify arithmetic
-    expected = (addr_w * addr_score + name_w * name_score) / denom
+    # Verify arithmetic: weighted average + boosts, capped at fuzzy_max_score
+    base_score = (addr_w * addr_score + name_w * name_score) / denom
+    expected = min(fuzzy_cap, round(base_score + email_boost + phone_boost, 2))
     if abs(expected - final_score) > 0.01:
         logger.warning(
             f"Arithmetic mismatch for pos_id={row.get('pos_id')}: "
-            f"({addr_w}*{addr_score}+{name_w}*{name_score})/{denom}={expected} "
+            f"min({fuzzy_cap}, round(({addr_w}*{addr_score}+{name_w}*{name_score})/{denom}"
+            f"+{email_boost}+{phone_boost}, 2))={expected} "
             f"but stored final_score={final_score}"
         )
 
     # Determine driver
     driver = "address-driven" if addr_score >= name_score else "name-driven"
 
+    boost_parts = []
+    if email_boost:
+        boost_parts.append(f"email +{email_boost:.0f}")
+    if phone_boost:
+        boost_parts.append(f"phone +{phone_boost:.0f}")
+    boost_str = f" Boosts: {', '.join(boost_parts)}; capped {fuzzy_cap}." if boost_parts else ""
+
     reasoning = (
         f"Address {addr_score:.2f} (w{addr_w}) + Name {name_score:.2f} (w{name_w}) "
-        f"=> ({addr_w}*{addr_score:.2f}+{name_w}*{name_score:.2f})/{denom} = {final_score:.2f}. "
+        f"=> ({addr_w}*{addr_score:.2f}+{name_w}*{name_score:.2f})/{denom} = {base_score:.2f}."
+        f"{boost_str} Final: {final_score:.2f}. "
         f"Band: {band}. Recall gate: combined_field {combined_score:.2f} (>= {gate_threshold} pass). "
         f"{driver}."
     )
