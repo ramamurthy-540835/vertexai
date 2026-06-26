@@ -466,33 +466,50 @@ def write_reasoning_to_cloud_sql(
     rows_updated = 0
     batch_size = rules["environment"]["tuning"]["analysis_db_batch_size"]
 
-    with engine.begin() as conn:
-        for i in range(0, len(df), batch_size):
-            batch = df.iloc[i : i + batch_size]
+    reasoning_df = df[["lead_id", "pos_id", "match_reasoning"]].copy()
+    reasoning_df["match_run_id"] = match_run_id
 
-            for _, row in batch.iterrows():
-                try:
-                    query = sqlalchemy.text(f"""
-                        UPDATE "{schema}"."match_decision_detail"
-                        SET "match_reasoning" = :reasoning
-                        WHERE "match_run_id" = :run_id
-                          AND "lead_id" = :lead_id
-                          AND "pos_id" = :pos_id
-                    """)
-                    conn.execute(
-                        query,
-                        {
-                            "reasoning": row["match_reasoning"],
-                            "run_id": match_run_id,
-                            "lead_id": row["lead_id"],
-                            "pos_id": row["pos_id"],
-                        },
-                    )
-                    rows_updated += 1
-                except Exception as e:
-                    logger.error(
-                        f"Failed to update pos_id={row['pos_id']}, lead_id={row['lead_id']}: {e}"
-                    )
+    with engine.begin() as conn:
+        conn.execute(sqlalchemy.text(f"""
+            CREATE TEMP TABLE "_temp_reasoning" (
+                match_run_id text,
+                lead_id text,
+                pos_id text,
+                match_reasoning text
+            ) ON COMMIT DROP
+        """))
+        logger.info("Created temp table _temp_reasoning")
+
+        for i in range(0, len(reasoning_df), batch_size):
+            batch = reasoning_df.iloc[i : i + batch_size]
+            values = [
+                {
+                    "run_id": row["match_run_id"],
+                    "lead_id": row["lead_id"],
+                    "pos_id": row["pos_id"],
+                    "reasoning": row["match_reasoning"],
+                }
+                for _, row in batch.iterrows()
+            ]
+            conn.execute(
+                sqlalchemy.text(
+                    'INSERT INTO "_temp_reasoning" (match_run_id, lead_id, pos_id, match_reasoning) '
+                    "VALUES (:run_id, :lead_id, :pos_id, :reasoning)"
+                ),
+                values,
+            )
+            logger.info("Inserted reasoning batch %d/%d (%d rows)", i // batch_size + 1, (len(reasoning_df) + batch_size - 1) // batch_size, len(batch))
+
+        result = conn.execute(sqlalchemy.text(f"""
+            UPDATE "{schema}"."match_decision_detail" m
+            SET "match_reasoning" = t.match_reasoning
+            FROM "_temp_reasoning" t
+            WHERE m.match_run_id = t.match_run_id
+              AND m.lead_id = t.lead_id
+              AND m.pos_id = t.pos_id
+        """))
+        rows_updated = result.rowcount
+        logger.info("Batch UPDATE applied: %d rows updated", rows_updated)
 
     logger.info(
         f"Wrote match_reasoning for {rows_updated} rows "
