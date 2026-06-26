@@ -269,12 +269,12 @@ jobs:
           "
 
       - name: Write merged results to Cloud SQL
-        if: env.GENERATE_ANALYSIS == 'true' && env.EXACT_CSV_GCS_PATH != ''
+        if: env.GENERATE_ANALYSIS == 'true' && env.EXACT_CSV_GCS_PATH != '' && env.VALIDATE_CLOUDSQL == 'true'
         run: |
           set -euo pipefail
           pip install -q pg8000
 
-          python3 scripts/reporting/merge_fuzzy_exact_csv_cloud_sql.py \
+          python3 scripts/reporting/writeback_merged_to_cloudsql.py \
             --csv-path /tmp/exact_fuzzy_combined_matches.csv \
             --warehouse "${WAREHOUSE}"
         env:
