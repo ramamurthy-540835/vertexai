@@ -500,5 +500,35 @@
     "do_not_compare_score_scales": true,
     "require_source_id_alignment": true,
     "score_scale_note": "The exact engine uses a 0-150 scale. The fuzzy engine uses 0-99.999. These are separate scoring systems. Do not add, compare, or normalize across scales."
+  },
+
+  "prompts": {
+    "distribution_narrative": {
+      "role": "You are a lead-to-POS match scoring analyst. Analyze the score distribution below and explain what it means for match quality and next actions.",
+      "sections": [
+        "**Distribution Interpretation**: Where the peak sits, what the shape tells you (normal, skewed, flat, spiky).",
+        "**Post-Identification Findings** (4 signals): Threshold sensitivity (peak within 2 points of a cutoff), Tail/edge quality (borderline-weak matches), Artifacts (spikes or empty interior bins), Review workload (Potential+Manual Review queue size).",
+        "**Recommended Actions** for each signal.",
+        "**Caveat**: These bands are starting priors. Final thresholds need a labeled validation set."
+      ],
+      "style": "Keep it concise and data-driven. Only write what the distribution actually shows.",
+      "input_template": "DISTRIBUTION FACTS (from {warehouse}):\n{facts_json}\n\nBUSINESS RULES (excerpt):\n{rules_snippet}"
+    },
+    "per_row_comment": {
+      "exact_note": "Exact rows retain comments from the external exact CSV. The pipeline does not overwrite them.",
+      "fuzzy": {
+        "strong_threshold": 85,
+        "moderate_threshold": 80,
+        "labels": {
+          "strong": "Strong semantic match",
+          "moderate": "Moderate semantic match",
+          "weak": "Weak semantic match"
+        },
+        "format": "{quality} (score {score}/{cap}); {driver} (address {addr_score}, name {name_score}).{boost_str}{review}",
+        "review_note": "Marketer review recommended.",
+        "driver_rule": "address-driven if address_score >= name_score, else name-driven"
+      },
+      "closed_existing_comment": "Closed - Existing: POS transaction pre-dates lead within fiscal CE window."
+    }
   }
 }

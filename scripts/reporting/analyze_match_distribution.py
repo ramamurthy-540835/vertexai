@@ -203,31 +203,33 @@ def generate_per_row_reasoning(row: dict, rules: dict, weights: dict, gate_thres
     For fuzzy/MR rows: generates a comment matching the exact CSV's style.
     """
     match_type = row.get("match_type", "Unknown")
+    comment_cfg = rules.get("prompts", {}).get("per_row_comment", {})
 
     if match_type == rules["decision_rules"]["exact_match_type"]:
         return ""
 
     if match_type == "Closed - Existing":
-        return "Closed - Existing: POS transaction pre-dates lead within fiscal CE window."
+        return str(comment_cfg.get("closed_existing_comment", "Closed - Existing: POS transaction pre-dates lead within fiscal CE window."))
+
+    fuzzy_cfg = comment_cfg.get("fuzzy", {})
+    labels = fuzzy_cfg.get("labels", {})
+    strong_threshold = float(fuzzy_cfg.get("strong_threshold", 85))
+    moderate_threshold = float(fuzzy_cfg.get("moderate_threshold", 80))
+    review_note = str(fuzzy_cfg.get("review_note", "Marketer review recommended."))
 
     addr_score = float(row.get("full_address_score", 0))
     name_score = float(row.get("business_name_score", 0))
     final_score = float(row.get("final_score", 0))
     email_boost = float(row.get("email_boost", 0))
     phone_boost = float(row.get("phone_boost", 0))
-
     fuzzy_cap = float(rules["decision_rules"]["fuzzy_max_score"])
-    addr_w = weights["addr_weight"]
-    name_w = weights["name_weight"]
-    denom = weights["denom"]
-    base_score = (addr_w * addr_score + name_w * name_score) / denom
 
-    if final_score >= 85:
-        quality = "Strong semantic match"
-    elif final_score >= 80:
-        quality = "Moderate semantic match"
+    if final_score >= strong_threshold:
+        quality = labels.get("strong", "Strong semantic match")
+    elif final_score >= moderate_threshold:
+        quality = labels.get("moderate", "Moderate semantic match")
     else:
-        quality = "Weak semantic match"
+        quality = labels.get("weak", "Weak semantic match")
 
     driver = "address-driven" if addr_score >= name_score else "name-driven"
 
@@ -239,8 +241,8 @@ def generate_per_row_reasoning(row: dict, rules: dict, weights: dict, gate_thres
     boost_str = f" Confirmers: {', '.join(boost_parts)}." if boost_parts else ""
 
     review = ""
-    if match_type == "Manual Review" or final_score < 85:
-        review = " Marketer review recommended."
+    if match_type == "Manual Review" or final_score < strong_threshold:
+        review = f" {review_note}"
 
     reasoning = (
         f"{quality} (score {final_score:.2f}/{fuzzy_cap}); "
@@ -358,32 +360,23 @@ def call_gemini_analysis(facts: dict, rules: dict, warehouse: str = "Unknown") -
     facts_json = json.dumps(facts, indent=2)
     rules_snippet = json.dumps(rules.get("decision_rules", {}), indent=2)[:500]
 
-    subtiers = _extract_subtiers(rules)
-    fuzzy_floor = float(rules["decision_rules"]["fuzzy_qualify_min_score"])
-    cutoffs = sorted(set(int(float(s["min_score"])) for s in subtiers if float(s["min_score"]) > fuzzy_floor))
-    cutoff_str = " or ".join(str(c) for c in cutoffs)
-    low_max = max((float(s["max_score"]) for s in subtiers if s["name"] == "Low"), default=84.999)
-    mid_max = max((float(s["max_score"]) for s in subtiers if s["name"] == "Medium"), default=89.999)
+    prompt_config = rules.get("prompts", {}).get("distribution_narrative", {})
+    role = prompt_config.get("role", "You are a lead-to-POS match scoring analyst.")
+    sections = prompt_config.get("sections", [])
+    style = prompt_config.get("style", "Keep it concise and data-driven.")
+    input_tpl = prompt_config.get("input_template", "DISTRIBUTION FACTS:\n{facts_json}\n\nBUSINESS RULES:\n{rules_snippet}")
 
-    prompt = f"""You are a lead-to-POS match scoring analyst. Analyze the score distribution below and explain what it means for match quality and next actions.
+    input_block = input_tpl.format(warehouse=warehouse, facts_json=facts_json, rules_snippet=rules_snippet)
+    sections_block = "\n".join(f"{i+1}. {s}" for i, s in enumerate(sections)) if sections else ""
 
-DISTRIBUTION FACTS (from {warehouse}):
-{facts_json}
+    prompt = f"""{role}
 
-BUSINESS RULES (excerpt):
-{rules_snippet}
+{input_block}
 
 Write a brief markdown narrative covering:
-1. **Distribution Interpretation**: Where the peak sits, what the shape tells you (normal, skewed, flat, spiky).
-2. **Post-Identification Findings** (4 signals):
-   - Threshold sensitivity: Does the peak sit within 2 points of a cutoff ({cutoff_str})? If so, small score shifts move many rows between bands.
-   - Tail/edge quality: How many borderline-weak matches ({fuzzy_floor:.0f}-{low_max})? Thin tail = clean data; fat tail = edge quality issue.
-   - Artifacts: Any spikes (single bin >15% of total) or empty interior bins? Flag if found, else confirm no artifact.
-   - Review workload: How many rows fall in Potential+Manual Review ({fuzzy_floor:.0f}-{mid_max})? That's the human queue size.
-3. **Recommended Actions** for each signal.
-4. **Caveat**: These bands are starting priors. Final thresholds need a labeled validation set.
+{sections_block}
 
-Keep it concise and data-driven. Only write what the distribution actually shows."""
+{style}"""
 
     try:
         client = genai.Client(
