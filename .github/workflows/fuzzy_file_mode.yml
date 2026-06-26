@@ -111,6 +111,59 @@ jobs:
           print(f"  boosts: email=+{boosts.get('email_exact_match')}, phone=+{boosts.get('phone_exact_match')}, cap={boosts.get('cap')}")
           PYEOF
 
+      - name: Preflight – verify exact-match input CSV in GCS
+        run: |
+          set -euo pipefail
+          gcloud config set project "${PROJECT_ID}"
+
+          GCS_PATH="gs://${BUCKET_NAME}/match/final_match_result/"
+          echo "Checking for exact-match input CSV at: ${GCS_PATH}"
+
+          CSV_LIST=$(gcloud storage ls "${GCS_PATH}primary_match_output_*.csv" 2>/dev/null || true)
+
+          if [[ -z "${CSV_LIST}" ]]; then
+            echo "::error::No primary_match_output_*.csv found at ${GCS_PATH}"
+            echo "::error::Upload the exact-match CSV first:"
+            echo "::error::  gcloud storage cp primary_match_output_<uuid>.csv ${GCS_PATH}"
+            exit 1
+          fi
+
+          CSV_COUNT=$(echo "${CSV_LIST}" | wc -l)
+          echo "Found ${CSV_COUNT} exact-match CSV file(s):"
+          echo "${CSV_LIST}"
+
+          LATEST_CSV=$(echo "${CSV_LIST}" | tail -1)
+          echo "EXACT_INPUT_CSV=${LATEST_CSV}" >> "$GITHUB_ENV"
+          echo "Using: ${LATEST_CSV}"
+
+          echo "Downloading for row count validation..."
+          gcloud storage cp "${LATEST_CSV}" /tmp/exact_input.csv
+          ROWS=$(wc -l < /tmp/exact_input.csv)
+          ROWS=$((ROWS - 1))
+          echo "Exact-match input rows: ${ROWS}"
+
+          if [[ ${ROWS} -le 0 ]]; then
+            echo "::error::Exact-match CSV is empty"
+            exit 1
+          fi
+
+          python3 -c "
+          import csv, sys
+          with open('/tmp/exact_input.csv') as f:
+              reader = csv.DictReader(f)
+              headers = reader.fieldnames
+              required = ['lead_id', 'pos_id', 'match_result', 'match_type', 'similarity_score', 'warehouse_number']
+              missing = [h for h in required if h not in headers]
+              if missing:
+                  print(f'::error::Exact CSV missing columns: {missing}')
+                  sys.exit(1)
+              rows = list(reader)
+              wh_rows = [r for r in rows if str(r.get('warehouse_number','')) == '${WAREHOUSE}']
+              print(f'Exact CSV: {len(rows)} total rows, {len(wh_rows)} for warehouse ${WAREHOUSE}')
+              if not wh_rows:
+                  print(f'::warning::No rows for warehouse ${WAREHOUSE} in exact CSV')
+          "
+
       - name: Build match run ID
         run: |
           MATCH_RUN_ID="github-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${WAREHOUSE}"
