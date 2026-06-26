@@ -144,7 +144,7 @@ def clean_val(val):
         return None
     return val_str
 
-def load_leads(cursor, conn, leads_file, limit=None):
+def load_leads(cursor, conn, leads_file, limit=None, preserve_source_ids=False):
     print(f"\nReading Lead Mock Data: {leads_file}...")
     try:
         df_leads_raw = pd.read_excel(leads_file)
@@ -228,7 +228,10 @@ def load_leads(cursor, conn, leads_file, limit=None):
             act_id = account_map[key]
 
         # Prepare Lead row
-        lead_id = make_id("LEAD", run_suffix, lead_idx)
+        if preserve_source_ids and row.get('lead_id'):
+            lead_id = str(row['lead_id'])
+        else:
+            lead_id = make_id("LEAD", run_suffix, lead_idx)
         lead_idx += 1
         leads_to_insert.append((
             lead_id,                            # lead_id
@@ -316,7 +319,7 @@ def load_leads(cursor, conn, leads_file, limit=None):
         conn.rollback()
         return False
 
-def load_pos(cursor, conn, pos_file, limit=None):
+def load_pos(cursor, conn, pos_file, limit=None, preserve_source_ids=False):
     print(f"\nReading POS Mock Data: {pos_file}...")
     try:
         # We read the file in chunks or read completely since memory is adequate
@@ -343,7 +346,10 @@ def load_pos(cursor, conn, pos_file, limit=None):
 
     print("Mapping POS data into pos_transactions and transaction tables...")
     for idx, row in df_pos.iterrows():
-        pos_id = make_id("POS", run_suffix, pos_idx)
+        if preserve_source_ids and row.get('pos_id'):
+            pos_id = str(row['pos_id'])
+        else:
+            pos_id = make_id("POS", run_suffix, pos_idx)
         pos_idx += 1
         
         # Mapping properties for pos_transactions (32 fields)
@@ -569,6 +575,9 @@ def main():
                         help="Connect and print table counts without loading data")
     parser.add_argument('--clean', action='store_true',
                         help="Delete existing data for this warehouse before loading (requires --warehouse-number)")
+    parser.add_argument('--preserve-source-ids', action='store_true',
+                        help="Use lead_id and pos_id from workbooks instead of generating new IDs. "
+                             "Required for ID alignment with external exact-match output.")
     args = parser.parse_args()
     target = args.target or args.table
 
@@ -609,13 +618,17 @@ def main():
             sys.exit(1)
         clean_warehouse(cursor, conn, warehouse_number)
 
+    preserve = getattr(args, 'preserve_source_ids', False)
+    if preserve:
+        print(f"Source ID preservation: ENABLED (workbook lead_id/pos_id will be used as-is)")
+
     success = True
     if target in ['lead', 'all']:
-        success_lead = load_leads(cursor, conn, leads_file, args.limit)
+        success_lead = load_leads(cursor, conn, leads_file, args.limit, preserve_source_ids=preserve)
         success = success and success_lead
 
     if target in ['pos', 'all']:
-        success_pos = load_pos(cursor, conn, pos_file, args.limit)
+        success_pos = load_pos(cursor, conn, pos_file, args.limit, preserve_source_ids=preserve)
         success = success and success_pos
 
     if success:
