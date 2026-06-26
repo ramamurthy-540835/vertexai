@@ -21,13 +21,18 @@ import logging
 import os
 import sys
 import time
+from pathlib import Path
 from typing import Any
 import argparse
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import pandas as pd
 from google.cloud import storage
 from google.cloud.sql.connector import Connector
 import sqlalchemy
+
+from lead_match_runtime.business_rules import load_business_rules
 
 logging.basicConfig(
     level=logging.INFO,
@@ -112,11 +117,9 @@ def _build_cloud_sql_engine() -> sqlalchemy.Engine | None:
         return None
 
 
-def load_rules_json(rules_path: str) -> dict:
-    """Load match rules JSON and extract weights/formula/gate."""
-    with open(rules_path) as f:
-        rules = json.load(f)
-    return rules
+def load_rules_json(rules_path: str | None = None) -> dict:
+    """Load match rules JSON via the central business_rules loader."""
+    return load_business_rules(rules_path)
 
 
 def _extract_scoring_params(rules: dict) -> tuple[float, float, float]:

@@ -12,6 +12,7 @@ import argparse
 import csv
 import json
 import os
+import sys
 import textwrap
 import shutil
 import urllib.error
@@ -22,8 +23,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-DEFAULT_RULES_PATH = Path(__file__).resolve().parents[2] / "lead_match_runtime" / "lead_to_pos_match_rules.json"
-_RAW_RULES = json.loads(DEFAULT_RULES_PATH.read_text(encoding="utf-8"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from lead_match_runtime.business_rules import load_business_rules
+
+_RAW_RULES = load_business_rules()
 
 
 @dataclass
@@ -77,8 +81,8 @@ def load_artifacts(report_dir: Path) -> tuple[dict[str, Any], list[dict[str, str
     return summary, rows
 
 
-def load_report_rules(path: Path) -> ReportRules:
-    config = json.loads(path.read_text(encoding="utf-8"))
+def load_report_rules(path: Path | None = None) -> ReportRules:
+    config = load_business_rules(path)
     decision = config["decision_rules"]
     fields = config["embeddings"]["fields"]
     subtiers = decision.get("optional_confidence_subtiers", {}).get("subtiers", [])
@@ -609,7 +613,7 @@ def parse_args() -> argparse.Namespace:
         help="Folder containing summary.json and matches.csv",
     )
     parser.add_argument("--output", default="", help="Output markdown path. Defaults inside report-dir.")
-    parser.add_argument("--rules-path", default=str(DEFAULT_RULES_PATH), help="Business rules JSON path")
+    parser.add_argument("--rules-path", default="", help="Business rules JSON path (empty = default from business_rules.py)")
     parser.add_argument("--sample-per-band", type=int, default=1)
     parser.add_argument("--include-raw-json", action="store_true", help="Include raw summary and validation JSON")
     parser.add_argument("--cleanup-old-reports", action="store_true", help="Archive older person-specific markdown files")
@@ -626,7 +630,7 @@ def main() -> int:
     output_path = Path(args.output) if args.output else report_dir / "fuzzy_match_business_report.md"
 
     summary, rows = load_artifacts(report_dir)
-    rules = load_report_rules(Path(args.rules_path))
+    rules = load_report_rules(Path(args.rules_path) if args.rules_path else None)
     validation = validate_rows(summary, rows, rules)
     samples = choose_samples(rows, args.sample_per_band, rules)
     deterministic = deterministic_reply(summary, validation, samples, rules)

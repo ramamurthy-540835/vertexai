@@ -24,13 +24,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-DEFAULT_RULES_PATH = Path(__file__).resolve().parents[2] / "lead_match_runtime" / "lead_to_pos_match_rules.json"
+from lead_match_runtime.business_rules import load_business_rules
 
 
 def load_merge_config(rules_path=None):
-    path = Path(rules_path) if rules_path else DEFAULT_RULES_PATH
-    with open(path, encoding="utf-8") as f:
-        rules = json.load(f)
+    rules = load_business_rules(rules_path)
     merge_rule = rules.get("override_policy", {}).get("merge_rule", {})
     return {
         "strategy": merge_rule.get("strategy", "highest_score_wins"),
