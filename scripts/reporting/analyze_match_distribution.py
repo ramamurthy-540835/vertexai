@@ -463,16 +463,18 @@ def write_reasoning_to_cloud_sql(
     reasoning_df["match_run_id"] = match_run_id
 
     with engine.begin() as conn:
-        conn.execute(sqlalchemy.text(f"""
+        conn.execute(sqlalchemy.text('DROP TABLE IF EXISTS "_temp_reasoning"'))
+        conn.execute(sqlalchemy.text("""
             CREATE TEMP TABLE "_temp_reasoning" (
                 match_run_id text,
                 lead_id text,
                 pos_id text,
                 match_reasoning text
-            ) ON COMMIT DROP
+            )
         """))
         logger.info("Created temp table _temp_reasoning")
 
+        total_batches = (len(reasoning_df) + batch_size - 1) // batch_size
         for i in range(0, len(reasoning_df), batch_size):
             batch = reasoning_df.iloc[i : i + batch_size]
             values = [
@@ -491,7 +493,7 @@ def write_reasoning_to_cloud_sql(
                 ),
                 values,
             )
-            logger.info("Inserted reasoning batch %d/%d (%d rows)", i // batch_size + 1, (len(reasoning_df) + batch_size - 1) // batch_size, len(batch))
+            logger.info("Inserted reasoning batch %d/%d (%d rows)", i // batch_size + 1, total_batches, len(batch))
 
         result = conn.execute(sqlalchemy.text(f"""
             UPDATE "{schema}"."match_decision_detail" m
@@ -503,6 +505,8 @@ def write_reasoning_to_cloud_sql(
         """))
         rows_updated = result.rowcount
         logger.info("Batch UPDATE applied: %d rows updated", rows_updated)
+
+        conn.execute(sqlalchemy.text('DROP TABLE IF EXISTS "_temp_reasoning"'))
 
     logger.info(
         f"Wrote match_reasoning for {rows_updated} rows "
@@ -619,8 +623,11 @@ def write_narrative_to_gcs(narrative: str, bucket_name: str, gcs_path: str):
 def write_enriched_matches_to_gcs(df: pd.DataFrame, bucket_name: str, gcs_path: str):
     """Write matches enriched by Stage 3 reasoning/comments to GCS."""
     output = df.copy()
+    if "match_reasoning" not in output.columns:
+        output["match_reasoning"] = ""
     if "matching_comments" not in output.columns:
         output["matching_comments"] = ""
+    output["match_reasoning"] = output["match_reasoning"].fillna("").astype(str)
     output["matching_comments"] = output["matching_comments"].fillna("").astype(str)
     needs_comment = output["matching_comments"].str.strip() == ""
     output.loc[needs_comment, "matching_comments"] = output.loc[needs_comment, "match_reasoning"]

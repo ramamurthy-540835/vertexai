@@ -114,7 +114,7 @@ jobs:
       - name: Install Python dependencies
         run: |
           set -euo pipefail
-          python -m pip install --upgrade pip
+          python3 -m pip install --upgrade pip
           pip install pandas google-cloud-storage cloud-sql-python-connector[pg8000] sqlalchemy google-genai
 
       - name: Verify match run artifacts are ready
@@ -181,7 +181,7 @@ jobs:
         if: env.GENERATE_ANALYSIS == 'true'
         run: |
           set -euo pipefail
-          python scripts/reporting/analyze_match_distribution.py \
+          python3 scripts/reporting/analyze_match_distribution.py \
             --bucket "${BUCKET_NAME}" \
             --project "${PROJECT_ID}" \
             --warehouse "${WAREHOUSE}" \
@@ -272,7 +272,7 @@ jobs:
         if: env.GENERATE_ANALYSIS == 'true' && env.VALIDATE_CLOUDSQL == 'true'
         run: |
           set -euo pipefail
-          python scripts/monitoring/validate_match_analysis.py \
+          python3 scripts/monitoring/validate_match_analysis.py \
             --warehouse "${WAREHOUSE}" \
             --run-id "${RUN_ID}" \
             --matches-csv matches.csv \

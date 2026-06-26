@@ -66,6 +66,18 @@ def load_csv(path):
         return list(csv.DictReader(f))
 
 
+REQUIRED_MERGE_COLUMNS = {"lead_id", "pos_id", "similarity_score"}
+
+
+def validate_csv(rows, label):
+    if not rows:
+        print(f"  WARNING: {label} is empty (0 rows)")
+        return
+    missing = REQUIRED_MERGE_COLUMNS - set(rows[0].keys())
+    if missing:
+        raise ValueError(f"{label} missing required columns: {sorted(missing)}")
+
+
 def merge(exact_rows, fuzzy_rows, warehouse=None, merge_config=None):
     cfg = merge_config or load_merge_config()
     carry_forward = cfg.get("comment_carry_forward", True)
@@ -94,23 +106,29 @@ def merge(exact_rows, fuzzy_rows, warehouse=None, merge_config=None):
     for r in fuzzy_rows:
         lead = r.get("lead_id", "").strip()
         pos = r.get("pos_id", "").strip()
-        if not lead or not pos:
+        if not lead:
             continue
-        key = (lead, pos)
+        key = (lead, pos) if pos else (lead, f"__ce__{lead}")
         score = safe_float(r.get("similarity_score"))
         if key not in best or score > safe_float(best[key].get("similarity_score")):
             best[key] = dict(r)
             source_tag[key] = "fuzzy"
 
     carried = 0
+    discarded = 0
     if carry_forward:
         for key, row in best.items():
-            if not row.get("matching_comments", "").strip() and key in exact_comments:
-                row["matching_comments"] = exact_comments[key]
-                carried += 1
+            if key in exact_comments:
+                if not row.get("matching_comments", "").strip():
+                    row["matching_comments"] = exact_comments[key]
+                    carried += 1
+                elif source_tag[key] == "fuzzy":
+                    discarded += 1
 
     if carried:
         print(f"  Carried forward {carried} comments (comment_carry_forward={carry_forward} from rules JSON)")
+    if discarded:
+        print(f"  Discarded {discarded} exact comments (fuzzy row won with its own comment)")
 
     rows = list(best.values())
     rows.sort(key=lambda r: (-safe_float(r.get("similarity_score")), r.get("lead_id", ""), r.get("pos_id", "")))
@@ -167,6 +185,8 @@ def main():
 
     exact_rows = load_csv(args.exact_csv)
     fuzzy_rows = load_csv(args.fuzzy_csv)
+    validate_csv(exact_rows, "exact CSV")
+    validate_csv(fuzzy_rows, "fuzzy CSV")
 
     merged_rows, sources = merge(exact_rows, fuzzy_rows, args.warehouse, merge_config=cfg)
     print_summary(exact_rows, fuzzy_rows, merged_rows, sources, args.warehouse)
