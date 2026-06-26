@@ -77,6 +77,49 @@ def _state_counts(cursor) -> dict[str, int]:
     return {str(row[0]): int(row[1]) for row in cursor.fetchall()}
 
 
+def _build_matching_comments(row: dict) -> str:
+    match_type = str(row.get("match_type") or "").strip()
+    score = row.get("final_score") or 0
+    parts = []
+    if match_type.lower() == "exact":
+        parts.append(f"Complete Match (score {score}/{score}).")
+        fields = []
+        if row.get("pos_business_name"):
+            fields.append("business_name -> oms_company")
+        if row.get("address_line_one"):
+            fields.append("address_line_one -> oms_address_line_1")
+        if row.get("email"):
+            fields.append("email -> oms_email_1")
+        if row.get("phone"):
+            fields.append("phone -> oms_phone_1")
+        if row.get("zip_code"):
+            fields.append("zip_code -> oms_zip")
+        if row.get("city"):
+            fields.append("city -> oms_city")
+        if row.get("state"):
+            fields.append("state -> oms_state")
+        if fields:
+            parts.append("Fields matched: " + ", ".join(fields) + ".")
+    else:
+        winning_set = row.get("winning_set") or ""
+        name_score = row.get("business_name_score")
+        addr_score = row.get("full_address_score")
+        email_boost = row.get("email_boost") or 0
+        phone_boost = row.get("phone_boost") or 0
+        parts.append(f"Fuzzy match (set {winning_set}, score {score:.2f}).")
+        if name_score is not None:
+            parts.append(f"name_score={name_score:.1f}")
+        if addr_score is not None:
+            parts.append(f"addr_score={addr_score:.1f}")
+        if email_boost:
+            parts.append(f"email_boost=+{email_boost:.0f}")
+        if phone_boost:
+            parts.append(f"phone_boost=+{phone_boost:.0f}")
+    if row.get("primary_transaction"):
+        parts.append("Designated as primary transaction (earliest fiscal period for this lead).")
+    return " ".join(parts)
+
+
 def _fetch_match_rows(cursor, schema: str, match_run_id: str) -> list[dict]:
     params = [match_run_id]
     clause = _scope_clause("m", params)
@@ -95,7 +138,9 @@ def _fetch_match_rows(cursor, schema: str, match_run_id: str) -> list[dict]:
                 m.business_name_score,
                 COALESCE(m.email_boost, 0) AS email_boost,
                 COALESCE(m.phone_boost, 0) AS phone_boost,
+                m.winning_set,
                 m.embedding_model,
+                m.lifecycle_state,
                 m.created_date,
                 l.fiscal_year AS lead_fiscal_year,
                 l.fiscal_period AS lead_fiscal_period,
@@ -105,7 +150,26 @@ def _fetch_match_rows(cursor, schema: str, match_run_id: str) -> list[dict]:
                 COALESCE(t.week, 0) AS pos_week,
                 a.business_name AS lead_business_name,
                 t.business_name AS pos_business_name,
-                t.order_amount
+                t.order_amount,
+                t.account_number,
+                t.transaction_count,
+                t.membership_number,
+                t.sales_reference_id,
+                t.shop_type,
+                t.bd_industry,
+                t.industry_description,
+                t.first_name,
+                t.last_name,
+                t.address_line_one,
+                t.address_line_two,
+                t.city,
+                t.state,
+                t.zip_code,
+                t.email,
+                t.phone,
+                t.primary_transaction AS tx_primary_transaction,
+                CASE WHEN m.lifecycle_state = 'Closed - Existing' THEN true ELSE false END AS closed_existing_flag,
+                t.updated_date AS tx_updated_date
             FROM "{schema}"."match_decision_detail" m
             JOIN "{schema}"."lead" l ON l.lead_id = m.lead_id
             JOIN "{schema}"."account" a ON a.account_id = l.account_id
@@ -113,29 +177,7 @@ def _fetch_match_rows(cursor, schema: str, match_run_id: str) -> list[dict]:
             WHERE m.match_run_id = %s
               {clause}
         )
-        SELECT
-            match_run_id,
-            lead_id,
-            pos_id,
-            warehouse_number,
-            match_type,
-            final_score,
-            combined_field_score,
-            full_address_score,
-            business_name_score,
-            email_boost,
-            phone_boost,
-            embedding_model,
-            lead_fiscal_year,
-            lead_fiscal_period,
-            lead_week,
-            pos_fiscal_year,
-            pos_fiscal_period,
-            pos_week,
-            lead_business_name,
-            pos_business_name,
-            order_amount,
-            created_date
+        SELECT *
         FROM base
         ORDER BY final_score DESC, lead_id, pos_id
         """,
@@ -156,11 +198,19 @@ def _fetch_match_rows(cursor, schema: str, match_run_id: str) -> list[dict]:
             )
             if normalized is not None:
                 row["final_score"] = normalized
-        row["lifecycle_state"] = lifecycle_state_for_match_type(
-            row.get("match_type"),
-            row.get("final_score"),
-            BUSINESS_RULES,
-        )
+        if not row.get("lifecycle_state"):
+            row["lifecycle_state"] = lifecycle_state_for_match_type(
+                row.get("match_type"),
+                row.get("final_score"),
+                BUSINESS_RULES,
+            )
+        score = row.get("final_score") or 0
+        if match_type in FUZZY_MATCH_TYPES:
+            row["match_result"] = "Potential"
+        elif score >= 100:
+            row["match_result"] = "Match"
+        else:
+            row["match_result"] = ""
     closed_state = exact_lifecycle_state(BUSINESS_RULES)
     closed_rows_by_lead: dict = {}
     for row in rows:
@@ -178,36 +228,58 @@ def _fetch_match_rows(cursor, schema: str, match_run_id: str) -> list[dict]:
         )
         if ordered:
             ordered[0]["primary_transaction"] = True
+    for row in rows:
+        row["matched_by"] = "System"
+        row["matching_comments"] = _build_matching_comments(row)
+        row["similarity_score"] = row.get("final_score", 0)
+        row["business_name_transaction"] = row.get("pos_business_name", "")
+        oa = row.get("order_amount") or 0
+        row["u_matched_lead_number"] = row.get("lead_id", "")
+        row["u_order_amount"] = oa
+        row["u_order_amount_rounded"] = round(float(oa), 2) if oa else 0
+        row["fiscal_year_transaction"] = row.get("pos_fiscal_year", "")
+        row["fiscal_period_transaction"] = row.get("pos_fiscal_period", "")
+        row["week"] = row.get("pos_week", "")
+        if row.get("tx_updated_date"):
+            row["updated_date"] = row["tx_updated_date"]
     return rows
 
 
+PRIMARY_MATCH_OUTPUT_COLUMNS = [
+    "lead_id", "pos_id", "match_result", "similarity_score", "winning_set",
+    "match_type", "primary_transaction", "matched_by", "matching_comments",
+    "closed_existing_flag", "account_number", "transaction_count",
+    "business_name_transaction", "membership_number", "warehouse_number",
+    "sales_reference_id", "fiscal_year_transaction", "fiscal_period_transaction",
+    "week", "shop_type", "bd_industry", "order_amount", "industry_description",
+    "first_name", "last_name", "address_line_one", "address_line_two",
+    "city", "state", "zip_code", "email", "phone",
+    "u_matched_lead_number", "u_order_amount", "u_order_amount_rounded",
+    "updated_date",
+]
+
+INTERNAL_REPORT_COLUMNS = [
+    "match_run_id", "lead_id", "pos_id", "warehouse_number", "match_type",
+    "lifecycle_state", "primary_transaction", "final_score",
+    "combined_field_score", "full_address_score", "business_name_score",
+    "email_boost", "phone_boost", "winning_set", "embedding_model",
+    "lead_fiscal_year", "lead_fiscal_period", "lead_week",
+    "pos_fiscal_year", "pos_fiscal_period", "pos_week",
+    "lead_business_name", "pos_business_name", "order_amount",
+    "created_date",
+]
+
+
 def _write_csv(path: Path, rows: list[dict]) -> None:
-    fieldnames = [
-        "match_run_id",
-        "lead_id",
-        "pos_id",
-        "warehouse_number",
-        "match_type",
-        "lifecycle_state",
-        "primary_transaction",
-        "final_score",
-        "combined_field_score",
-        "full_address_score",
-        "business_name_score",
-        "embedding_model",
-        "lead_fiscal_year",
-        "lead_fiscal_period",
-        "lead_week",
-        "pos_fiscal_year",
-        "pos_fiscal_period",
-        "pos_week",
-        "lead_business_name",
-        "pos_business_name",
-        "order_amount",
-        "created_date",
-    ]
     with path.open("w", newline="") as file:
-        writer = csv.DictWriter(file, fieldnames=fieldnames, extrasaction="ignore")
+        writer = csv.DictWriter(file, fieldnames=PRIMARY_MATCH_OUTPUT_COLUMNS, extrasaction="ignore")
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def _write_internal_csv(path: Path, rows: list[dict]) -> None:
+    with path.open("w", newline="") as file:
+        writer = csv.DictWriter(file, fieldnames=INTERNAL_REPORT_COLUMNS, extrasaction="ignore")
         writer.writeheader()
         writer.writerows(rows)
 
@@ -287,9 +359,11 @@ def run_report() -> dict:
         report_dir.mkdir(parents=True, exist_ok=True)
         summary_path = report_dir / "summary.json"
         csv_path = report_dir / "matches.csv"
+        internal_csv_path = report_dir / "matches_internal.csv"
         md_path = report_dir / "report.md"
         summary_path.write_text(json.dumps(summary, indent=2, default=_json_default) + "\n")
         _write_csv(csv_path, rows)
+        _write_internal_csv(internal_csv_path, rows)
         md_path.write_text(
             "\n".join(
                 [
@@ -350,9 +424,14 @@ def run_report() -> dict:
             summary_name = "summary.json"
             csv_name = "matches.csv"
             md_name = "report.md"
+        if dry_run:
+            internal_csv_name = "dryrun_matches_internal.csv"
+        else:
+            internal_csv_name = "matches_internal.csv"
         summary["report_uris"] = {
             "summary_json": _upload(bucket, summary_path, f"{prefix}/{summary_name}"),
             "matches_csv": _upload(bucket, csv_path, f"{prefix}/{csv_name}"),
+            "matches_internal_csv": _upload(bucket, internal_csv_path, f"{prefix}/{internal_csv_name}"),
             "report_md": _upload(bucket, md_path, f"{prefix}/{md_name}"),
         }
         summary_path.write_text(json.dumps(summary, indent=2, default=_json_default) + "\n")
