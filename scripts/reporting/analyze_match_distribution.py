@@ -716,6 +716,33 @@ def main():
         sys.exit(1)
 
     logger.info(f"Loaded {len(df)} rows from matches.csv")
+
+    comment_cfg = rules.get("prompts", {}).get("per_row_comment", {})
+    internal_source = comment_cfg.get("component_scores_source", "matches_internal.csv")
+    score_fields = comment_cfg.get("component_score_fields", [
+        "full_address_score", "business_name_score", "combined_field_score",
+        "email_boost", "phone_boost", "winning_set",
+    ])
+
+    internal_path = args.matches_csv.replace("matches.csv", internal_source)
+    try:
+        internal_df = read_matches_csv_from_gcs(args.bucket, internal_path)
+        join_cols = ["lead_id", "pos_id"]
+        available_scores = [c for c in score_fields if c in internal_df.columns]
+        internal_scores = internal_df[join_cols + available_scores].copy()
+        for col in available_scores:
+            if col in df.columns:
+                df = df.drop(columns=[col])
+        df = df.merge(internal_scores, on=join_cols, how="left")
+        for col in available_scores:
+            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
+        logger.info(f"Joined {len(available_scores)} component score columns from {internal_source}: {available_scores}")
+    except Exception as e:
+        logger.warning(f"Could not read {internal_source}: {e} — comments will lack component scores")
+        for col in score_fields:
+            if col not in df.columns:
+                df[col] = 0.0
+
     df = ensure_band_column(df, rules)
 
     # Compute distribution facts

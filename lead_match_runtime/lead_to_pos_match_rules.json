@@ -516,6 +516,9 @@
     },
     "per_row_comment": {
       "exact_note": "Exact rows retain comments from the external exact CSV. The pipeline does not overwrite them.",
+      "component_scores_source": "matches_internal.csv",
+      "component_scores_source_note": "Component scores (full_address_score, business_name_score, email_boost, phone_boost, winning_set) are ONLY in matches_internal.csv (25-column format). The 36-column matches.csv does NOT carry these. The analysis script MUST read matches_internal.csv and join on (lead_id, pos_id) to get real component scores for comment generation.",
+      "component_score_fields": ["full_address_score", "business_name_score", "combined_field_score", "email_boost", "phone_boost", "winning_set"],
       "fuzzy": {
         "strong_threshold": 85,
         "moderate_threshold": 80,
