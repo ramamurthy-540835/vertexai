@@ -10,6 +10,117 @@
     "hybrid_note": "Hybrid model: phone and email are matched deterministically and added as boosts; business/company names and full addresses (including OMS variants) are matched semantically via embeddings."
   },
 
+  "environment_selector": {
+    "_note": "Set MATCH_ENV env var to select environment. Default: ctoteam. Options: ctoteam, adt, spt, qat, prd.",
+    "default": "ctoteam",
+    "env_var": "MATCH_ENV",
+    "profiles": {
+      "ctoteam": {
+        "project_id": "ctoteam",
+        "region": "us-central1",
+        "label": "ctoteam-isolated-dev",
+        "cloud_sql": {
+          "connection_name": "ctoteam:us-central1:lead-mgmt-db",
+          "instance": "lead-mgmt-db",
+          "host": "35.188.0.193",
+          "port": 5432,
+          "database": "postgres",
+          "schema": "leadmgmt",
+          "ip_type": "PUBLIC"
+        },
+        "gcs": {
+          "report_bucket": "lead-match-ctoteam",
+          "input_bucket": "lead-match-ctoteam"
+        },
+        "credentials": {
+          "source": "secret_manager",
+          "db_user_source": "env_var",
+          "db_password_secret": "lead-match-db-password"
+        }
+      },
+      "adt": {
+        "project_id": "p-601-np-bcleadsmgmt-adt",
+        "region": "us-central1",
+        "label": "adt-dev",
+        "cloud_sql": {
+          "connection_name": "p-601-np-bcleadsmgmt-adt:us-central1:lead-mgmt-adt",
+          "instance": "lead-mgmt-adt",
+          "database": "lead-mgmt-db",
+          "schema": "lead_mgmt_adt",
+          "ip_type": "PRIVATE"
+        },
+        "gcs": {
+          "report_bucket": "gcp-gcs-lead-mgmt-us-adt",
+          "input_bucket": "gcp-gcs-lead-mgmt-us-adt"
+        },
+        "credentials": {
+          "source": "iam",
+          "db_user": "gco-iam-svc-lead-mgmt-bc-adt@p-601-np-bcleadsmgmt-adt.iam"
+        }
+      },
+      "spt": {
+        "project_id": "p-601-np-bcleadsmgmt-spt",
+        "region": "us-central1",
+        "label": "spt-staging",
+        "cloud_sql": {
+          "connection_name": "p-601-np-bcleadsmgmt-spt:us-central1:lead-mgmt-spt",
+          "instance": "lead-mgmt-spt",
+          "database": "lead-mgmt-db",
+          "schema": "lead_mgmt_spt",
+          "ip_type": "PRIVATE"
+        },
+        "gcs": {
+          "report_bucket": "gcp-gcs-lead-mgmt-us-spt",
+          "input_bucket": "gcp-gcs-lead-mgmt-us-spt"
+        },
+        "credentials": {
+          "source": "iam",
+          "db_user": "gco-iam-svc-lead-mgmt-bc-spt@p-601-np-bcleadsmgmt-spt.iam"
+        }
+      },
+      "qat": {
+        "project_id": "p-601-np-bcleadsmgmt-qat",
+        "region": "us-central1",
+        "label": "qat-qa",
+        "cloud_sql": {
+          "connection_name": "p-601-np-bcleadsmgmt-qat:us-central1:lead-mgmt-qat",
+          "instance": "lead-mgmt-qat",
+          "database": "lead-mgmt-db",
+          "schema": "lead_mgmt_qat",
+          "ip_type": "PRIVATE"
+        },
+        "gcs": {
+          "report_bucket": "gcp-gcs-lead-mgmt-us-qat",
+          "input_bucket": "gcp-gcs-lead-mgmt-us-qat"
+        },
+        "credentials": {
+          "source": "iam",
+          "db_user": "gco-iam-svc-lead-mgmt-bc-qat@p-601-np-bcleadsmgmt-qat.iam"
+        }
+      },
+      "prd": {
+        "project_id": "p-601-pd-bcleadsmgmt-prd",
+        "region": "us-central1",
+        "label": "prd-production",
+        "cloud_sql": {
+          "connection_name": "p-601-pd-bcleadsmgmt-prd:us-central1:lead-mgmt-prd",
+          "instance": "lead-mgmt-prd",
+          "database": "lead-mgmt-db",
+          "schema": "lead_mgmt_prd",
+          "ip_type": "PRIVATE"
+        },
+        "gcs": {
+          "report_bucket": "gcp-gcs-lead-mgmt-us-prd",
+          "input_bucket": "gcp-gcs-lead-mgmt-us-prd"
+        },
+        "credentials": {
+          "source": "iam",
+          "db_user": "gco-iam-svc-lead-mgmt-bc-prd@p-601-pd-bcleadsmgmt-prd.iam"
+        }
+      }
+    }
+  },
+
   "environment": {
     "project_id": "ctoteam",
     "region": "us-central1",
