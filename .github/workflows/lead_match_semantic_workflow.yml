@@ -61,6 +61,14 @@ on:
         options:
           - "true"
           - "false"
+      run_writeback_index_maintenance:
+        description: "Create/check exact-match writeback indexes before running?"
+        required: true
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
       dry_run:
         description: "No-write mode? true = do NOT write decisions; false = write decisions. For low-volume writes, keep false and use run_limits."
         required: true
@@ -485,6 +493,54 @@ jobs:
           PY
           echo "READY marker found at ${READY_URI}"
 
+      - name: Ensure exact-match writeback indexes
+        if: github.event.inputs.run_writeback_index_maintenance == 'true'
+        timeout-minutes: 30
+        run: |
+          set -euo pipefail
+          gcloud config set project "${PROJECT_ID}"
+          INDEX_FIX_JOB="lead-match-writeback-index-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          cleanup() {
+            gcloud run jobs delete "${INDEX_FIX_JOB}" \
+              --project="${PROJECT_ID}" \
+              --region="${REGION}" \
+              --quiet >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          SQL_SCRIPT=$(cat <<'SQL'
+          psql -v ON_ERROR_STOP=1 \
+            -c 'CREATE INDEX CONCURRENTLY IF NOT EXISTS "idx_mdd_run_pos_writeback" ON "leadmgmt"."match_decision_detail" (match_run_id, pos_id)' \
+            -c 'CREATE INDEX CONCURRENTLY IF NOT EXISTS "idx_mdd_run_lead_writeback" ON "leadmgmt"."match_decision_detail" (match_run_id, lead_id)' \
+            -c 'CREATE INDEX CONCURRENTLY IF NOT EXISTS "idx_mdd_lead_run_writeback" ON "leadmgmt"."match_decision_detail" (lead_id, match_run_id)' \
+            -c 'CREATE INDEX CONCURRENTLY IF NOT EXISTS "idx_transaction_pos_writeback" ON "leadmgmt"."transaction" (pos_id)' \
+            -c 'CREATE INDEX CONCURRENTLY IF NOT EXISTS "idx_transaction_lead_writeback" ON "leadmgmt"."transaction" (lead_id)' \
+            -c 'CREATE INDEX CONCURRENTLY IF NOT EXISTS "idx_lead_lead_id_writeback" ON "leadmgmt"."lead" (lead_id)' \
+            -c 'ANALYZE "leadmgmt"."match_decision_detail"' \
+            -c 'ANALYZE "leadmgmt"."transaction"' \
+            -c 'ANALYZE "leadmgmt"."lead"'
+          SQL
+          )
+
+          gcloud run jobs create "${INDEX_FIX_JOB}" \
+            --project="${PROJECT_ID}" \
+            --region="${REGION}" \
+            --image=postgres:16 \
+            --set-cloudsql-instances="${CLOUDSQL_CONNECTION_NAME}" \
+            --set-env-vars="PGHOST=/cloudsql/${CLOUDSQL_CONNECTION_NAME},PGUSER=postgres,PGDATABASE=postgres" \
+            --set-secrets="PGPASSWORD=lead-match-db-password:latest" \
+            --command=sh \
+            --args="^@^-c@${SQL_SCRIPT}" \
+            --task-timeout=1800 \
+            --max-retries=0 \
+            --cpu=1 \
+            --memory=512Mi
+
+          gcloud run jobs execute "${INDEX_FIX_JOB}" \
+            --project="${PROJECT_ID}" \
+            --region="${REGION}" \
+            --wait
+
       - name: Trigger lead match workflow
         run: |
           set -euo pipefail
@@ -646,6 +702,7 @@ jobs:
             echo "- Update Cloud Run jobs: \`${{ github.event.inputs.update_cloud_run_jobs }}\`"
             echo "- Deploy workflow: \`${{ github.event.inputs.deploy_workflow }}\`"
             echo "- Prepare readiness: \`${{ github.event.inputs.prepare_readiness }}\`"
+            echo "- Writeback index maintenance: \`${{ github.event.inputs.run_writeback_index_maintenance }}\`"
             echo "- Analysis wait for ready: \`${{ github.event.inputs.analysis_wait_for_ready }}\`"
             echo "- Run analysis: \`${{ github.event.inputs.run_analysis }}\`"
           } >> "$GITHUB_STEP_SUMMARY"
