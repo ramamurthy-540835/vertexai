@@ -173,7 +173,7 @@ jobs:
           set -euo pipefail
           test -f .github/workflows/lead_match_preflight_ops.yml
           test -f deploy/lead_match_workflow.yaml
-          test -f scripts/gemini_embedding_client_smoke_test.py
+          test -f scripts/smoke_tests/gemini_embedding_client_smoke_test.py
           {
             echo "WORKFLOW_YAML_STATUS=PASS"
             echo "VERTEX_PATH_STATUS=PASS"
@@ -318,7 +318,7 @@ jobs:
         if: github.event.inputs.run_smoke_tests == 'true'
         run: |
           set -euo pipefail
-          python scripts/gemini_embedding_client_smoke_test.py \
+          python scripts/smoke_tests/gemini_embedding_client_smoke_test.py \
             --project-id "${PROJECT_ID}" \
             --location "${REGION}" \
             --model "gemini-embedding-001" \
