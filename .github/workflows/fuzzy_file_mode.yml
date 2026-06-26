@@ -1,0 +1,218 @@
+name: Fuzzy File Mode Matching
+
+on:
+  workflow_dispatch:
+    inputs:
+      warehouse:
+        description: "Warehouse number"
+        required: true
+        default: "115"
+        type: string
+      top_k:
+        description: "Top-K POS candidates per lead"
+        required: false
+        default: "20"
+        type: string
+      limit_leads:
+        description: "Limit number of leads (blank = all)"
+        required: false
+        type: string
+      no_cache:
+        description: "Force regenerate embeddings (ignore cache)"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+
+jobs:
+  fuzzy-file-mode:
+    name: "fuzzy-file-mode-wh${{ github.event.inputs.warehouse }}"
+    runs-on: ubuntu-latest
+
+    permissions:
+      id-token: write
+      contents: read
+
+    env:
+      PROJECT_ID: ctoteam
+      GOOGLE_CLOUD_PROJECT: ctoteam
+      VERTEX_PROJECT_ID: ctoteam
+      VERTEX_LOCATION: us-central1
+      WAREHOUSE: ${{ github.event.inputs.warehouse }}
+      TOP_K: ${{ github.event.inputs.top_k || '20' }}
+      LIMIT_LEADS: ${{ github.event.inputs.limit_leads }}
+      NO_CACHE: ${{ github.event.inputs.no_cache || 'false' }}
+      PYTHON_VERSION: "3.11"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Auth to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
+          service_account: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
+          create_credentials_file: true
+          export_environment_variables: true
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Preflight – validate business rules JSON
+        run: |
+          set -euo pipefail
+          python - <<'PYEOF'
+          import json, sys
+
+          RULES_PATH = "lead_match_runtime/lead_to_pos_match_rules.json"
+          with open(RULES_PATH) as f:
+              rules = json.load(f)
+
+          errors = []
+          required_sections = [
+              "candidate_retrieval", "decision_rules", "embeddings",
+              "environment", "fiscal_rules", "matching_markers",
+              "matching_sets", "override_policy", "resolution",
+              "scoring", "warehouse_scope",
+          ]
+          for key in required_sections:
+              if key not in rules:
+                  errors.append(f"Missing required top-level key: {key}")
+
+          if errors:
+              for e in errors:
+                  print(f"::error::{e}")
+              sys.exit(1)
+
+          dr = rules["decision_rules"]
+          sc = rules["scoring"]
+          emb = rules["embeddings"]
+
+          print(f"Preflight PASS ({RULES_PATH})")
+          print(f"  model={emb['model']}  dim={emb['output_dimensionality']}")
+          print(f"  fuzzy_min={dr['fuzzy_qualify_min_score']}  fuzzy_max={dr['fuzzy_max_score']}")
+          print(f"  scoring={sc.get('precision_score_formula', 'N/A')}")
+          PYEOF
+
+      - name: Install Python dependencies
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          pip install pandas numpy openpyxl google-genai faker
+
+      - name: Verify mock data exists
+        run: |
+          set -euo pipefail
+          LEADS="mock_data/${WAREHOUSE}/leads_corrected.xlsx"
+          POS_DIR="mock_data/${WAREHOUSE}_from_exact"
+
+          if [[ ! -f "${LEADS}" ]]; then
+            echo "::error::Leads file not found: ${LEADS}"
+            exit 1
+          fi
+
+          POS=""
+          if [[ -f "${POS_DIR}/pos_corrected.xlsx" ]]; then
+            POS="${POS_DIR}/pos_corrected.xlsx"
+          elif [[ -f "${POS_DIR}/pos_corrected.csv" ]]; then
+            POS="${POS_DIR}/pos_corrected.csv"
+          else
+            echo "::error::POS file not found in ${POS_DIR}/"
+            exit 1
+          fi
+
+          echo "LEADS_FILE=${LEADS}" >> "$GITHUB_ENV"
+          echo "POS_FILE=${POS}" >> "$GITHUB_ENV"
+          echo "OUTPUT_DIR=${POS_DIR}" >> "$GITHUB_ENV"
+
+          EXACT_CSV=$(ls ${POS_DIR}/primary_match_output_*.csv 2>/dev/null | head -1 || true)
+          echo "EXACT_CSV=${EXACT_CSV}" >> "$GITHUB_ENV"
+
+          echo "Leads: ${LEADS}"
+          echo "POS: ${POS}"
+          echo "Exact CSV: ${EXACT_CSV:-none}"
+
+      - name: Run fuzzy file runner
+        run: |
+          set -euo pipefail
+          gcloud config set project "${PROJECT_ID}"
+
+          ARGS="--source-mode files"
+          ARGS="${ARGS} --leads-file ${LEADS_FILE}"
+          ARGS="${ARGS} --pos-file ${POS_FILE}"
+          ARGS="${ARGS} --warehouse-number ${WAREHOUSE}"
+          ARGS="${ARGS} --output-dir ${OUTPUT_DIR}"
+          ARGS="${ARGS} --top-k ${TOP_K}"
+          ARGS="${ARGS} --include-exact-leads"
+
+          if [[ -n "${EXACT_CSV}" ]]; then
+            ARGS="${ARGS} --exact-output-csv ${EXACT_CSV}"
+          fi
+
+          if [[ -n "${LIMIT_LEADS}" ]]; then
+            ARGS="${ARGS} --limit-leads ${LIMIT_LEADS}"
+          fi
+
+          if [[ "${NO_CACHE}" == "true" ]]; then
+            ARGS="${ARGS} --no-cache"
+          fi
+
+          echo "Running: PYTHONPATH=. python3 lead_match_runtime/fuzzy_file_runner.py ${ARGS}"
+          PYTHONPATH=. python3 lead_match_runtime/fuzzy_file_runner.py ${ARGS}
+
+      - name: Validate output
+        run: |
+          set -euo pipefail
+          OUTPUT="${OUTPUT_DIR}/fuzzy_file_mode_output.csv"
+
+          if [[ ! -f "${OUTPUT}" ]]; then
+            echo "::error::Output file not found: ${OUTPUT}"
+            exit 1
+          fi
+
+          ROWS=$(wc -l < "${OUTPUT}")
+          ROWS=$((ROWS - 1))
+          echo "Output rows: ${ROWS}"
+
+          if [[ ${ROWS} -le 0 ]]; then
+            echo "::warning::No fuzzy matches produced"
+          fi
+
+          python - <<PYEOF
+          import pandas as pd, sys
+          df = pd.read_csv("${OUTPUT}")
+          score_100 = (df["similarity_score"] >= 100).sum()
+          if score_100 > 0:
+              print(f"::error::Found {score_100} rows with score >= 100 (fuzzy must never reach 100)")
+              sys.exit(1)
+          print(f"Score validation PASS: max={df['similarity_score'].max():.3f}, "
+                f"rows={len(df)}, leads={df['lead_id'].nunique()}")
+          PYEOF
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "## Fuzzy File Mode Results"
+            echo ""
+            echo "- **Warehouse:** ${WAREHOUSE}"
+            echo "- **Project:** ${PROJECT_ID}"
+            echo "- **Top-K:** ${TOP_K}"
+            echo "- **Cache:** $(if [[ '${NO_CACHE}' == 'true' ]]; then echo 'disabled'; else echo 'enabled'; fi)"
+            echo ""
+
+            SUMMARY="${OUTPUT_DIR}/fuzzy_file_mode_summary.json"
+            if [[ -f "${SUMMARY}" ]]; then
+              echo '```json'
+              cat "${SUMMARY}"
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
