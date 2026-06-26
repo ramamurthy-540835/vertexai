@@ -33,7 +33,7 @@ if __name__ == "__main__":
         import json
 
         def get_token():
-            token_url = "https://costcobizsvctest.service-now.com/oauth_token.do"
+            token_url = job_config.snow_config.token_url
 
             CLIENT_ID = job_config.snow_config.snow_client_id
             CLIENT_SECRET = job_config.snow_config.snow_client_secret
@@ -58,7 +58,7 @@ if __name__ == "__main__":
         def call_api():
             token = get_token()
             
-            url = "https://costcobizsvctest.service-now.com/api/sn_retail/lead_pos_data/getLead"
+            url = job_config.snow_config.lead_url
             
             payload = json.dumps({
                 "start_index": "1",
