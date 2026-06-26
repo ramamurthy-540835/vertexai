@@ -127,22 +127,39 @@ def fetch_existing_lead_state(cursor):
     return existing_accounts, existing_leads
 
 def clean_val(val):
-    if pd.isna(val) or val is None:
+    if val is None:
         return None
+    try:
+        if pd.isna(val):
+            return None
+    except (TypeError, ValueError):
+        pass
     if isinstance(val, (float, np.float64, np.float32)):
         if np.isnan(val):
             return None
-        # If it's a whole number stored as float, cast to int where appropriate
         if val.is_integer():
             return int(val)
         return float(val)
     if isinstance(val, (int, np.int64, np.int32)):
         return int(val)
-    # Convert string dates if needed
     val_str = str(val).strip()
     if val_str.lower() in ['nan', 'none', '']:
         return None
     return val_str
+
+
+def _db_val(val):
+    """Ensure a value from a DataFrame row is DB-safe (no float NaN)."""
+    if val is None:
+        return None
+    try:
+        if pd.isna(val):
+            return None
+    except (TypeError, ValueError):
+        pass
+    if isinstance(val, float) and np.isnan(val):
+        return None
+    return clean_val(val)
 
 def load_leads(cursor, conn, leads_file, limit=None, preserve_source_ids=False):
     print(f"\nReading Lead Mock Data: {leads_file}...")
@@ -177,18 +194,21 @@ def load_leads(cursor, conn, leads_file, limit=None, preserve_source_ids=False):
     existing_accounts, existing_leads = fetch_existing_lead_state(cursor)
     skipped_duplicates = 0
 
+    def g(row, col):
+        return _db_val(row.get(col))
+
     print("Mapping Lead data into Account, Lead, and Contact tables...")
     for idx, row in df_leads.iterrows():
-        biz_name = row.get('business_name')
-        addr_one = row.get('address_line_one')
+        biz_name = g(row, 'business_name')
+        addr_one = g(row, 'address_line_one')
         
         if not biz_name:
             continue
 
         lead_key = lead_key_from_values(
-            row.get('lead_source'),
-            row.get('membership_number'),
-            row.get('warehouse_number'),
+            g(row, 'lead_source'),
+            g(row, 'membership_number'),
+            g(row, 'warehouse_number'),
             biz_name,
             addr_one,
         )
@@ -209,18 +229,18 @@ def load_leads(cursor, conn, leads_file, limit=None, preserve_source_ids=False):
             accounts_to_insert.append((
                 act_id,                          # account_id
                 batch_id,                        # batch_id
-                row.get('account_number'),       # account_number
-                row.get('type'),                 # type
+                g(row, 'account_number'),       # account_number
+                g(row, 'type'),                 # type
                 biz_name,                        # business_name
                 addr_one,                        # address_line_one
                 None,                            # address_line_two
-                row.get('city'),                 # city
-                row.get('state'),                # state
-                row.get('zip_code'),             # zip_code
-                row.get('phone'),                # phone
-                row.get('email'),                # email
+                g(row, 'city'),                 # city
+                g(row, 'state'),                # state
+                g(row, 'zip_code'),             # zip_code
+                g(row, 'phone'),                # phone
+                g(row, 'email'),                # email
                 None,                            # industry_code
-                row.get('bd_industry'),          # bd_industry
+                g(row, 'bd_industry'),          # bd_industry
                 'mock_loader',                   # updated_by
                 current_time                     # updated_date
             ))
@@ -228,30 +248,30 @@ def load_leads(cursor, conn, leads_file, limit=None, preserve_source_ids=False):
             act_id = account_map[key]
 
         # Prepare Lead row
-        if preserve_source_ids and row.get('lead_id'):
+        if preserve_source_ids and g(row, 'lead_id'):
             lead_id = str(row['lead_id'])
         else:
             lead_id = make_id("LEAD", run_suffix, lead_idx)
         lead_idx += 1
         leads_to_insert.append((
             lead_id,                            # lead_id
-            row.get('lead_source'),             # lead_source
+            g(row, 'lead_source'),             # lead_source
             act_id,                             # account_id
-            row.get('account_number'),          # account_number
+            g(row, 'account_number'),          # account_number
             'Open',                             # lead_status
             None,                               # confidence_level
-            row.get('membership_number'),       # membership_number
-            row.get('warehouse_number'),        # warehouse_number
-            row.get('fiscal_period'),             # fiscal_period
-            row.get('fiscal_year'),              # fiscal_year
-            row.get('closed_fiscal_period'),     # closed_fiscal_period
-            row.get('closed_fiscal_year'),       # closed_fiscal_year
+            g(row, 'membership_number'),       # membership_number
+            g(row, 'warehouse_number'),        # warehouse_number
+            g(row, 'fiscal_period'),             # fiscal_period
+            g(row, 'fiscal_year'),              # fiscal_year
+            g(row, 'closed_fiscal_period'),     # closed_fiscal_period
+            g(row, 'closed_fiscal_year'),       # closed_fiscal_year
             batch_id,                           # batch_id
             current_time,                       # load_date
             'mock_loader',                      # updated_by
             current_time,                       # updated_date
-            row.get('match_result'),             # match_result
-            row.get('week'),                    # week
+            g(row, 'match_result'),             # match_result
+            g(row, 'week'),                    # week
         ))
 
         # Prepare Contact row
@@ -262,9 +282,9 @@ def load_leads(cursor, conn, leads_file, limit=None, preserve_source_ids=False):
             lead_id,                            # lead_id
             None,                               # first_name
             None,                               # last_name
-            row.get('email'),                   # email
-            row.get('phone'),                   # phone
-            row.get('membership_number'),       # membership_number
+            g(row, 'email'),                   # email
+            g(row, 'phone'),                   # phone
+            g(row, 'membership_number'),       # membership_number
             None,                               # job_title
             batch_id,                           # batch_id
             'mock_loader',                      # updated_by
@@ -336,9 +356,12 @@ def load_pos(cursor, conn, pos_file, limit=None, preserve_source_ids=False):
         columns={k: v for k, v in COLUMN_RENAMES.items() if k in df_pos_raw.columns}
     ).map(clean_val)
 
+    def g(row, col):
+        return _db_val(row.get(col))
+
     pos_tx_to_insert = []
     tx_to_insert = []
-    
+
     pos_idx = 1
     batch_id_pos = str(uuid.uuid4())
     run_suffix = batch_id_pos.replace('-', '')[:8].upper()
@@ -346,7 +369,7 @@ def load_pos(cursor, conn, pos_file, limit=None, preserve_source_ids=False):
 
     print("Mapping POS data into pos_transactions and transaction tables...")
     for idx, row in df_pos.iterrows():
-        if preserve_source_ids and row.get('pos_id'):
+        if preserve_source_ids and g(row, 'pos_id'):
             pos_id = str(row['pos_id'])
         else:
             pos_id = make_id("POS", run_suffix, pos_idx)
@@ -355,33 +378,33 @@ def load_pos(cursor, conn, pos_file, limit=None, preserve_source_ids=False):
         # Mapping properties for pos_transactions (32 fields)
         pos_tx_to_insert.append((
             pos_id,                             # pos_id
-            row.get('sales_reference_id'),       # sales_reference_id
-            row.get('account_number'),          # account_number
+            g(row, 'sales_reference_id'),       # sales_reference_id
+            g(row, 'account_number'),          # account_number
             None,                               # lead_id
             None,                               # match_score
             None,                               # match_type
             batch_id_pos,                       # batch_id
-            row.get('membership_number'),       # membership_number
-            row.get('order_amount'),            # order_amount
-            row.get('transaction_count'),       # transaction_count
-            row.get('fiscal_period'),           # fiscal_period
-            row.get('fiscal_year'),             # fiscal_year
-            row.get('week'),                    # week
-            row.get('shop_type'),               # shop_type
-            row.get('warehouse_number'),        # warehouse_number
-            row.get('bd_industry'),              # bd_industry
-            row.get('business_name'),           # business_name
-            row.get('address_line_one'),        # address_line_one
-            row.get('address_line_two'),        # address_line_two
-            row.get('city'),                    # city
-            row.get('state'),                   # state
-            row.get('zip_code'),                # zip_code
-            row.get('phone'),                   # phone
-            row.get('first_name'),              # first_name
-            row.get('last_name'),               # last_name
-            row.get('email'),                   # email
+            g(row, 'membership_number'),       # membership_number
+            g(row, 'order_amount'),            # order_amount
+            g(row, 'transaction_count'),       # transaction_count
+            g(row, 'fiscal_period'),           # fiscal_period
+            g(row, 'fiscal_year'),             # fiscal_year
+            g(row, 'week'),                    # week
+            g(row, 'shop_type'),               # shop_type
+            g(row, 'warehouse_number'),        # warehouse_number
+            g(row, 'bd_industry'),              # bd_industry
+            g(row, 'business_name'),           # business_name
+            g(row, 'address_line_one'),        # address_line_one
+            g(row, 'address_line_two'),        # address_line_two
+            g(row, 'city'),                    # city
+            g(row, 'state'),                   # state
+            g(row, 'zip_code'),                # zip_code
+            g(row, 'phone'),                   # phone
+            g(row, 'first_name'),              # first_name
+            g(row, 'last_name'),               # last_name
+            g(row, 'email'),                   # email
             None,                               # sic_code
-            row.get('industry_description'),    # sic_description (excel industry_description mapped here)
+            g(row, 'industry_description'),    # sic_description (excel industry_description mapped here)
             None,                               # primary_transaction
             current_time_pos,                   # load_date
             'mock_loader',                      # updated_by
@@ -391,65 +414,65 @@ def load_pos(cursor, conn, pos_file, limit=None, preserve_source_ids=False):
         # Mapping properties for transaction (63 fields)
         tx_to_insert.append((
             pos_id,                             # pos_id
-            row.get('sales_reference_id'),       # sales_reference_id
-            row.get('account_number'),          # account_number
+            g(row, 'sales_reference_id'),       # sales_reference_id
+            g(row, 'account_number'),          # account_number
             None,                               # lead_id
             None,                               # match_score
             None,                               # match_type
             batch_id_pos,                       # batch_id
-            row.get('membership_number'),       # membership_number
-            row.get('order_amount'),            # order_amount
-            row.get('transaction_count'),       # transaction_count
-            row.get('fiscal_period'),           # fiscal_period
-            row.get('fiscal_year'),             # fiscal_year
-            row.get('week'),                    # week
-            row.get('shop_type'),               # shop_type
-            row.get('warehouse_number'),        # warehouse_number
-            row.get('bd_industry'),              # bd_industry
-            row.get('business_name'),           # business_name
-            row.get('address_line_one'),        # address_line_one
-            row.get('address_line_two'),        # address_line_two
-            row.get('city'),                    # city
-            row.get('state'),                   # state
-            row.get('zip_code'),                # zip_code
-            row.get('phone'),                   # phone
-            row.get('first_name'),              # first_name
-            row.get('last_name'),               # last_name
-            row.get('email'),                   # email
+            g(row, 'membership_number'),       # membership_number
+            g(row, 'order_amount'),            # order_amount
+            g(row, 'transaction_count'),       # transaction_count
+            g(row, 'fiscal_period'),           # fiscal_period
+            g(row, 'fiscal_year'),             # fiscal_year
+            g(row, 'week'),                    # week
+            g(row, 'shop_type'),               # shop_type
+            g(row, 'warehouse_number'),        # warehouse_number
+            g(row, 'bd_industry'),              # bd_industry
+            g(row, 'business_name'),           # business_name
+            g(row, 'address_line_one'),        # address_line_one
+            g(row, 'address_line_two'),        # address_line_two
+            g(row, 'city'),                    # city
+            g(row, 'state'),                   # state
+            g(row, 'zip_code'),                # zip_code
+            g(row, 'phone'),                   # phone
+            g(row, 'first_name'),              # first_name
+            g(row, 'last_name'),               # last_name
+            g(row, 'email'),                   # email
             None,                               # sic_code
-            row.get('industry_description'),    # industry_description
+            g(row, 'industry_description'),    # industry_description
             current_time_pos,                   # load_date
             'mock_loader',                      # updated_by
             current_time_pos,                   # updated_date
             None,                               # primary_transaction
-            row.get('oms_company'),             # oms_company
-            row.get('oms_company_2'),           # oms_company_2
-            row.get('oms_email_1'),             # oms_email_1
-            row.get('oms_email_2'),             # oms_email_2
-            row.get('oms_email_3'),             # oms_email_3
-            row.get('oms_phone_1'),             # oms_phone_1
-            row.get('oms_phone_2'),             # oms_phone_2
-            row.get('oms_phone_3'),             # oms_phone_3
-            row.get('oms_cell_1'),              # oms_cell_1
-            row.get('oms_cell_2'),              # oms_cell_2
-            row.get('oms_first_name'),          # oms_first_name
-            row.get('oms_middle_name'),         # oms_middle_name
-            row.get('oms_last_name'),           # oms_last_name
-            row.get('oms_address_line_1'),       # oms_address_line_1
-            row.get('oms_city'),                # oms_city
-            row.get('oms_state'),               # oms_state
-            row.get('oms_zip'),                 # oms_zip
-            row.get('oms_address_line_1_v2'),    # oms_address_line_1_v2
-            row.get('oms_address_line_2'),       # oms_address_line_2
-            row.get('oms_address_line_3'),       # oms_address_line_3
-            row.get('oms_address_line_4'),       # oms_address_line_4
-            row.get('oms_address_line_5'),       # oms_address_line_5
-            row.get('oms_address_line_6'),       # oms_address_line_6
-            row.get('oms_city_2'),              # oms_city_2
-            row.get('oms_state_2'),             # oms_state_2
-            row.get('oms_zip_2'),               # oms_zip_2
-            row.get('oms_zip_3'),               # oms_zip_3
-            row.get('oms_zip_4'),               # oms_zip_4
+            g(row, 'oms_company'),             # oms_company
+            g(row, 'oms_company_2'),           # oms_company_2
+            g(row, 'oms_email_1'),             # oms_email_1
+            g(row, 'oms_email_2'),             # oms_email_2
+            g(row, 'oms_email_3'),             # oms_email_3
+            g(row, 'oms_phone_1'),             # oms_phone_1
+            g(row, 'oms_phone_2'),             # oms_phone_2
+            g(row, 'oms_phone_3'),             # oms_phone_3
+            g(row, 'oms_cell_1'),              # oms_cell_1
+            g(row, 'oms_cell_2'),              # oms_cell_2
+            g(row, 'oms_first_name'),          # oms_first_name
+            g(row, 'oms_middle_name'),         # oms_middle_name
+            g(row, 'oms_last_name'),           # oms_last_name
+            g(row, 'oms_address_line_1'),       # oms_address_line_1
+            g(row, 'oms_city'),                # oms_city
+            g(row, 'oms_state'),               # oms_state
+            g(row, 'oms_zip'),                 # oms_zip
+            g(row, 'oms_address_line_1_v2'),    # oms_address_line_1_v2
+            g(row, 'oms_address_line_2'),       # oms_address_line_2
+            g(row, 'oms_address_line_3'),       # oms_address_line_3
+            g(row, 'oms_address_line_4'),       # oms_address_line_4
+            g(row, 'oms_address_line_5'),       # oms_address_line_5
+            g(row, 'oms_address_line_6'),       # oms_address_line_6
+            g(row, 'oms_city_2'),              # oms_city_2
+            g(row, 'oms_state_2'),             # oms_state_2
+            g(row, 'oms_zip_2'),               # oms_zip_2
+            g(row, 'oms_zip_3'),               # oms_zip_3
+            g(row, 'oms_zip_4'),               # oms_zip_4
             None,                               # matching_comments
             False,                              # is_processed (defined as non-null boolean)
             None                                # process_datetime
