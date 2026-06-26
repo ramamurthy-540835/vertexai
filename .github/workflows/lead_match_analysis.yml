@@ -48,6 +48,11 @@ on:
         options:
           - "true"
           - "false"
+      exact_csv_gcs_path:
+        description: "GCS path to exact-match CSV (e.g. match/final_match_result/primary_match_output_*.csv)"
+        required: false
+        default: ""
+        type: string
 
 jobs:
   analyze-match-distribution:
@@ -77,6 +82,7 @@ jobs:
       GENERATE_ANALYSIS: ${{ github.event.inputs.generate_analysis || 'true' }}
       VALIDATE_CLOUDSQL: ${{ github.event.inputs.validate_cloudsql || 'true' }}
       WAIT_FOR_READY: ${{ github.event.inputs.wait_for_ready || 'true' }}
+      EXACT_CSV_GCS_PATH: ${{ github.event.inputs.exact_csv_gcs_path }}
 
     steps:
       - name: Checkout
@@ -214,6 +220,54 @@ jobs:
             exit 1
           fi
 
+      - name: Merge exact + enriched fuzzy into final output
+        if: env.GENERATE_ANALYSIS == 'true' && env.EXACT_CSV_GCS_PATH != ''
+        run: |
+          set -euo pipefail
+          gcloud config set project "${PROJECT_ID}"
+
+          REPORT_DIR="reports/lead_match/${PROJECT_ID}/${WAREHOUSE}/${RUN_ID}"
+
+          # Download exact CSV from GCS
+          EXACT_CSV_PATH="${EXACT_CSV_GCS_PATH}"
+          if [[ "${EXACT_CSV_PATH}" != gs://* ]]; then
+            EXACT_CSV_PATH="gs://${BUCKET_NAME}/${EXACT_CSV_PATH}"
+          fi
+          echo "Downloading exact CSV: ${EXACT_CSV_PATH}"
+          gsutil cp "${EXACT_CSV_PATH}" /tmp/exact_matching.csv
+
+          # Download enriched fuzzy CSV from GCS
+          ENRICHED_PATH="gs://${BUCKET_NAME}/${REPORT_DIR}/matches_enriched.csv"
+          echo "Downloading enriched fuzzy CSV: ${ENRICHED_PATH}"
+          gsutil cp "${ENRICHED_PATH}" /tmp/matches_enriched.csv
+
+          # Merge: higher score wins per (lead_id, pos_id), no duplicates
+          python3 scripts/reporting/merge_exact_fuzzy_output.py \
+            --exact-csv /tmp/exact_matching.csv \
+            --fuzzy-csv /tmp/matches_enriched.csv \
+            --warehouse "${WAREHOUSE}" \
+            --output-csv /tmp/primary_match_output_merged.csv
+
+          # Upload merged output to GCS
+          MERGED_DST="gs://${BUCKET_NAME}/${REPORT_DIR}/primary_match_output_merged.csv"
+          gsutil cp /tmp/primary_match_output_merged.csv "${MERGED_DST}"
+          echo "✓ Merged output: ${MERGED_DST}"
+
+          # Validate: no duplicates, comments present
+          python3 -c "
+          import csv, sys
+          with open('/tmp/primary_match_output_merged.csv') as f:
+              rows = list(csv.DictReader(f))
+          keys = [(r['lead_id'], r['pos_id']) for r in rows if r['pos_id'].strip()]
+          dupes = len(keys) - len(set(keys))
+          no_comment = sum(1 for r in rows if not r.get('matching_comments','').strip())
+          print(f'Merged: {len(rows)} rows, {dupes} duplicates, {no_comment} rows without comments')
+          if dupes > 0:
+              print('::error::Duplicate (lead_id, pos_id) pairs found in merged output')
+              sys.exit(1)
+          print('✓ Merge validation PASS')
+          "
+
       - name: Validate Cloud SQL write-back
         if: env.GENERATE_ANALYSIS == 'true' && env.VALIDATE_CLOUDSQL == 'true'
         run: |
@@ -248,6 +302,12 @@ jobs:
               echo "- Enriched matches: \`gs://${BUCKET_NAME}/reports/lead_match/${PROJECT_ID}/${WAREHOUSE}/${RUN_ID}/matches_enriched.csv\`"
               echo "- Per-row reasoning written to Cloud SQL by \`scripts/reporting/analyze_match_distribution.py\`"
               echo ""
+              if [[ -n "${EXACT_CSV_GCS_PATH}" ]]; then
+                echo "### Merged Final Output"
+                echo "- \`gs://${BUCKET_NAME}/reports/lead_match/${PROJECT_ID}/${WAREHOUSE}/${RUN_ID}/primary_match_output_merged.csv\`"
+                echo "- Exact CSV (comments preserved) + Fuzzy enriched (comments generated) — higher score wins, no duplicates"
+                echo ""
+              fi
             fi
             echo "### Next"
             echo "- View in reporting app: \`/analysis?warehouse=${WAREHOUSE}&run_id=${RUN_ID}\`"

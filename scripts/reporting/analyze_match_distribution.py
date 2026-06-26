@@ -197,48 +197,38 @@ def read_matches_csv_from_gcs(bucket_name: str, gcs_path: str) -> pd.DataFrame:
 
 def generate_per_row_reasoning(row: dict, rules: dict, weights: dict, gate_threshold: float) -> str:
     """
-    Generate deterministic reasoning string from component scores.
+    Generate human-readable matching comment from component scores.
 
-    Args:
-        row: CSV row with final_score, full_address_score, business_name_score, combined_field_score, match_type, band
-        rules: Loaded rules JSON
-        weights: {addr_weight, name_weight, denom}
-        gate_threshold: recall gate min similarity (e.g., 65)
-
-    Returns:
-        Formatted reasoning string.
+    For exact rows: returns empty string (exact CSV comments are preserved as-is).
+    For fuzzy/MR rows: generates a comment matching the exact CSV's style.
     """
     match_type = row.get("match_type", "Unknown")
 
     if match_type == rules["decision_rules"]["exact_match_type"]:
-        return f"Deterministic field match (exact-sql); identity fields agree. Score {rules['decision_rules']['exact_score']}, authoritative. Not AI-inferred."
+        return ""
 
-    # Fuzzy match
+    if match_type == "Closed - Existing":
+        return "Closed - Existing: POS transaction pre-dates lead within fiscal CE window."
+
     addr_score = float(row.get("full_address_score", 0))
     name_score = float(row.get("business_name_score", 0))
-    combined_score = float(row.get("combined_field_score", 0))
     final_score = float(row.get("final_score", 0))
     email_boost = float(row.get("email_boost", 0))
     phone_boost = float(row.get("phone_boost", 0))
-    band = row.get("band", "Unknown")
 
     fuzzy_cap = float(rules["decision_rules"]["fuzzy_max_score"])
     addr_w = weights["addr_weight"]
     name_w = weights["name_weight"]
     denom = weights["denom"]
-
-    # Verify arithmetic: weighted average + boosts, capped at fuzzy_max_score
     base_score = (addr_w * addr_score + name_w * name_score) / denom
-    expected = min(fuzzy_cap, round(base_score + email_boost + phone_boost, 2))
-    if abs(expected - final_score) > 0.01:
-        logger.warning(
-            f"Arithmetic mismatch for pos_id={row.get('pos_id')}: "
-            f"min({fuzzy_cap}, round(({addr_w}*{addr_score}+{name_w}*{name_score})/{denom}"
-            f"+{email_boost}+{phone_boost}, 2))={expected} "
-            f"but stored final_score={final_score}"
-        )
 
-    # Determine driver
+    if final_score >= 85:
+        quality = "Strong semantic match"
+    elif final_score >= 80:
+        quality = "Moderate semantic match"
+    else:
+        quality = "Weak semantic match"
+
     driver = "address-driven" if addr_score >= name_score else "name-driven"
 
     boost_parts = []
@@ -246,14 +236,16 @@ def generate_per_row_reasoning(row: dict, rules: dict, weights: dict, gate_thres
         boost_parts.append(f"email +{email_boost:.0f}")
     if phone_boost:
         boost_parts.append(f"phone +{phone_boost:.0f}")
-    boost_str = f" Boosts: {', '.join(boost_parts)}; capped {fuzzy_cap}." if boost_parts else ""
+    boost_str = f" Confirmers: {', '.join(boost_parts)}." if boost_parts else ""
+
+    review = ""
+    if match_type == "Manual Review" or final_score < 85:
+        review = " Marketer review recommended."
 
     reasoning = (
-        f"Address {addr_score:.2f} (w{addr_w}) + Name {name_score:.2f} (w{name_w}) "
-        f"=> ({addr_w}*{addr_score:.2f}+{name_w}*{name_score:.2f})/{denom} = {base_score:.2f}."
-        f"{boost_str} Final: {final_score:.2f}. "
-        f"Band: {band}. Recall gate: combined_field {combined_score:.2f} (>= {gate_threshold} pass). "
-        f"{driver}."
+        f"{quality} (score {final_score:.2f}/{fuzzy_cap}); "
+        f"{driver} (address {addr_score:.1f}, name {name_score:.1f})."
+        f"{boost_str}{review}"
     )
     return reasoning
 

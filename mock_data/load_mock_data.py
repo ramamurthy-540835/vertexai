@@ -572,6 +572,72 @@ def clean_warehouse(cursor, conn, warehouse_number):
     print(f"Warehouse {wh} cleaned.")
 
 
+def mark_exact_matched(cursor, conn, exact_csv_path, warehouse_number=None):
+    """Read external exact-match CSV and set is_processed=true for Match rows."""
+    import csv as csv_mod
+    path = os.path.abspath(exact_csv_path)
+    if not os.path.exists(path):
+        print(f"❌ Exact CSV not found: {path}")
+        return False
+
+    with open(path, encoding='utf-8') as f:
+        rows = list(csv_mod.DictReader(f))
+
+    match_rows = [
+        r for r in rows
+        if r.get('match_result', '').strip() == 'Match'
+        and r.get('pos_id', '').strip()
+    ]
+
+    if warehouse_number:
+        match_rows = [r for r in match_rows if str(r.get('warehouse_number', '')).strip() == str(warehouse_number)]
+
+    pos_ids = list({r['pos_id'].strip() for r in match_rows})
+    if not pos_ids:
+        print("No Match rows with POS IDs found in exact CSV.")
+        return True
+
+    print(f"Exact CSV: {len(rows)} total rows, {len(match_rows)} Match rows, {len(pos_ids)} unique POS IDs")
+
+    chunk_size = 500
+    total_updated = 0
+    for i in range(0, len(pos_ids), chunk_size):
+        chunk = pos_ids[i:i + chunk_size]
+        cursor.execute(
+            f"""UPDATE "{_SCHEMA}"."transaction"
+                SET is_processed = true,
+                    process_datetime = CURRENT_TIMESTAMP,
+                    updated_by = 'exact_csv_loader',
+                    updated_date = CURRENT_TIMESTAMP
+                WHERE pos_id = ANY(%s)
+                  AND is_processed = false""",
+            [chunk],
+        )
+        total_updated += cursor.rowcount
+
+    conn.commit()
+    print(f"✅ Marked {total_updated} POS transactions as is_processed=true from exact CSV")
+
+    if warehouse_number:
+        cursor.execute(
+            f"""SELECT is_processed, COUNT(*)
+                FROM "{_SCHEMA}"."transaction"
+                WHERE warehouse_number = %s
+                GROUP BY is_processed""",
+            [int(warehouse_number)],
+        )
+    else:
+        cursor.execute(
+            f"""SELECT is_processed, COUNT(*)
+                FROM "{_SCHEMA}"."transaction"
+                GROUP BY is_processed""",
+        )
+    for row in cursor.fetchall():
+        print(f"  is_processed={row[0]}: {row[1]:,}")
+
+    return True
+
+
 def show_summary(cursor):
     print("\n--- Summary of Loaded Data ---")
     try:
@@ -584,10 +650,12 @@ def show_summary(cursor):
 
 def main():
     parser = argparse.ArgumentParser(description="Load Mock Data to Cloud SQL PostgreSQL")
-    parser.add_argument('target', nargs='?', choices=['lead', 'pos', 'all'],
-                        help="Optional positional target: lead, pos, or all")
-    parser.add_argument('--table', type=str, choices=['lead', 'pos', 'all'], default='lead',
-                        help="Choose which tables to load: 'lead' (default), 'pos', or 'all'")
+    parser.add_argument('target', nargs='?', choices=['lead', 'pos', 'all', 'mark-exact'],
+                        help="Optional positional target: lead, pos, all, or mark-exact")
+    parser.add_argument('--table', type=str, choices=['lead', 'pos', 'all', 'mark-exact'], default='lead',
+                        help="Choose which tables to load: 'lead' (default), 'pos', 'all', or 'mark-exact'")
+    parser.add_argument('--exact-csv', type=str,
+                        help="Path to exact-match output CSV (used with mark-exact target)")
     parser.add_argument('--warehouse-number', type=str,
                         help="Warehouse number used to resolve mock_data/<warehouse_number>/ files")
     parser.add_argument('--input-dir', type=str,
@@ -646,6 +714,17 @@ def main():
         print(f"Source ID preservation: ENABLED (workbook lead_id/pos_id will be used as-is)")
 
     success = True
+
+    if target == 'mark-exact':
+        exact_csv = args.exact_csv
+        if not exact_csv:
+            print("❌ --exact-csv is required with mark-exact target")
+            sys.exit(1)
+        success = mark_exact_matched(cursor, conn, exact_csv, warehouse_number)
+        show_summary(cursor)
+        conn.close()
+        return
+
     if target in ['lead', 'all']:
         success_lead = load_leads(cursor, conn, leads_file, args.limit, preserve_source_ids=preserve)
         success = success and success_lead

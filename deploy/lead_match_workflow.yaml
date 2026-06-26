@@ -16,10 +16,29 @@ main:
           - leadEmbeddingLimit: ${default(map.get(args, "leadEmbeddingLimit"), "")}
           - posEmbeddingLimit: ${default(map.get(args, "posEmbeddingLimit"), "")}
           - matchLeadLimit: ${default(map.get(args, "matchLeadLimit"), "")}
+          - preflightJob: ${default(map.get(args, "preflightJob"), "lead-match-preflight")}
+          - preflightResult: null
           - exactResult: null
           - leadResult: null
           - posResult: null
           - reportResult: null
+
+    - runPreflight:
+        call: runCloudRunJob
+        args:
+          project: ${project}
+          region: ${region}
+          jobName: ${preflightJob}
+          containerArgs:
+            - preflight
+          envVars:
+            - name: WAREHOUSE
+              value: ${warehouse}
+            - name: WAREHOUSE_SCOPE
+              value: ${warehouse}
+            - name: DRY_RUN
+              value: ${dryRun}
+        result: preflightResult
 
     - runExactMatch:
         call: runCloudRunJob
@@ -147,6 +166,7 @@ main:
           leadEmbeddingLimit: ${leadEmbeddingLimit}
           posEmbeddingLimit: ${posEmbeddingLimit}
           matchLeadLimit: ${matchLeadLimit}
+          preflight: ${preflightResult}
           exact: ${exactResult}
           lead: ${leadResult}
           pos: ${posResult}
