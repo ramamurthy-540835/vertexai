@@ -22,7 +22,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-DEFAULT_RULES_PATH = Path(__file__).resolve().parents[1] / "lead_match_runtime" / "lead_to_pos_match_rules.json"
+DEFAULT_RULES_PATH = Path(__file__).resolve().parents[2] / "lead_match_runtime" / "lead_to_pos_match_rules.json"
 _RAW_RULES = json.loads(DEFAULT_RULES_PATH.read_text(encoding="utf-8"))
 
 
