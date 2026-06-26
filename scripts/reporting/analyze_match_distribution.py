@@ -167,16 +167,21 @@ def _band_for_score(score: float, rules: dict) -> str:
 
 def ensure_band_column(df: pd.DataFrame, rules: dict) -> pd.DataFrame:
     """Normalize current and legacy report CSVs to include a band column."""
+    df = df.copy()
+    if "final_score" not in df.columns and "similarity_score" in df.columns:
+        df["final_score"] = pd.to_numeric(df["similarity_score"], errors="coerce")
+
     if "band" in df.columns:
         return df
 
-    df = df.copy()
     if "confidence_band" in df.columns:
         df["band"] = df["confidence_band"].fillna("Unknown")
         return df
 
     if "final_score" not in df.columns:
-        raise KeyError("matches.csv must include final_score or an explicit band column")
+        raise KeyError(
+            "matches.csv must include final_score, similarity_score, or an explicit band column"
+        )
 
     df["band"] = df["final_score"].apply(lambda value: _band_for_score(float(value), rules))
     return df
