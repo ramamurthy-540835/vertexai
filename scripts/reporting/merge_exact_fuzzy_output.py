@@ -16,10 +16,26 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
 import os
 import sys
 from collections import Counter
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+DEFAULT_RULES_PATH = Path(__file__).resolve().parents[2] / "lead_match_runtime" / "lead_to_pos_match_rules.json"
+
+
+def load_merge_config(rules_path=None):
+    path = Path(rules_path) if rules_path else DEFAULT_RULES_PATH
+    with open(path, encoding="utf-8") as f:
+        rules = json.load(f)
+    merge_rule = rules.get("override_policy", {}).get("merge_rule", {})
+    return {
+        "strategy": merge_rule.get("strategy", "highest_score_wins"),
+        "comment_carry_forward": merge_rule.get("comment_carry_forward", True),
+    }
 
 EXPECTED_COLUMNS = [
     "lead_id", "pos_id", "match_result", "similarity_score", "winning_set",
@@ -50,12 +66,16 @@ def load_csv(path):
         return list(csv.DictReader(f))
 
 
-def merge(exact_rows, fuzzy_rows, warehouse=None):
+def merge(exact_rows, fuzzy_rows, warehouse=None, merge_config=None):
+    cfg = merge_config or load_merge_config()
+    carry_forward = cfg.get("comment_carry_forward", True)
+
     if warehouse:
         exact_rows = [r for r in exact_rows if str(r.get("warehouse_number", "")).strip() == str(warehouse)]
 
     best = {}
     source_tag = {}
+    exact_comments = {}
 
     for r in exact_rows:
         lead = r.get("lead_id", "").strip()
@@ -64,6 +84,9 @@ def merge(exact_rows, fuzzy_rows, warehouse=None):
             continue
         key = (lead, pos) if pos else (lead, f"__ce__{lead}")
         score = safe_float(r.get("similarity_score"))
+        comment = r.get("matching_comments", "").strip()
+        if comment:
+            exact_comments[key] = comment
         if key not in best or score > safe_float(best[key].get("similarity_score")):
             best[key] = dict(r)
             source_tag[key] = "exact"
@@ -78,6 +101,16 @@ def merge(exact_rows, fuzzy_rows, warehouse=None):
         if key not in best or score > safe_float(best[key].get("similarity_score")):
             best[key] = dict(r)
             source_tag[key] = "fuzzy"
+
+    carried = 0
+    if carry_forward:
+        for key, row in best.items():
+            if not row.get("matching_comments", "").strip() and key in exact_comments:
+                row["matching_comments"] = exact_comments[key]
+                carried += 1
+
+    if carried:
+        print(f"  Carried forward {carried} comments (comment_carry_forward={carry_forward} from rules JSON)")
 
     rows = list(best.values())
     rows.sort(key=lambda r: (-safe_float(r.get("similarity_score")), r.get("lead_id", ""), r.get("pos_id", "")))
@@ -123,15 +156,19 @@ def print_summary(exact_rows, fuzzy_rows, merged_rows, sources, warehouse):
 def main():
     parser = argparse.ArgumentParser(description="Merge exact and fuzzy match CSVs")
     parser.add_argument("--exact-csv", required=True, help="Path to exact-match output CSV")
-    parser.add_argument("--fuzzy-csv", required=True, help="Path to fuzzy pipeline matches.csv")
+    parser.add_argument("--fuzzy-csv", required=True, help="Path to fuzzy pipeline matches.csv or matches_enriched.csv")
     parser.add_argument("--warehouse", type=str, help="Filter to warehouse number")
     parser.add_argument("--output-csv", required=True, help="Output merged CSV path")
+    parser.add_argument("--rules-json", default=str(DEFAULT_RULES_PATH), help="Path to business rules JSON")
     args = parser.parse_args()
+
+    cfg = load_merge_config(args.rules_json)
+    print(f"Merge config from rules JSON: strategy={cfg['strategy']}, comment_carry_forward={cfg['comment_carry_forward']}")
 
     exact_rows = load_csv(args.exact_csv)
     fuzzy_rows = load_csv(args.fuzzy_csv)
 
-    merged_rows, sources = merge(exact_rows, fuzzy_rows, args.warehouse)
+    merged_rows, sources = merge(exact_rows, fuzzy_rows, args.warehouse, merge_config=cfg)
     print_summary(exact_rows, fuzzy_rows, merged_rows, sources, args.warehouse)
 
     out = Path(args.output_csv)

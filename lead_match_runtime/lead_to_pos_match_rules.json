@@ -409,7 +409,14 @@
     "semantic_role": "recall_add_on_for_exact_misses",
     "semantic_match_type": "Fuzzy",
     "semantic_auto_close": false,
-    "compare_exact_points_to_semantic_score": false
+    "compare_exact_points_to_semantic_score": false,
+    "merge_rule": {
+      "strategy": "highest_score_wins",
+      "scope": "per_lead_pos_pair",
+      "description": "For each (lead_id, pos_id) pair present in both exact CSV and fuzzy pipeline output, keep the row with the higher similarity_score. No duplicates in final output.",
+      "comment_carry_forward": true,
+      "comment_carry_forward_note": "When the winning row has no matching_comments but the losing row does, carry forward the losing row's comment. This preserves exact CSV field-match detail on rows the pipeline promoted to a higher score."
+    }
   },
 
   "lifecycle_states": ["New", "Potential", "Closed - Match", "Closed - Existing", "No Match"],
