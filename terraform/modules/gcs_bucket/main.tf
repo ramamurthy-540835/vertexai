@@ -43,7 +43,8 @@ resource "google_storage_bucket" "this" {
   }
 }
 
-data "google_project" "project" {
+#IAM role assignment disabled
+/*data "google_project" "project" {
   count      = var.grant_logging_permissions ? 1 : 0
   project_id = var.project_id
 }
@@ -53,4 +54,4 @@ resource "google_storage_bucket_iam_member" "allow_logging_writing" {
   bucket = google_storage_bucket.this.name
   role   = "roles/storage.objectCreator"
   member = "serviceAccount:service-${data.google_project.project[0].number}@gs-project-accounts.iam.gserviceaccount.com"
-}
+}*/
