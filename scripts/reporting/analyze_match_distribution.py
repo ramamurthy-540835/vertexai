@@ -609,6 +609,22 @@ def write_narrative_to_gcs(narrative: str, bucket_name: str, gcs_path: str):
             time.sleep(retry_sleep_seconds * attempt)
 
 
+def write_enriched_matches_to_gcs(df: pd.DataFrame, bucket_name: str, gcs_path: str):
+    """Write matches enriched by Stage 3 reasoning/comments to GCS."""
+    output = df.copy()
+    if "matching_comments" not in output.columns:
+        output["matching_comments"] = ""
+    output["matching_comments"] = output["matching_comments"].fillna("").astype(str)
+    needs_comment = output["matching_comments"].str.strip() == ""
+    output.loc[needs_comment, "matching_comments"] = output.loc[needs_comment, "match_reasoning"]
+
+    client = storage.Client()
+    bucket = client.bucket(bucket_name)
+    blob = bucket.blob(gcs_path)
+    blob.upload_from_string(output.to_csv(index=False), content_type="text/csv")
+    logger.info("Wrote enriched matches to gs://%s/%s", bucket_name, gcs_path)
+
+
 def main():
     _default_rules = load_rules_json(os.getenv("LEAD_POS_RULES_PATH", "lead_match_runtime/lead_to_pos_match_rules.json"))
 
@@ -713,6 +729,11 @@ def main():
     rows_updated = write_reasoning_to_cloud_sql(
         df, rules, args.run_id, args.warehouse, args.db_connection_string
     )
+
+    # Stage 3 owns comment/reasoning enrichment. Keep Stage 2 matches.csv
+    # lightweight and publish an enriched copy for review/reporting surfaces.
+    enriched_matches_path = f"reports/lead_match/{args.project}/{args.warehouse}/{args.run_id}/matches_enriched.csv"
+    write_enriched_matches_to_gcs(df, args.bucket, enriched_matches_path)
 
     if rows_updated > 0:
         if rows_updated == len(df):

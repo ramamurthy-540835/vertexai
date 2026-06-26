@@ -165,7 +165,7 @@ jobs:
           set -euo pipefail
           gcloud config set project "${PROJECT_ID}"
           REPORT_DIR="reports/lead_match/${PROJECT_ID}/${WAREHOUSE}/${RUN_ID}"
-          python3 scripts/generate_fuzzy_match_business_report.py \
+          python3 scripts/reporting/generate_fuzzy_match_business_report.py \
             --report-dir "${REPORT_DIR}" \
             --cleanup-old-reports \
             --rules-path lead_match_runtime/lead_to_pos_match_rules.json
@@ -175,7 +175,7 @@ jobs:
         if: env.GENERATE_ANALYSIS == 'true'
         run: |
           set -euo pipefail
-          python scripts/analyze_match_distribution.py \
+          python scripts/reporting/analyze_match_distribution.py \
             --bucket "${BUCKET_NAME}" \
             --project "${PROJECT_ID}" \
             --warehouse "${WAREHOUSE}" \
@@ -218,7 +218,7 @@ jobs:
         if: env.GENERATE_ANALYSIS == 'true' && env.VALIDATE_CLOUDSQL == 'true'
         run: |
           set -euo pipefail
-          python scripts/validate_match_analysis.py \
+          python scripts/monitoring/validate_match_analysis.py \
             --warehouse "${WAREHOUSE}" \
             --run-id "${RUN_ID}" \
             --matches-csv matches.csv \
@@ -245,7 +245,8 @@ jobs:
             if [[ "${GENERATE_ANALYSIS}" == "true" ]]; then
               echo "### Cloud SQL Reasoning + Gemini Distribution Analysis"
               echo "- Narrative: \`gs://${BUCKET_NAME}/reports/lead_match/${PROJECT_ID}/${WAREHOUSE}/${RUN_ID}/comparative_analysis.md\`"
-              echo "- Per-row reasoning written to Cloud SQL by \`scripts/analyze_match_distribution.py\`"
+              echo "- Enriched matches: \`gs://${BUCKET_NAME}/reports/lead_match/${PROJECT_ID}/${WAREHOUSE}/${RUN_ID}/matches_enriched.csv\`"
+              echo "- Per-row reasoning written to Cloud SQL by \`scripts/reporting/analyze_match_distribution.py\`"
               echo ""
             fi
             echo "### Next"

@@ -77,49 +77,6 @@ def _state_counts(cursor) -> dict[str, int]:
     return {str(row[0]): int(row[1]) for row in cursor.fetchall()}
 
 
-def _build_matching_comments(row: dict) -> str:
-    match_type = str(row.get("match_type") or "").strip()
-    score = row.get("final_score") or 0
-    parts = []
-    if match_type.lower() == "exact":
-        parts.append(f"Complete Match (score {score}/{score}).")
-        fields = []
-        if row.get("pos_business_name"):
-            fields.append("business_name -> oms_company")
-        if row.get("address_line_one"):
-            fields.append("address_line_one -> oms_address_line_1")
-        if row.get("email"):
-            fields.append("email -> oms_email_1")
-        if row.get("phone"):
-            fields.append("phone -> oms_phone_1")
-        if row.get("zip_code"):
-            fields.append("zip_code -> oms_zip")
-        if row.get("city"):
-            fields.append("city -> oms_city")
-        if row.get("state"):
-            fields.append("state -> oms_state")
-        if fields:
-            parts.append("Fields matched: " + ", ".join(fields) + ".")
-    else:
-        winning_set = row.get("winning_set") or ""
-        name_score = row.get("business_name_score")
-        addr_score = row.get("full_address_score")
-        email_boost = row.get("email_boost") or 0
-        phone_boost = row.get("phone_boost") or 0
-        parts.append(f"Fuzzy match (set {winning_set}, score {score:.2f}).")
-        if name_score is not None:
-            parts.append(f"name_score={name_score:.1f}")
-        if addr_score is not None:
-            parts.append(f"addr_score={addr_score:.1f}")
-        if email_boost:
-            parts.append(f"email_boost=+{email_boost:.0f}")
-        if phone_boost:
-            parts.append(f"phone_boost=+{phone_boost:.0f}")
-    if row.get("primary_transaction"):
-        parts.append("Designated as primary transaction (earliest fiscal period for this lead).")
-    return " ".join(parts)
-
-
 def _fetch_match_rows(cursor, schema: str, match_run_id: str) -> list[dict]:
     params = [match_run_id]
     clause = _scope_clause("m", params)
@@ -230,7 +187,9 @@ def _fetch_match_rows(cursor, schema: str, match_run_id: str) -> list[dict]:
             ordered[0]["primary_transaction"] = True
     for row in rows:
         row["matched_by"] = "System"
-        row["matching_comments"] = _build_matching_comments(row)
+        # Stage 2 is intentionally lightweight. Rich comments/reasoning are
+        # produced by lead_match_analysis.yml after GCS staging is complete.
+        row["matching_comments"] = ""
         row["similarity_score"] = row.get("final_score", 0)
         row["business_name_transaction"] = row.get("pos_business_name", "")
         oa = row.get("order_amount") or 0
