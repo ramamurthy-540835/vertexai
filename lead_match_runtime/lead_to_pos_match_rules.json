@@ -533,5 +533,59 @@
       },
       "closed_existing_comment": "Closed - Existing: POS transaction pre-dates lead within fiscal CE window."
     }
+  },
+
+  "writeback": {
+    "_purpose": "SQL writeback config for updating transaction and lead tables from final match output. Follows the Costco temp-table upsert pattern from configuration_adt.ini.",
+    "source_csv": "exact_fuzzy_combined_matches.csv",
+    "source_csv_note": "The merged final output from the analysis workflow. Read from GCS at reports/lead_match/{project}/{warehouse}/{run_id}/exact_fuzzy_combined_matches.csv",
+    "updated_by": "GCP",
+    "column_renames": {
+      "similarity_score": "match_score"
+    },
+    "transaction_update": {
+      "filter": "match_result IN ('Match', 'Potential')",
+      "dedup_by": "pos_id",
+      "dedup_keep": "highest_match_score",
+      "columns": ["pos_id", "lead_id", "match_type", "match_score", "primary_transaction", "updated_by", "updated_date", "matching_comments"],
+      "create_temp_table": "DROP TABLE IF EXISTS \"{schema}\".\"temp_transaction\"; CREATE TABLE \"{schema}\".\"temp_transaction\" (pos_id varchar(150) PRIMARY KEY, lead_id varchar(150), match_type varchar(100), match_score varchar(100), primary_transaction boolean, updated_date timestamp DEFAULT current_timestamp, updated_by VARCHAR(100), matching_comments TEXT)",
+      "upsert_query": "INSERT INTO \"{schema}\".\"transaction\" (pos_id, lead_id, match_type, match_score, primary_transaction, updated_by, updated_date, matching_comments) SELECT pos_id, lead_id, match_type, match_score::double precision, primary_transaction, updated_by, updated_date::timestamp without time zone, matching_comments FROM \"{schema}\".\"temp_transaction\" ON CONFLICT (pos_id) DO UPDATE SET lead_id = EXCLUDED.lead_id, updated_date = EXCLUDED.updated_date, updated_by = EXCLUDED.updated_by, match_type = EXCLUDED.match_type, match_score = EXCLUDED.match_score, primary_transaction = EXCLUDED.primary_transaction, matching_comments = EXCLUDED.matching_comments WHERE \"{schema}\".\"transaction\".match_score IS NULL OR \"{schema}\".\"transaction\".match_score < EXCLUDED.match_score"
+    },
+    "lead_update": {
+      "filter": "match_result IN ('Match', 'Potential')",
+      "dedup_by": "lead_id",
+      "dedup_keep": "highest_match_score",
+      "columns": ["lead_id", "account_number", "match_result", "updated_date", "updated_by"],
+      "create_temp_table": "DROP TABLE IF EXISTS \"{schema}\".\"temp_lead\"; CREATE TABLE \"{schema}\".\"temp_lead\" (lead_id varchar(150) PRIMARY KEY, account_number bigint, match_result varchar(100), updated_date timestamp DEFAULT current_timestamp, updated_by VARCHAR(100))",
+      "upsert_query": "INSERT INTO \"{schema}\".\"lead\" (lead_id, account_number, match_result, updated_date, updated_by) SELECT lead_id, account_number, match_result, updated_date::timestamp without time zone, updated_by FROM \"{schema}\".\"temp_lead\" ON CONFLICT (lead_id) DO UPDATE SET account_number = EXCLUDED.account_number, match_result = EXCLUDED.match_result, updated_date = EXCLUDED.updated_date, updated_by = EXCLUDED.updated_by WHERE (CASE \"{schema}\".\"lead\".match_result WHEN 'Potential' THEN 1 WHEN 'Match' THEN 2 ELSE 0 END < CASE EXCLUDED.match_result WHEN 'Potential' THEN 1 WHEN 'Match' THEN 2 ELSE 0 END) OR \"{schema}\".\"lead\".lead_status = 'Open'"
+    },
+    "closed_existing_update": {
+      "batch_size": 5000,
+      "query": "UPDATE \"{schema}\".\"lead\" SET lead_status = 'Closed - Existing', updated_by = 'GCP', updated_date = current_timestamp WHERE lead_id = ANY(%s)"
+    },
+    "mark_processed": {
+      "batch_size": 5000,
+      "non_fatal": true,
+      "query": "UPDATE \"{schema}\".\"transaction\" SET is_processed = true, process_datetime = current_timestamp WHERE pos_id = ANY(%s)"
+    }
+  },
+
+  "servicenow": {
+    "_purpose": "ServiceNow integration config. Used by the downstream ServiceNow writeback step (not part of the fuzzy pipeline).",
+    "match_result_update_url_note": "Set via env var or Secret Manager, not stored here",
+    "update_closed_existing_url_note": "Set via env var or Secret Manager, not stored here",
+    "insert_batch_size": 1000,
+    "max_retries": 3,
+    "retry_delay": 2,
+    "credentials_source": "secret_manager"
+  },
+
+  "storage": {
+    "report_prefix": "reports/lead_match/{project}/{warehouse}/{run_id}",
+    "exact_input_folder": "match/final_match_result",
+    "archive_folder": "archive/match/final_match_result",
+    "final_output_filename": "exact_fuzzy_combined_matches.csv",
+    "internal_output_filename": "matches_internal.csv",
+    "enriched_output_filename": "matches_enriched.csv"
   }
 }
