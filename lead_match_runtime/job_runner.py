@@ -199,63 +199,6 @@ def qualified_name(schema, name):
     return f"{quote_ident(schema)}.{quote_ident(name)}"
 
 
-WRITEBACK_INDEXES = (
-    (
-        "idx_mdd_run_pos_writeback",
-        "match_decision_detail",
-        "(match_run_id, pos_id)",
-    ),
-    (
-        "idx_mdd_run_lead_writeback",
-        "match_decision_detail",
-        "(match_run_id, lead_id)",
-    ),
-    (
-        "idx_mdd_lead_run_writeback",
-        "match_decision_detail",
-        "(lead_id, match_run_id)",
-    ),
-    (
-        "idx_transaction_pos_writeback",
-        "transaction",
-        "(pos_id)",
-    ),
-    (
-        "idx_transaction_lead_writeback",
-        "transaction",
-        "(lead_id)",
-    ),
-    (
-        "idx_lead_lead_id_writeback",
-        "lead",
-        "(lead_id)",
-    ),
-)
-
-
-def ensure_writeback_indexes(conn, schema):
-    previous_autocommit = conn.autocommit
-    conn.autocommit = True
-    cursor = conn.cursor()
-    try:
-        for index_name, table_name, columns in WRITEBACK_INDEXES:
-            print(f"start: ensure writeback index {index_name}")
-            started = time.monotonic()
-            cursor.execute(
-                f"""
-                CREATE INDEX CONCURRENTLY IF NOT EXISTS {quote_ident(index_name)}
-                ON {qualified_name(schema, table_name)} {columns}
-                """
-            )
-            print(
-                f"done: ensure writeback index {index_name}; "
-                f"seconds={time.monotonic() - started:.2f}"
-            )
-    finally:
-        cursor.close()
-        conn.autocommit = previous_autocommit
-
-
 def warehouse_scope():
     return get_warehouse_scope(BUSINESS_RULES)
 
@@ -1587,8 +1530,13 @@ def _run_exact_match(conn, job_started):
         print(
             "No deterministic exact rows were found for this warehouse scope."
         )
-    if exact_pos:
+    if exact_pos and DRY_RUN_WRITEBACK_BUSINESS_TABLES:
         write_back_match_results(conn, cursor, schema, run_id)
+    elif exact_pos:
+        print(
+            "Business table writeback skipped by JSON config: "
+            "environment.dry_run_controls.writeback_business_tables=false"
+        )
     conn.commit()
 
 
@@ -2074,6 +2022,19 @@ def _run_fuzzy_match(conn, job_started):
             ce_params = [*lead_ids, recall_gate, nearest_neighbor_limit,
                          periods_per_year, ce_window,
                          run_id, ce_lifecycle, ce_lifecycle, weight_formula, EMBEDDING_MODEL]
+            ce_txn_update_sql = """
+                    SELECT NULL::text AS pos_id
+                    WHERE false
+            """
+            if DRY_RUN_WRITEBACK_BUSINESS_TABLES:
+                ce_txn_update_sql = f"""
+                    UPDATE "{schema}"."transaction" t
+                    SET is_processed = true,
+                        process_datetime = CURRENT_TIMESTAMP,
+                        updated_by = 'lead_match_runtime_ce'
+                    FROM ce_inserted ci WHERE t.pos_id = ci.pos_id
+                    RETURNING t.pos_id
+                """
             cursor.execute(
                 f"""
                 WITH lead_batch AS (
@@ -2120,12 +2081,7 @@ def _run_fuzzy_match(conn, job_started):
                     RETURNING pos_id, lead_id
                 ),
                 ce_txn_update AS (
-                    UPDATE "{schema}"."transaction" t
-                    SET is_processed = true,
-                        process_datetime = CURRENT_TIMESTAMP,
-                        updated_by = 'lead_match_runtime_ce'
-                    FROM ce_inserted ci WHERE t.pos_id = ci.pos_id
-                    RETURNING t.pos_id
+                    {ce_txn_update_sql}
                 )
                 SELECT
                     (SELECT count(*) FROM ce_inserted) AS ce_stubs,
@@ -2138,7 +2094,11 @@ def _run_fuzzy_match(conn, job_started):
             ce_txns = int(ce_result[1]) if ce_result else 0
             if ce_stubs > 0:
                 conn.commit()
-                print(f"  CE stubs inserted: {ce_stubs}; transactions marked processed: {ce_txns}")
+                print(
+                    f"  CE stubs inserted: {ce_stubs}; "
+                    f"transactions marked processed: {ce_txns}; "
+                    f"business_writeback={'enabled' if DRY_RUN_WRITEBACK_BUSINESS_TABLES else 'skipped'}"
+                )
 
         inserted += batch_inserted
         query_duration = time.monotonic() - query_started
@@ -2163,19 +2123,19 @@ def _run_fuzzy_match(conn, job_started):
         f"processed_leads={processed_leads}; "
         f"duration_seconds={time.monotonic() - job_started:.2f}"
     )
-    if inserted > 0 and (not DRY_RUN or DRY_RUN_WRITEBACK_BUSINESS_TABLES):
+    if inserted > 0 and DRY_RUN_WRITEBACK_BUSINESS_TABLES:
         write_back_match_results(conn, cursor, schema, run_id)
-    elif DRY_RUN and inserted > 0:
+    elif inserted > 0:
         print(
-            "Dry-run business table writeback skipped; "
-            "set DRY_RUN_WRITEBACK_BUSINESS_TABLES=true to test lead/transaction updates"
+            "Business table writeback skipped by JSON config: "
+            "environment.dry_run_controls.writeback_business_tables=false"
         )
     audit_status = "DRY_RUN" if DRY_RUN else "COMPLETED"
     audit_comments = (
         f"match_run_id={run_id}; "
         f"warehouse_scope={warehouse_scope_label()}; "
         f"dry_run={DRY_RUN}; "
-        f"business_writeback={'enabled' if (not DRY_RUN or DRY_RUN_WRITEBACK_BUSINESS_TABLES) else 'skipped'}"
+        f"business_writeback={'enabled' if DRY_RUN_WRITEBACK_BUSINESS_TABLES else 'skipped'}"
     )
     write_match_audit(
         cursor,
@@ -2263,13 +2223,7 @@ def _ensure_indexes(conn, job_started):
             'idx_leads_embeddings_combined_hnsw',
             'idx_pos_embeddings_combined_hnsw',
             'idx_leads_embeddings_lead_id_unique',
-            'idx_pos_embeddings_pos_id_unique',
-            'idx_mdd_run_pos_writeback',
-            'idx_mdd_run_lead_writeback',
-            'idx_mdd_lead_run_writeback',
-            'idx_transaction_pos_writeback',
-            'idx_transaction_lead_writeback',
-            'idx_lead_lead_id_writeback'
+            'idx_pos_embeddings_pos_id_unique'
           )
           AND (NOT i.indisvalid OR NOT i.indisready)
         """,
@@ -2414,18 +2368,7 @@ def _ensure_indexes(conn, job_started):
         """,
     )
 
-    for index_name, table_name, columns in WRITEBACK_INDEXES:
-        execute(
-            f"create writeback index {index_name}",
-            f"""
-            CREATE INDEX CONCURRENTLY IF NOT EXISTS {quote_ident(index_name)}
-            ON {qualified_name(schema, table_name)} {columns}
-            """,
-        )
-
     for table in required_tables:
-        execute(f"analyze {table}", f"ANALYZE {qualified_name(schema, table)}")
-    for table in ("match_decision_detail", "transaction", "lead"):
         execute(f"analyze {table}", f"ANALYZE {qualified_name(schema, table)}")
 
     index_states = [
@@ -2446,20 +2389,14 @@ def _ensure_indexes(conn, job_started):
                 'idx_leads_embeddings_combined_hnsw',
                 'idx_pos_embeddings_combined_hnsw',
                 'idx_leads_embeddings_lead_id_unique',
-                'idx_pos_embeddings_pos_id_unique',
-                'idx_mdd_run_pos_writeback',
-                'idx_mdd_run_lead_writeback',
-                'idx_mdd_lead_run_writeback',
-                'idx_transaction_pos_writeback',
-                'idx_transaction_lead_writeback',
-                'idx_lead_lead_id_writeback'
+                'idx_pos_embeddings_pos_id_unique'
               )
             ORDER BY c.relname
             """,
             (schema,),
         )
     ]
-    if len(index_states) != 10 or not all(row["valid"] and row["ready"] for row in index_states):
+    if len(index_states) != 4 or not all(row["valid"] and row["ready"] for row in index_states):
         raise RuntimeError(f"Index verification failed: {index_states}")
 
     print(
