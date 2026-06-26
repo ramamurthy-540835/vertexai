@@ -1356,7 +1356,6 @@ def run_exact_match():
     job_started = time.monotonic()
     conn = connect()
     try:
-        ensure_writeback_indexes(conn, schema_name())
         _run_exact_match(conn, job_started)
     finally:
         conn.close()
