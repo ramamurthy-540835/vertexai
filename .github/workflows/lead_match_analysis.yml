@@ -246,17 +246,17 @@ jobs:
             --exact-csv /tmp/exact_matching.csv \
             --fuzzy-csv /tmp/matches_enriched.csv \
             --warehouse "${WAREHOUSE}" \
-            --output-csv /tmp/primary_match_output_merged.csv
+            --output-csv /tmp/exact_fuzzy_combined_matches.csv
 
           # Upload merged output to GCS
-          MERGED_DST="gs://${BUCKET_NAME}/${REPORT_DIR}/primary_match_output_merged.csv"
-          gsutil cp /tmp/primary_match_output_merged.csv "${MERGED_DST}"
+          MERGED_DST="gs://${BUCKET_NAME}/${REPORT_DIR}/exact_fuzzy_combined_matches.csv"
+          gsutil cp /tmp/exact_fuzzy_combined_matches.csv "${MERGED_DST}"
           echo "✓ Merged output: ${MERGED_DST}"
 
           # Validate: no duplicates, comments present
           python3 -c "
           import csv, sys
-          with open('/tmp/primary_match_output_merged.csv') as f:
+          with open('/tmp/exact_fuzzy_combined_matches.csv') as f:
               rows = list(csv.DictReader(f))
           keys = [(r['lead_id'], r['pos_id']) for r in rows if r['pos_id'].strip()]
           dupes = len(keys) - len(set(keys))
@@ -304,7 +304,7 @@ jobs:
               echo ""
               if [[ -n "${EXACT_CSV_GCS_PATH}" ]]; then
                 echo "### Merged Final Output"
-                echo "- \`gs://${BUCKET_NAME}/reports/lead_match/${PROJECT_ID}/${WAREHOUSE}/${RUN_ID}/primary_match_output_merged.csv\`"
+                echo "- \`gs://${BUCKET_NAME}/reports/lead_match/${PROJECT_ID}/${WAREHOUSE}/${RUN_ID}/exact_fuzzy_combined_matches.csv\`"
                 echo "- Exact CSV (comments preserved) + Fuzzy enriched (comments generated) — higher score wins, no duplicates"
                 echo ""
               fi

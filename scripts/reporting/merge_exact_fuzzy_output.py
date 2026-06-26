@@ -9,7 +9,7 @@ Usage:
         --exact-csv reports/exact_matching/exact_matching.csv \
         --fuzzy-csv reports/lead_match/ctoteam/115/<run_id>/matches.csv \
         --warehouse 115 \
-        --output-csv reports/final/primary_match_output_merged.csv
+        --output-csv reports/final/exact_fuzzy_combined_matches.csv
 """
 
 from __future__ import annotations
