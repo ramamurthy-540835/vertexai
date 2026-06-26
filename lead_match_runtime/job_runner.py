@@ -71,6 +71,7 @@ from lead_match_runtime.business_rules import (
     get_vertex_location,
     get_vertex_project,
     get_vertex_timeout,
+    get_vertex_timeout_ms,
     get_warehouse_scope,
     load_business_rules,
     precision_score_formula,
@@ -329,12 +330,15 @@ def vertex_client():
     location = get_vertex_location(BUSINESS_RULES)
     if not project:
         raise RuntimeError("Missing vertex_ai.project_id in rules")
-    timeout = get_vertex_timeout(BUSINESS_RULES)
+    timeout_seconds = get_vertex_timeout(BUSINESS_RULES)
+    timeout_ms = get_vertex_timeout_ms(BUSINESS_RULES)
+    print(f"VERTEX_TIMEOUT_SECONDS={timeout_seconds}")
+    print(f"VERTEX_TIMEOUT_MS={timeout_ms}")
     return genai.Client(
         vertexai=True,
         project=project,
         location=location,
-        http_options=types.HttpOptions(api_version="v1", timeout=timeout),
+        http_options=types.HttpOptions(api_version="v1", timeout=timeout_ms),
     )
 
 

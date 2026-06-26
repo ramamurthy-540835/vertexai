@@ -49,6 +49,7 @@ from lead_match_runtime.business_rules import (
     get_vertex_location,
     get_vertex_project,
     get_vertex_timeout,
+    get_vertex_timeout_ms,
     load_business_rules,
     matching_set_by_id,
     matching_sets,
@@ -88,6 +89,14 @@ DEBUG_HEADER = [
     "email_boost", "phone_boost", "final_score", "winning_set",
     "decision", "reason",
 ]
+
+SIX_SET_COLUMNS: list[str] = []
+for _sn in range(1, 7):
+    for _col in ("name_score", "address_score", "base_score",
+                 "email_boost", "phone_boost", "final_score"):
+        SIX_SET_COLUMNS.append(f"set_{_sn}_{_col}")
+
+DEBUG_HEADER_EXTENDED = DEBUG_HEADER + SIX_SET_COLUMNS
 
 BOOST_FIELD_MAP = {
     "email_1_oms": "oms_email_1",
@@ -193,11 +202,15 @@ def load_exact_exclusions(csv_path: str | None) -> tuple[set[str], set[str]]:
 # ═══════════════════════════════════════════════════════════════
 
 def init_vertex_client(config: dict) -> genai.Client:
+    timeout_seconds = get_vertex_timeout(config)
+    timeout_ms = get_vertex_timeout_ms(config)
+    print(f"VERTEX_TIMEOUT_SECONDS={timeout_seconds}")
+    print(f"VERTEX_TIMEOUT_MS={timeout_ms}")
     return genai.Client(
         vertexai=True,
         project=get_vertex_project(config),
         location=get_vertex_location(config),
-        http_options=types.HttpOptions(api_version="v1", timeout=get_vertex_timeout(config)),
+        http_options=types.HttpOptions(api_version="v1", timeout=timeout_ms),
     )
 
 
@@ -516,6 +529,7 @@ def _cosine(a: np.ndarray | None, b: np.ndarray | None) -> float | None:
 
 def score_six_sets(li: int, pi: int,
                    lead_embs: dict, pos_embs: dict,
+                   lead: dict, pos: dict,
                    config: dict) -> tuple[float | None, int, float | None, float | None, list[dict]]:
     lead_name = lead_embs["name"][li]
     lead_addr = lead_embs["address"][li]
@@ -543,13 +557,24 @@ def score_six_sets(li: int, pi: int,
         addr_cos = _cosine(lead_addr, pos_addr_emb)
 
         if name_cos is None or addr_cos is None:
-            all_scores.append({"set": sid, "score": None, "name": None, "addr": None, "skipped": True})
+            all_scores.append({"set": sid, "score": None, "name": None, "addr": None,
+                               "email_boost": 0, "phone_boost": 0, "final": None, "skipped": True})
             continue
 
         name_pct = name_cos * 100
         addr_pct = addr_cos * 100
         score = calculate_semantic_precision_score(addr_pct, name_pct, config=config)
-        all_scores.append({"set": sid, "score": score, "name": name_pct, "addr": addr_pct, "skipped": False})
+
+        set_def = matching_set_by_id(config, sid)
+        _, s_email, s_phone = apply_deterministic_boost(
+            score, lead, pos, config, winning_set_def=set_def)
+        s_final = normalize_fuzzy_final_score(
+            score + s_email + s_phone, config=config,
+            lead_id=lead["lead_id"], pos_id=pos["pos_id"])
+
+        all_scores.append({"set": sid, "score": score, "name": name_pct, "addr": addr_pct,
+                           "email_boost": s_email, "phone_boost": s_phone,
+                           "final": s_final, "skipped": False})
 
         if score > best_score:
             best_score = score
@@ -633,35 +658,41 @@ def run_pipeline(args: argparse.Namespace) -> dict:
 
         if fiscal == "OAF":
             stats["oaf_dropped"] += 1
-            debug_rows.append({
+            oaf_row = {
                 "lead_id": lead["lead_id"], "pos_id": pos["pos_id"],
                 "warehouse_number": wh, "expected_relation": pos.get("expected_relation", ""),
                 "combined_similarity": round(combined_sim * 100, 2),
                 "name_score": "", "address_score": "",
                 "email_boost": 0, "phone_boost": 0, "final_score": "",
                 "winning_set": "", "decision": "OAF", "reason": "Pre-lead > 6 periods",
-            })
+            }
+            for col in SIX_SET_COLUMNS:
+                oaf_row[col] = ""
+            debug_rows.append(oaf_row)
             continue
 
         if fiscal == "CE":
             stats["ce_stubs"] += 1
-            debug_rows.append({
+            ce_row = {
                 "lead_id": lead["lead_id"], "pos_id": pos["pos_id"],
                 "warehouse_number": wh, "expected_relation": pos.get("expected_relation", ""),
                 "combined_similarity": round(combined_sim * 100, 2),
                 "name_score": "", "address_score": "",
                 "email_boost": 0, "phone_boost": 0, "final_score": "",
                 "winning_set": "", "decision": "CE", "reason": "Pre-lead within 6 periods",
-            })
+            }
+            for col in SIX_SET_COLUMNS:
+                ce_row[col] = ""
+            debug_rows.append(ce_row)
             continue
 
         # NORMAL: score six sets
         stats["normal_scored"] += 1
-        best_score, winning_set, name_score, addr_score, _ = score_six_sets(
-            li, pi, lead_embs, pos_embs, config)
+        best_score, winning_set, name_score, addr_score, all_set_scores = score_six_sets(
+            li, pi, lead_embs, pos_embs, lead, pos, config)
 
         if best_score is None:
-            debug_rows.append({
+            no_emb_row = {
                 "lead_id": lead["lead_id"], "pos_id": pos["pos_id"],
                 "warehouse_number": wh, "expected_relation": pos.get("expected_relation", ""),
                 "combined_similarity": round(combined_sim * 100, 2),
@@ -669,7 +700,12 @@ def run_pipeline(args: argparse.Namespace) -> dict:
                 "email_boost": 0, "phone_boost": 0, "final_score": "",
                 "winning_set": "", "decision": "NO_EMBEDDING",
                 "reason": "No valid set scored",
-            })
+            }
+            for sn in range(1, 7):
+                for col in ("name_score", "address_score", "base_score",
+                            "email_boost", "phone_boost", "final_score"):
+                    no_emb_row[f"set_{sn}_{col}"] = ""
+            debug_rows.append(no_emb_row)
             continue
 
         set_def = matching_set_by_id(config, winning_set)
@@ -681,7 +717,7 @@ def run_pipeline(args: argparse.Namespace) -> dict:
 
         decision = "Potential" if final is not None and final >= qualify_min else "No Match"
 
-        debug_rows.append({
+        debug_row = {
             "lead_id": lead["lead_id"], "pos_id": pos["pos_id"],
             "warehouse_number": wh, "expected_relation": pos.get("expected_relation", ""),
             "combined_similarity": round(combined_sim * 100, 2),
@@ -692,7 +728,22 @@ def run_pipeline(args: argparse.Namespace) -> dict:
             "winning_set": winning_set,
             "decision": decision,
             "reason": f"Set {winning_set}: base={best_score:.2f} + boosts -> {final}",
-        })
+        }
+        set_lookup = {s["set"]: s for s in all_set_scores}
+        for sn in range(1, 7):
+            s_data = set_lookup.get(sn, {})
+            if s_data.get("skipped") or s_data.get("score") is None:
+                for col in ("name_score", "address_score", "base_score",
+                            "email_boost", "phone_boost", "final_score"):
+                    debug_row[f"set_{sn}_{col}"] = ""
+            else:
+                debug_row[f"set_{sn}_name_score"] = round(s_data["name"], 3)
+                debug_row[f"set_{sn}_address_score"] = round(s_data["addr"], 3)
+                debug_row[f"set_{sn}_base_score"] = round(s_data["score"], 3)
+                debug_row[f"set_{sn}_email_boost"] = s_data.get("email_boost", 0)
+                debug_row[f"set_{sn}_phone_boost"] = s_data.get("phone_boost", 0)
+                debug_row[f"set_{sn}_final_score"] = round(s_data["final"], 3) if s_data.get("final") is not None else ""
+        debug_rows.append(debug_row)
 
         if final is None:
             stats["below_threshold"] += 1
@@ -826,7 +877,9 @@ def _write_output_csv(results: list[dict], output_dir: Path, wh: int) -> None:
 
 
 def _write_debug_csv(rows: list[dict], output_dir: Path) -> None:
-    df = pd.DataFrame(rows, columns=DEBUG_HEADER)
+    has_six_set = any(f"set_1_name_score" in r for r in rows)
+    header = DEBUG_HEADER_EXTENDED if has_six_set else DEBUG_HEADER
+    df = pd.DataFrame(rows, columns=header)
     df.to_csv(output_dir / "fuzzy_file_mode_debug_candidates.csv", index=False)
 
 

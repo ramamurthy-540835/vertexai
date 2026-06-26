@@ -274,6 +274,11 @@ def get_vertex_timeout(config: dict[str, Any]) -> float:
     return float(_require(_vertex_ai(config), "timeout_seconds", "environment.vertex_ai"))
 
 
+def get_vertex_timeout_ms(config: dict[str, Any]) -> int:
+    """Convert JSON timeout_seconds to milliseconds for google-genai HttpOptions."""
+    return int(get_vertex_timeout(config) * 1000)
+
+
 def get_gemini_model(config: dict[str, Any]) -> str:
     return str(_require(_models(config), "gemini_flash", "environment.models"))
 
