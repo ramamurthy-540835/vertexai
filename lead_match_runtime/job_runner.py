@@ -199,6 +199,63 @@ def qualified_name(schema, name):
     return f"{quote_ident(schema)}.{quote_ident(name)}"
 
 
+WRITEBACK_INDEXES = (
+    (
+        "idx_mdd_run_pos_writeback",
+        "match_decision_detail",
+        "(match_run_id, pos_id)",
+    ),
+    (
+        "idx_mdd_run_lead_writeback",
+        "match_decision_detail",
+        "(match_run_id, lead_id)",
+    ),
+    (
+        "idx_mdd_lead_run_writeback",
+        "match_decision_detail",
+        "(lead_id, match_run_id)",
+    ),
+    (
+        "idx_transaction_pos_writeback",
+        "transaction",
+        "(pos_id)",
+    ),
+    (
+        "idx_transaction_lead_writeback",
+        "transaction",
+        "(lead_id)",
+    ),
+    (
+        "idx_lead_lead_id_writeback",
+        "lead",
+        "(lead_id)",
+    ),
+)
+
+
+def ensure_writeback_indexes(conn, schema):
+    previous_autocommit = conn.autocommit
+    conn.autocommit = True
+    cursor = conn.cursor()
+    try:
+        for index_name, table_name, columns in WRITEBACK_INDEXES:
+            print(f"start: ensure writeback index {index_name}")
+            started = time.monotonic()
+            cursor.execute(
+                f"""
+                CREATE INDEX CONCURRENTLY IF NOT EXISTS {quote_ident(index_name)}
+                ON {qualified_name(schema, table_name)} {columns}
+                """
+            )
+            print(
+                f"done: ensure writeback index {index_name}; "
+                f"seconds={time.monotonic() - started:.2f}"
+            )
+    finally:
+        cursor.close()
+        conn.autocommit = previous_autocommit
+
+
 def warehouse_scope():
     return get_warehouse_scope(BUSINESS_RULES)
 
@@ -1061,6 +1118,9 @@ def _fuzzy_set_sql_fragments(config: dict):
 
 
 def write_back_match_results(conn, cursor, schema, run_id):
+    if MATCH_STATEMENT_TIMEOUT_MS > 0:
+        cursor.execute(f"SET LOCAL statement_timeout = {MATCH_STATEMENT_TIMEOUT_MS}")
+        print(f"writeback statement_timeout set to {MATCH_STATEMENT_TIMEOUT_MS}ms")
     types = exact_match_types()
     min_score = exact_qualified_min_score()
     exact_state = exact_lifecycle_state(BUSINESS_RULES)
@@ -1069,6 +1129,8 @@ def write_back_match_results(conn, cursor, schema, run_id):
     placeholders = _exact_type_placeholders(types)
     fuzzy_lifecycle_params = []
     fuzzy_lifecycle_case = _fuzzy_lifecycle_case("final_score", fuzzy_lifecycle_params)
+    print(f"Starting business table writeback for match_run_id={run_id}")
+    tx_started = time.monotonic()
     cursor.execute(
         f"""
         WITH base AS (
@@ -1186,7 +1248,14 @@ def write_back_match_results(conn, cursor, schema, run_id):
         ),
     )
     transaction_updates = cursor.rowcount
+    conn.commit()
+    print(
+        f"Transaction writeback complete: transaction_updates={transaction_updates}; "
+        f"seconds={time.monotonic() - tx_started:.2f}"
+    )
 
+    if MATCH_STATEMENT_TIMEOUT_MS > 0:
+        cursor.execute(f"SET LOCAL statement_timeout = {MATCH_STATEMENT_TIMEOUT_MS}")
     lead_lifecycle_params = []
     lead_lifecycle_case = _fuzzy_lifecycle_case("m.final_score", lead_lifecycle_params)
     fuzzy_states = tuple(
@@ -1199,6 +1268,7 @@ def write_back_match_results(conn, cursor, schema, run_id):
     if potential_states:
         potential_placeholders = ", ".join(["%s"] * len(potential_states))
         potential_condition = f"match_result IN ({potential_placeholders})"
+    lead_started = time.monotonic()
     cursor.execute(
         f"""
         WITH classified AS (
@@ -1281,7 +1351,8 @@ def write_back_match_results(conn, cursor, schema, run_id):
     conn.commit()
     print(
         f"Business table writeback complete: "
-        f"transaction_updates={transaction_updates}; lead_updates={lead_updates}"
+        f"transaction_updates={transaction_updates}; lead_updates={lead_updates}; "
+        f"lead_seconds={time.monotonic() - lead_started:.2f}"
     )
     return transaction_updates, lead_updates
 
@@ -1342,6 +1413,7 @@ def run_exact_match():
     job_started = time.monotonic()
     conn = connect()
     try:
+        ensure_writeback_indexes(conn, schema_name())
         _run_exact_match(conn, job_started)
     finally:
         conn.close()
@@ -2191,7 +2263,13 @@ def _ensure_indexes(conn, job_started):
             'idx_leads_embeddings_combined_hnsw',
             'idx_pos_embeddings_combined_hnsw',
             'idx_leads_embeddings_lead_id_unique',
-            'idx_pos_embeddings_pos_id_unique'
+            'idx_pos_embeddings_pos_id_unique',
+            'idx_mdd_run_pos_writeback',
+            'idx_mdd_run_lead_writeback',
+            'idx_mdd_lead_run_writeback',
+            'idx_transaction_pos_writeback',
+            'idx_transaction_lead_writeback',
+            'idx_lead_lead_id_writeback'
           )
           AND (NOT i.indisvalid OR NOT i.indisready)
         """,
@@ -2336,7 +2414,18 @@ def _ensure_indexes(conn, job_started):
         """,
     )
 
+    for index_name, table_name, columns in WRITEBACK_INDEXES:
+        execute(
+            f"create writeback index {index_name}",
+            f"""
+            CREATE INDEX CONCURRENTLY IF NOT EXISTS {quote_ident(index_name)}
+            ON {qualified_name(schema, table_name)} {columns}
+            """,
+        )
+
     for table in required_tables:
+        execute(f"analyze {table}", f"ANALYZE {qualified_name(schema, table)}")
+    for table in ("match_decision_detail", "transaction", "lead"):
         execute(f"analyze {table}", f"ANALYZE {qualified_name(schema, table)}")
 
     index_states = [
@@ -2357,14 +2446,20 @@ def _ensure_indexes(conn, job_started):
                 'idx_leads_embeddings_combined_hnsw',
                 'idx_pos_embeddings_combined_hnsw',
                 'idx_leads_embeddings_lead_id_unique',
-                'idx_pos_embeddings_pos_id_unique'
+                'idx_pos_embeddings_pos_id_unique',
+                'idx_mdd_run_pos_writeback',
+                'idx_mdd_run_lead_writeback',
+                'idx_mdd_lead_run_writeback',
+                'idx_transaction_pos_writeback',
+                'idx_transaction_lead_writeback',
+                'idx_lead_lead_id_writeback'
               )
             ORDER BY c.relname
             """,
             (schema,),
         )
     ]
-    if len(index_states) != 4 or not all(row["valid"] and row["ready"] for row in index_states):
+    if len(index_states) != 10 or not all(row["valid"] and row["ready"] for row in index_states):
         raise RuntimeError(f"Index verification failed: {index_states}")
 
     print(

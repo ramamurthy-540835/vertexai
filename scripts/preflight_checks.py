@@ -346,6 +346,36 @@ def tier2_connectivity(rules):
                 else:
                     checks.append(_fail(f"table.{table}", "NOT FOUND"))
 
+            writeback_indexes = [
+                "idx_mdd_run_pos_writeback",
+                "idx_mdd_run_lead_writeback",
+                "idx_mdd_lead_run_writeback",
+                "idx_transaction_pos_writeback",
+                "idx_transaction_lead_writeback",
+                "idx_lead_lead_id_writeback",
+            ]
+            writeback_index_placeholders = ", ".join(["%s"] * len(writeback_indexes))
+            cur.execute(
+                f"""
+                SELECT c.relname, i.indisvalid, i.indisready
+                FROM pg_index i
+                JOIN pg_class c ON c.oid = i.indexrelid
+                JOIN pg_namespace n ON n.oid = c.relnamespace
+                WHERE n.nspname = %s
+                  AND c.relname IN ({writeback_index_placeholders})
+                """,
+                (csql["schema"], *writeback_indexes),
+            )
+            index_state = {name: (valid, ready) for name, valid, ready in cur.fetchall()}
+            for index_name in writeback_indexes:
+                state = index_state.get(index_name)
+                if state is None:
+                    checks.append(_warn(f"index.{index_name}", "missing; exact-match job will create it before writeback"))
+                elif all(state):
+                    checks.append(_pass(f"index.{index_name}", "valid"))
+                else:
+                    checks.append(_warn(f"index.{index_name}", f"invalid_or_not_ready={state}"))
+
             cur.close()
             conn.close()
         except Exception as e:
