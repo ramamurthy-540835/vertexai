@@ -155,9 +155,9 @@ def compute_deterministic_facts(
     dr = rules.get("decision_rules", {})
     exact_type = str(dr.get("exact_match_type", "Exact"))
     fuzzy_type = str(dr.get("fuzzy_match_type", "Fuzzy"))
-    mr_type = str(dr.get("manual_review_match_type", "Manual Review"))
-    exact_state = str(dr.get("exact_lifecycle_state", "Closed - Match"))
-    fuzzy_state = str(dr.get("fuzzy_lifecycle_state", "Potential"))
+    mr_type = str(dr["manual_review_match_type"])
+    exact_state = str(dr["exact_lifecycle_state"])
+    fuzzy_state = str(dr["fuzzy_lifecycle_state"])
     fuzzy_floor = float(dr["fuzzy_qualify_min_score"])
     fuzzy_ceil = float(dr["fuzzy_max_score"])
     subtiers = sorted(
@@ -264,10 +264,12 @@ def compute_deterministic_facts(
 def compute_data_integrity_flags(
     summary: dict,
     df: pd.DataFrame,
+    rules: dict | None = None,
 ) -> dict:
     """Check embedding coverage vs exact-claimed exclusions."""
-    exact_claimed_leads = int(df[df["match_type"] == "Exact"]["lead_id"].nunique())
-    exact_claimed_pos = int(df[df["match_type"] == "Exact"]["pos_id"].nunique())
+    exact_type = (rules or {}).get("decision_rules", {}).get("exact_match_type", "Exact")
+    exact_claimed_leads = int(df[df["match_type"] == exact_type]["lead_id"].nunique())
+    exact_claimed_pos = int(df[df["match_type"] == exact_type]["pos_id"].nunique())
 
     lead_rows = int(summary.get("lead_rows", 0))
     pos_rows = int(summary.get("pos_rows", 0))
@@ -406,8 +408,11 @@ def build_analysis_md(
     integrity: dict,
     narrative: str,
     generated_at: str,
+    rules: dict | None = None,
 ) -> str:
     """Build the per-warehouse analysis.md document."""
+    if rules is None:
+        rules = {}
     lines = [f"# Parallel Run Analysis — Warehouse {warehouse}"]
     lines.append("")
     lines.append(f"**Run:** `{run_id}`")
@@ -452,13 +457,22 @@ def build_analysis_md(
 
     # Band counts
     b = facts["band_summary"]
+    dr = rules.get("decision_rules", {})
+    subtiers = sorted(
+        dr.get("optional_confidence_subtiers", {}).get("subtiers", []),
+        key=lambda s: -float(s["min_score"]),
+    )
     lines.append("## Confidence Bands (non-exact)")
     lines.append("")
     lines.append(f"| Band | Range | Count |")
     lines.append(f"|------|-------|-------|")
-    lines.append(f"| Matching High | 90 – 99.999 | {b['matching_high_90_99']:,} |")
-    lines.append(f"| Potential Medium | 85 – 89.999 | {b['potential_medium_85_89']:,} |")
-    lines.append(f"| Potential Low | 70 – 84.999 | {b['potential_low_70_84']:,} |")
+    if len(subtiers) >= 3:
+        lines.append(f"| Matching High | {subtiers[0]['min_score']} – {subtiers[0]['max_score']} | {b['matching_high_90_99']:,} |")
+        lines.append(f"| Potential Medium | {subtiers[1]['min_score']} – {subtiers[1]['max_score']} | {b['potential_medium_85_89']:,} |")
+        lines.append(f"| Potential Low | {subtiers[2]['min_score']} – {subtiers[2]['max_score']} | {b['potential_low_70_84']:,} |")
+    else:
+        for st in subtiers:
+            lines.append(f"| {st['name']} | {st['min_score']} – {st['max_score']} | {b.get(st['name'], 0):,} |")
     lines.append("")
 
     # Lifecycle split
@@ -491,8 +505,15 @@ def build_analysis_md(
     # Review workload
     lines.append("## Review Workload")
     lines.append("")
+    dr_rw = rules.get("decision_rules", {})
+    rw_floor = dr_rw["fuzzy_qualify_min_score"]
+    rw_subtiers = sorted(
+        dr_rw.get("optional_confidence_subtiers", {}).get("subtiers", []),
+        key=lambda s: float(s["min_score"]),
+    )
+    rw_high_min = float(rw_subtiers[-1]["min_score"]) if rw_subtiers else rw_floor
     lines.append(
-        f"Rows in review queue (70 – 89.999): **{facts['review_workload_rows']:,}** "
+        f"Rows in review queue ({rw_floor} – {float(rw_high_min) - 0.001}): **{facts['review_workload_rows']:,}** "
         f"({facts['review_workload_pct']}% of all match rows)"
     )
     lines.append("")
@@ -550,6 +571,12 @@ def call_gemini_comparative(
             "counts": data["facts"]["counts"],
         }
 
+    dr_comp = rules.get("decision_rules", {})
+    comp_subtiers = sorted(
+        dr_comp.get("optional_confidence_subtiers", {}).get("subtiers", []),
+        key=lambda s: -float(s["min_score"]),
+    )
+    band_label = "/".join(str(int(float(s["min_score"]))) for s in comp_subtiers) if comp_subtiers else "configured"
     prompt = f"""You are a lead-to-POS match scoring analyst comparing results across multiple warehouses.
 
 PER-WAREHOUSE SUMMARY:
@@ -558,7 +585,7 @@ PER-WAREHOUSE SUMMARY:
 Compare these warehouses and answer:
 1. **Distribution comparison**: Do peaks/means sit in the same place across warehouses? Are shapes similar (all skewed the same way, or do some differ)?
 2. **Review workload variation**: Does the review-queue percentage vary significantly? Which warehouse has the highest burden?
-3. **Threshold portability**: Based on the score distributions, would one global threshold (the current 90/85/70 bands) work equally well for all warehouses, or does one warehouse's distribution suggest per-warehouse calibration is needed?
+3. **Threshold portability**: Based on the score distributions, would one global threshold (the current {band_label} bands) work equally well for all warehouses, or does one warehouse's distribution suggest per-warehouse calibration is needed?
 4. **Conclusion**: State clearly whether one global threshold fits the fleet or per-warehouse calibration is recommended, and why.
 
 Be concise and data-driven. Do not repeat the raw numbers — interpret them."""
@@ -761,10 +788,9 @@ def main():
         or os.getenv("PROJECT_ID")
         or args.project
     )
-    gemini_location = os.getenv("VERTEX_LOCATION", "us-central1")
-    gemini_model = os.getenv("GEMINI_MODEL", "gemini-3.5-flash")
-
     rules = load_rules_json(args.rules_json)
+    gemini_location = os.getenv("VERTEX_LOCATION", rules["environment"]["vertex_ai"]["location"])
+    gemini_model = os.getenv("GEMINI_MODEL", rules["environment"]["models"]["gemini_flash"])
     gcs_client = storage.Client()
     generated_at = datetime.now(timezone.utc).isoformat()
 
@@ -802,7 +828,7 @@ def main():
         logger.info("  Loaded %d match rows", len(df))
 
         facts = compute_deterministic_facts(summary, df, rules)
-        integrity = compute_data_integrity_flags(summary, df)
+        integrity = compute_data_integrity_flags(summary, df, rules=rules)
 
         if integrity["status"] == "suspect":
             for flag in integrity["flags"]:
@@ -819,7 +845,7 @@ def main():
             narrative = "*Gemini model not available — narrative skipped.*"
 
         # Build analysis.md
-        analysis_md = build_analysis_md(wh, run_id, facts, integrity, narrative, generated_at)
+        analysis_md = build_analysis_md(wh, run_id, facts, integrity, narrative, generated_at, rules=rules)
 
         # Build analysis_facts.json
         analysis_facts = {

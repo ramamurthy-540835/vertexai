@@ -48,8 +48,29 @@ from lead_match_runtime.business_rules import (
     no_match_lifecycle_state,
     normalize_email,
     normalize_phone,
+    get_cloudsql_connection_name,
+    get_cloudsql_socket_dir,
+    get_db_host,
+    get_db_name,
+    get_db_port,
+    get_dry_run,
+    get_dry_run_match_row_limit,
+    get_dry_run_writeback,
+    get_fiscal_period,
+    get_fiscal_year,
+    get_hnsw_ef_construction,
+    get_hnsw_ef_search,
+    get_hnsw_m,
+    get_hnsw_maintenance_work_mem,
     get_project_id,
+    get_safety_flag,
     get_schema,
+    get_tuning_bool,
+    get_tuning_float,
+    get_tuning_int,
+    get_vertex_location,
+    get_vertex_project,
+    get_vertex_timeout,
     get_warehouse_scope,
     load_business_rules,
     precision_score_formula,
@@ -62,37 +83,26 @@ BUSINESS_RULES = load_business_rules()
 EMBEDDING_MODEL = BUSINESS_RULES["embeddings"]["model"]
 EMBEDDING_DIMENSION = int(BUSINESS_RULES["embeddings"]["output_dimensionality"])
 EMBEDDING_TASK_TYPE = BUSINESS_RULES["embeddings"].get("task_type", "SEMANTIC_SIMILARITY")
-DEFAULT_FISCAL_YEAR = int(os.environ.get("DEFAULT_FISCAL_YEAR", "2026"))
-DEFAULT_FISCAL_PERIOD = int(os.environ.get("DEFAULT_FISCAL_PERIOD", "10"))
-DEFAULT_BATCH_SIZE = int(os.environ.get("EMBEDDING_BATCH_SIZE", "100"))
-DEFAULT_MAX_WORKERS = max(1, int(os.environ.get("EMBEDDING_MAX_WORKERS", "3")))
-EMBEDDING_BATCH_WORKERS = max(1, int(os.environ.get("EMBEDDING_BATCH_WORKERS", "3")))
-EMBEDDING_MAX_RETRIES = max(1, int(os.environ.get("EMBEDDING_MAX_RETRIES", "6")))
-EMBEDDING_RETRY_BASE_DELAY = float(os.environ.get("EMBEDDING_RETRY_BASE_DELAY", "1.5"))
-EMBEDDING_RETRY_MAX_DELAY = float(os.environ.get("EMBEDDING_RETRY_MAX_DELAY", "90"))
-EMBEDDING_MAX_TEXTS_PER_REQUEST = int(os.environ.get("EMBEDDING_MAX_TEXTS_PER_REQUEST", "0"))
-EMBEDDING_REQUEST_LOG_EVERY = max(0, int(os.environ.get("EMBEDDING_REQUEST_LOG_EVERY", "100")))
-MATCH_BATCH_SIZE = max(1, int(os.environ.get("MATCH_BATCH_SIZE", "100")))
-MATCH_STATEMENT_TIMEOUT_MS = int(os.environ.get("MATCH_STATEMENT_TIMEOUT_MS", "900000"))
-HNSW_EF_SEARCH = max(0, int(os.environ.get("HNSW_EF_SEARCH", "100")))
-HNSW_M = max(2, int(os.environ.get("HNSW_M", "32")))
-HNSW_EF_CONSTRUCTION = max(2 * HNSW_M, int(os.environ.get("HNSW_EF_CONSTRUCTION", "128")))
-HNSW_MAINTENANCE_WORK_MEM = os.environ.get("HNSW_MAINTENANCE_WORK_MEM", "512MB")
-EXPLAIN_FUZZY_PLAN = os.environ.get("EXPLAIN_FUZZY_PLAN", "true").strip().lower() in {
-    "1",
-    "true",
-    "yes",
-    "y",
-}
-DRY_RUN = os.environ.get("DRY_RUN", "false").strip().lower() in {"1", "true", "yes", "y"}
-DRY_RUN_MATCH_ROW_LIMIT = min(
-    10,
-    max(1, int(os.environ.get("DRY_RUN_MATCH_ROW_LIMIT", "10"))),
-)
-DRY_RUN_WRITEBACK_BUSINESS_TABLES = (
-    os.environ.get("DRY_RUN_WRITEBACK_BUSINESS_TABLES", "false").strip().lower()
-    in {"1", "true", "yes", "y"}
-)
+DEFAULT_FISCAL_YEAR = get_fiscal_year(BUSINESS_RULES)
+DEFAULT_FISCAL_PERIOD = get_fiscal_period(BUSINESS_RULES)
+DEFAULT_BATCH_SIZE = get_tuning_int(BUSINESS_RULES, "embedding_batch_size")
+DEFAULT_MAX_WORKERS = get_tuning_int(BUSINESS_RULES, "embedding_max_workers")
+EMBEDDING_BATCH_WORKERS = get_tuning_int(BUSINESS_RULES, "embedding_batch_workers")
+EMBEDDING_MAX_RETRIES = get_tuning_int(BUSINESS_RULES, "embedding_max_retries")
+EMBEDDING_RETRY_BASE_DELAY = get_tuning_float(BUSINESS_RULES, "embedding_retry_base_delay")
+EMBEDDING_RETRY_MAX_DELAY = get_tuning_float(BUSINESS_RULES, "embedding_retry_max_delay")
+EMBEDDING_MAX_TEXTS_PER_REQUEST = get_tuning_int(BUSINESS_RULES, "embedding_max_texts_per_request")
+EMBEDDING_REQUEST_LOG_EVERY = get_tuning_int(BUSINESS_RULES, "embedding_request_log_every")
+MATCH_BATCH_SIZE = get_tuning_int(BUSINESS_RULES, "match_batch_size")
+MATCH_STATEMENT_TIMEOUT_MS = get_tuning_int(BUSINESS_RULES, "match_statement_timeout_ms")
+HNSW_EF_SEARCH = get_hnsw_ef_search(BUSINESS_RULES)
+HNSW_M = get_hnsw_m(BUSINESS_RULES)
+HNSW_EF_CONSTRUCTION = get_hnsw_ef_construction(BUSINESS_RULES)
+HNSW_MAINTENANCE_WORK_MEM = get_hnsw_maintenance_work_mem(BUSINESS_RULES)
+EXPLAIN_FUZZY_PLAN = get_tuning_bool(BUSINESS_RULES, "explain_fuzzy_plan")
+DRY_RUN = get_dry_run(BUSINESS_RULES)
+DRY_RUN_MATCH_ROW_LIMIT = get_dry_run_match_row_limit(BUSINESS_RULES)
+DRY_RUN_WRITEBACK_BUSINESS_TABLES = get_dry_run_writeback(BUSINESS_RULES)
 
 
 def optional_positive_int_env(name):
@@ -108,71 +118,50 @@ def optional_positive_int_env(name):
 LEAD_EMBEDDING_LIMIT = optional_positive_int_env("LEAD_EMBEDDING_LIMIT")
 POS_EMBEDDING_LIMIT = optional_positive_int_env("POS_EMBEDDING_LIMIT")
 
-EXPECTED_PROJECT = os.environ.get("EXPECTED_PROJECT_ID", BUSINESS_RULES["environment"]["project_id"])
-EXPECTED_CLOUDSQL_CONNECTION_NAME = os.environ.get(
-    "EXPECTED_CLOUDSQL_CONNECTION_NAME",
-    "ctoteam:us-central1:lead-mgmt-db",
-)
+EXPECTED_PROJECT = get_project_id(BUSINESS_RULES)
+EXPECTED_CLOUDSQL_CONNECTION_NAME = get_cloudsql_connection_name(BUSINESS_RULES)
 IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
-def _require_env(name, expected):
-    actual = os.environ.get(name)
-    if actual != expected:
-        raise RuntimeError(
-            f"Refusing to start: env {name}={actual!r}, expected {expected!r}"
-        )
-
 
 def assert_isolated_runtime():
-    project = os.environ.get("GOOGLE_CLOUD_PROJECT")
-    if project != EXPECTED_PROJECT:
-        raise RuntimeError(
-            f"Refusing to start: GOOGLE_CLOUD_PROJECT={project!r}, "
-            f"expected {EXPECTED_PROJECT!r}"
-        )
-    conn = os.environ.get("CLOUDSQL_CONNECTION_NAME")
-    if conn and conn != EXPECTED_CLOUDSQL_CONNECTION_NAME:
-        raise RuntimeError(
-            f"Refusing to start: CLOUDSQL_CONNECTION_NAME={conn!r}, "
-            f"expected {EXPECTED_CLOUDSQL_CONNECTION_NAME!r}"
-        )
-    _require_env("ALLOW_CLIENT_GCP", "false")
-    _require_env("ALLOW_PRODUCTION", "false")
+    if not get_safety_flag(BUSINESS_RULES, "allow_client_gcp") is False:
+        raise RuntimeError("Refusing to start: allow_client_gcp is not false in rules")
+    if not get_safety_flag(BUSINESS_RULES, "allow_production") is False:
+        raise RuntimeError("Refusing to start: allow_production is not false in rules")
 
 
 def db_config():
-    missing = [
-        name
-        for name in ("DB_NAME", "DB_USER", "DB_PASSWORD")
-        if not os.environ.get(name)
-    ]
-    if missing:
-        raise RuntimeError(f"Missing required DB env vars: {', '.join(missing)}")
+    db_user = os.environ.get("DB_USER", "")
+    db_password = os.environ.get("DB_PASSWORD", "")
+    if not db_user or not db_password:
+        raise RuntimeError("Missing required DB env vars: DB_USER and/or DB_PASSWORD (secrets must be set via env)")
 
-    conn_name = os.environ.get("CLOUDSQL_CONNECTION_NAME")
+    db_name = get_db_name(BUSINESS_RULES)
+    conn_name = get_cloudsql_connection_name(BUSINESS_RULES)
     if conn_name:
-        socket_dir = os.environ.get("CLOUDSQL_SOCKET_DIR", "/cloudsql")
+        socket_dir = get_cloudsql_socket_dir(BUSINESS_RULES)
         return {
             "unix_sock": f"{socket_dir}/{conn_name}/.s.PGSQL.5432",
-            "database": os.environ["DB_NAME"],
-            "user": os.environ["DB_USER"],
-            "password": os.environ["DB_PASSWORD"],
+            "database": db_name,
+            "user": db_user,
+            "password": db_password,
         }
 
-    if os.environ.get("ALLOW_LOCAL_DB", "false").lower() != "true":
+    if not get_safety_flag(BUSINESS_RULES, "allow_local_db"):
         raise RuntimeError(
-            "CLOUDSQL_CONNECTION_NAME is not set and ALLOW_LOCAL_DB is not 'true'; "
-            "refusing to fall back to DB_HOST/DB_PORT."
+            "cloud_sql.connection_name is not set and allow_local_db is false in rules; "
+            "refusing to fall back to DB_HOST."
         )
-    if not os.environ.get("DB_HOST"):
-        raise RuntimeError("Missing DB_HOST for local DB connection")
+    db_host = get_db_host(BUSINESS_RULES)
+    if not db_host:
+        raise RuntimeError("Missing cloud_sql.host in rules for local DB connection")
     return {
-        "host": os.environ["DB_HOST"],
-        "port": int(os.environ.get("DB_PORT", "5432")),
-        "database": os.environ["DB_NAME"],
-        "user": os.environ["DB_USER"],
-        "password": os.environ["DB_PASSWORD"],
+        "host": db_host,
+        "port": get_db_port(BUSINESS_RULES),
+        "database": db_name,
+        "user": db_user,
+        "password": db_password,
     }
 
 
@@ -223,18 +212,11 @@ def warehouse_sql_filter(alias):
 
 
 def exact_match_types():
-    configured_types = ",".join(configured_exact_match_types(BUSINESS_RULES, lower=False))
-    raw_types = os.environ.get("EXACT_MATCH_TYPES", configured_types)
-    return tuple(
-        value.strip().lower()
-        for value in raw_types.split(",")
-        if value.strip()
-    )
+    return configured_exact_match_types(BUSINESS_RULES, lower=True)
 
 
 def exact_qualified_min_score():
-    configured = exact_authoritative_score(BUSINESS_RULES)
-    return float(os.environ.get("EXACT_MATCH_MIN_SCORE", configured))
+    return float(exact_authoritative_score(BUSINESS_RULES))
 
 
 def _fuzzy_lifecycle_case(score_expr, params):
@@ -343,11 +325,11 @@ def warehouse_scope_label():
 
 
 def vertex_client():
-    project = os.environ.get("VERTEX_PROJECT_ID") or get_project_id(BUSINESS_RULES)
-    location = os.environ.get("VERTEX_LOCATION", "us-central1")
+    project = get_vertex_project(BUSINESS_RULES)
+    location = get_vertex_location(BUSINESS_RULES)
     if not project:
-        raise RuntimeError("Missing VERTEX_PROJECT_ID or GOOGLE_CLOUD_PROJECT")
-    timeout = float(os.environ.get("VERTEX_TIMEOUT_SECONDS", "120.0"))
+        raise RuntimeError("Missing vertex_ai.project_id in rules")
+    timeout = get_vertex_timeout(BUSINESS_RULES)
     return genai.Client(
         vertexai=True,
         project=project,
@@ -398,7 +380,7 @@ def is_retryable_embedding_error(exc):
 def embedding_request_size():
     if EMBEDDING_MAX_TEXTS_PER_REQUEST > 0:
         return EMBEDDING_MAX_TEXTS_PER_REQUEST
-    return min(DEFAULT_BATCH_SIZE, 250)
+    return min(DEFAULT_BATCH_SIZE, get_tuning_int(BUSINESS_RULES, "embedding_request_size_cap"))
 
 
 def embed_text_request(client, texts, label, log_success=True):
@@ -529,7 +511,7 @@ def execute_many_values(
     insert_prefix,
     rows,
     fields_per_row,
-    chunk_size=250,
+    chunk_size=get_tuning_int(BUSINESS_RULES, "db_write_batch_size"),
     conflict_clause="",
 ):
     if not rows:
@@ -1542,8 +1524,8 @@ def _run_fuzzy_match(conn, job_started):
     cursor = conn.cursor()
     schema = schema_name()
     run_id = os.environ.get("MATCH_RUN_ID") or f"workflow-{uuid.uuid4().hex[:12]}"
-    limit = optional_positive_int_env("MATCH_LEAD_LIMIT") or 1000000
     rules = BUSINESS_RULES
+    limit = optional_positive_int_env("MATCH_LEAD_LIMIT") or get_tuning_int(rules, "match_lead_limit_default")
     recall_gate = float(rules["candidate_retrieval"]["recall_gate_min_similarity"])
     qualify_min = fuzzy_qualify_min_score(rules)
     fuzzy_ceiling = fuzzy_max_score(rules)
@@ -2019,7 +2001,7 @@ def _run_fuzzy_match(conn, job_started):
         if not DRY_RUN:
             ce_params = [*lead_ids, recall_gate, nearest_neighbor_limit,
                          periods_per_year, ce_window,
-                         run_id, ce_lifecycle, weight_formula, EMBEDDING_MODEL]
+                         run_id, ce_lifecycle, ce_lifecycle, weight_formula, EMBEDDING_MODEL]
             cursor.execute(
                 f"""
                 WITH lead_batch AS (
@@ -2060,7 +2042,7 @@ def _run_fuzzy_match(conn, job_started):
                         weight_formula, embedding_model, created_date
                     )
                     SELECT %s, lead_id, pos_id, warehouse_number,
-                           'Closed - Existing', 0, %s, %s, %s, CURRENT_TIMESTAMP
+                           %s, 0, %s, %s, %s, CURRENT_TIMESTAMP
                     FROM ce_rows
                     ON CONFLICT (match_run_id, lead_id, pos_id) DO NOTHING
                     RETURNING pos_id, lead_id
@@ -2425,6 +2407,7 @@ def main():
     parser.add_argument(
         "task",
         choices=(
+            "preflight",
             "summary",
             "smoke",
             "exact-match",
@@ -2437,7 +2420,11 @@ def main():
     )
     args, remaining = parser.parse_known_args()
 
-    if args.task == "summary":
+    if args.task == "preflight":
+        from scripts.preflight_checks import run_preflight
+        rc = run_preflight()
+        sys.exit(rc)
+    elif args.task == "summary":
         print_summary()
     elif args.task == "smoke":
         from lead_match_runtime.smoke_test import main as smoke_main

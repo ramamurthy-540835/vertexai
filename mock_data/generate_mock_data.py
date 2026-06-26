@@ -31,8 +31,10 @@ import pandas as pd
 from faker import Faker
 from openpyxl import load_workbook
 
+from lead_match_runtime.business_rules import load_business_rules, get_fiscal_year
 
-DEFAULT_FISCAL_YEAR = 2026
+_RULES = load_business_rules()
+DEFAULT_FISCAL_YEAR = get_fiscal_year(_RULES)
 DEFAULT_NUM_LEADS = 400
 DEFAULT_NUM_POS = 12000
 

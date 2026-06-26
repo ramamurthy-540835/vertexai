@@ -11,6 +11,10 @@ from lead_match_runtime.business_rules import (
     fuzzy_match_types,
     fuzzy_max_score,
     fuzzy_qualify_min_score,
+    get_cloudsql_connection_name,
+    get_dry_run,
+    get_project_id,
+    get_report_bucket,
     lifecycle_state_for_match_type,
     normalize_fuzzy_final_score,
 )
@@ -89,6 +93,8 @@ def _fetch_match_rows(cursor, schema: str, match_run_id: str) -> list[dict]:
                 m.combined_field_score,
                 m.full_address_score,
                 m.business_name_score,
+                COALESCE(m.email_boost, 0) AS email_boost,
+                COALESCE(m.phone_boost, 0) AS phone_boost,
                 m.embedding_model,
                 m.created_date,
                 l.fiscal_year AS lead_fiscal_year,
@@ -117,6 +123,8 @@ def _fetch_match_rows(cursor, schema: str, match_run_id: str) -> list[dict]:
             combined_field_score,
             full_address_score,
             business_name_score,
+            email_boost,
+            phone_boost,
             embedding_model,
             lead_fiscal_year,
             lead_fiscal_period,
@@ -221,10 +229,10 @@ def _upload(bucket_name: str, local_path: Path, object_name: str) -> str:
 def run_report() -> dict:
     schema = schema_name()
     warehouse = warehouse_scope_label()
-    project = os.environ.get("GOOGLE_CLOUD_PROJECT", "ctoteam")
-    bucket = os.environ.get("REPORT_BUCKET", "lead-match-ctoteam")
+    project = get_project_id(BUSINESS_RULES)
+    bucket = get_report_bucket(BUSINESS_RULES)
     match_run_id = os.environ.get("MATCH_RUN_ID")
-    dry_run = os.environ.get("DRY_RUN", "false").strip().lower() in {"1", "true", "yes", "y"}
+    dry_run = get_dry_run(BUSINESS_RULES)
     generated_at = datetime.now(UTC)
 
     conn = connect()
@@ -247,7 +255,7 @@ def run_report() -> dict:
             "match_run_id": match_run_id,
             "dry_run": dry_run,
             "generated_at": generated_at.isoformat(),
-            "cloudsql_connection_name": os.environ.get("CLOUDSQL_CONNECTION_NAME"),
+            "cloudsql_connection_name": get_cloudsql_connection_name(BUSINESS_RULES),
             "cloudsql_backend_pid": backend_pid,
             "cloudsql_session_state_counts": state_counts,
             "embedding_model": EMBEDDING_MODEL,

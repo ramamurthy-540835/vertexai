@@ -42,25 +42,23 @@ from pathlib import Path
 
 import openpyxl
 
-RULES_PATH = Path(__file__).resolve().parent.parent / "lead_match_runtime" / "lead_to_pos_match_rules.json"
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from lead_match_runtime.business_rules import (
+    load_business_rules, fuzzy_qualify_min_score, fuzzy_max_score,
+    exact_score, exact_match_type, fuzzy_match_type, manual_review_match_type,
+    get_report_bucket, get_project_id,
+)
 
+_RULES = load_business_rules()
 
 def _load_subtier_bounds():
-    """Load score subtier boundaries from JSON for band counting."""
-    try:
-        with open(RULES_PATH) as f:
-            rules = json.load(f)
-        dr = rules["decision_rules"]
-        subtiers = sorted(
-            dr.get("optional_confidence_subtiers", {}).get("subtiers", []),
-            key=lambda s: float(s["min_score"]),
-        )
-        fuzzy_floor = float(dr["fuzzy_qualify_min_score"])
-        fuzzy_ceiling = float(dr["fuzzy_max_score"])
-        exact_score = float(dr["exact_score"])
-        return subtiers, fuzzy_floor, fuzzy_ceiling, exact_score
-    except Exception:
-        return [], 70, 99.999, 100
+    """Load score subtier boundaries from the business rules SDK."""
+    dr = _RULES["decision_rules"]
+    subtiers = sorted(
+        dr.get("optional_confidence_subtiers", {}).get("subtiers", []),
+        key=lambda s: float(s["min_score"]),
+    )
+    return subtiers, fuzzy_qualify_min_score(_RULES), fuzzy_max_score(_RULES), exact_score(_RULES)
 
 
 _SUBTIERS, _FUZZY_FLOOR, _FUZZY_CEILING, _EXACT_SCORE = _load_subtier_bounds()
@@ -147,8 +145,8 @@ def parse_args():
                     help="Workflow filename to query")
     p.add_argument("--env-file", default=".env.local",
                     help="Env file to load GH_TOKEN from (default: .env.local)")
-    p.add_argument("--bucket", default="lead-match-ctoteam", help="GCS bucket name")
-    p.add_argument("--project", default="ctoteam", help="Project name in report path")
+    p.add_argument("--bucket", default=get_report_bucket(_RULES), help="GCS bucket name")
+    p.add_argument("--project", default=get_project_id(_RULES), help="Project name in report path")
     p.add_argument(
         "--tracker",
         default="reports/warehouse_test_run_tracker.xlsx",
@@ -249,6 +247,12 @@ def parse_summary(summary_path: Path) -> dict:
     lsc = data.get("lifecycle_state_counts", {})
     fsb = data.get("fuzzy_score_band", {})
     report_uris = data.get("report_uris", {})
+    _exact_type = exact_match_type(_RULES)
+    _fuzzy_type = fuzzy_match_type(_RULES)
+    _mr_type = manual_review_match_type(_RULES)
+    from lead_match_runtime.business_rules import exact_lifecycle_state, fuzzy_lifecycle_state_label
+    _exact_state = exact_lifecycle_state(_RULES)
+    _fuzzy_state = fuzzy_lifecycle_state_label(_RULES)
     return {
         "project": data.get("project", ""),
         "warehouse": data.get("warehouse", ""),
@@ -262,11 +266,11 @@ def parse_summary(summary_path: Path) -> dict:
         "pos_embedding_rows": data.get("pos_embedding_rows"),
         "match_rows": data.get("match_rows"),
         "primary_transaction_count": data.get("primary_transaction_count"),
-        "exact": mtc.get("Exact", 0),
-        "fuzzy": mtc.get("Fuzzy", 0),
-        "manual_review": mtc.get("Manual Review", 0),
-        "closed_match": lsc.get("Closed - Match", 0),
-        "potential": lsc.get("Potential", 0),
+        "exact": mtc.get(_exact_type, 0),
+        "fuzzy": mtc.get(_fuzzy_type, 0),
+        "manual_review": mtc.get(_mr_type, 0),
+        "closed_match": lsc.get(_exact_state, 0),
+        "potential": lsc.get(_fuzzy_state, 0),
         "fuzzy_floor": fsb.get("floor"),
         "fuzzy_ceiling": fsb.get("ceiling"),
         "gcs_summary_uri": report_uris.get("summary_json", ""),
@@ -290,16 +294,19 @@ def analyze_matches_csv(matches_path: Path) -> dict:
     if not matches_path.exists():
         return result
 
+    _exact_type = exact_match_type(_RULES)
+    _fuzzy_type = fuzzy_match_type(_RULES)
+    _mr_type = manual_review_match_type(_RULES)
     non_exact_scores: list[float] = []
     with open(matches_path, newline="") as f:
         for row in csv.DictReader(f):
             match_type = row.get("match_type", "").strip()
-            if match_type == "Exact":
+            if match_type == _exact_type:
                 result["csv_exact"] += 1
                 continue
-            elif match_type == "Fuzzy":
+            elif match_type == _fuzzy_type:
                 result["csv_fuzzy"] += 1
-            elif match_type == "Manual Review":
+            elif match_type == _mr_type:
                 result["csv_manual_review"] += 1
 
             try:

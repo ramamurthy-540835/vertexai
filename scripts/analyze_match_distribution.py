@@ -205,35 +205,48 @@ def generate_per_row_reasoning(row: dict, rules: dict, weights: dict, gate_thres
     """
     match_type = row.get("match_type", "Unknown")
 
-    if match_type == "Exact":
-        return "Deterministic field match (exact-sql); identity fields agree. Score 100, authoritative. Not AI-inferred."
+    if match_type == rules["decision_rules"]["exact_match_type"]:
+        return f"Deterministic field match (exact-sql); identity fields agree. Score {rules['decision_rules']['exact_score']}, authoritative. Not AI-inferred."
 
     # Fuzzy match
     addr_score = float(row.get("full_address_score", 0))
     name_score = float(row.get("business_name_score", 0))
     combined_score = float(row.get("combined_field_score", 0))
     final_score = float(row.get("final_score", 0))
+    email_boost = float(row.get("email_boost", 0))
+    phone_boost = float(row.get("phone_boost", 0))
     band = row.get("band", "Unknown")
 
+    fuzzy_cap = float(rules["decision_rules"]["fuzzy_max_score"])
     addr_w = weights["addr_weight"]
     name_w = weights["name_weight"]
     denom = weights["denom"]
 
-    # Verify arithmetic
-    expected = (addr_w * addr_score + name_w * name_score) / denom
+    # Verify arithmetic: weighted average + boosts, capped at fuzzy_max_score
+    base_score = (addr_w * addr_score + name_w * name_score) / denom
+    expected = min(fuzzy_cap, round(base_score + email_boost + phone_boost, 2))
     if abs(expected - final_score) > 0.01:
         logger.warning(
             f"Arithmetic mismatch for pos_id={row.get('pos_id')}: "
-            f"({addr_w}*{addr_score}+{name_w}*{name_score})/{denom}={expected} "
+            f"min({fuzzy_cap}, round(({addr_w}*{addr_score}+{name_w}*{name_score})/{denom}"
+            f"+{email_boost}+{phone_boost}, 2))={expected} "
             f"but stored final_score={final_score}"
         )
 
     # Determine driver
     driver = "address-driven" if addr_score >= name_score else "name-driven"
 
+    boost_parts = []
+    if email_boost:
+        boost_parts.append(f"email +{email_boost:.0f}")
+    if phone_boost:
+        boost_parts.append(f"phone +{phone_boost:.0f}")
+    boost_str = f" Boosts: {', '.join(boost_parts)}; capped {fuzzy_cap}." if boost_parts else ""
+
     reasoning = (
         f"Address {addr_score:.2f} (w{addr_w}) + Name {name_score:.2f} (w{name_w}) "
-        f"=> ({addr_w}*{addr_score:.2f}+{name_w}*{name_score:.2f})/{denom} = {final_score:.2f}. "
+        f"=> ({addr_w}*{addr_score:.2f}+{name_w}*{name_score:.2f})/{denom} = {base_score:.2f}."
+        f"{boost_str} Final: {final_score:.2f}. "
         f"Band: {band}. Recall gate: combined_field {combined_score:.2f} (>= {gate_threshold} pass). "
         f"{driver}."
     )
@@ -266,7 +279,7 @@ def compute_distribution_facts(df: pd.DataFrame, rules: dict) -> dict:
     high_cutoff = float(subtier_bounds[2]["min_score"]) if len(subtier_bounds) > 2 else mid_cutoff
 
     # Build histogram
-    hist, bin_edges = pd.cut(scores, bins=range(int(fuzzy_floor), 102, 1), right=False, retbins=True)
+    hist, bin_edges = pd.cut(scores, bins=range(int(fuzzy_floor), int(rules["decision_rules"]["exact_score"]) + 2, 1), right=False, retbins=True)
     hist_counts = hist.value_counts().sort_index()
     histogram = {str(interval): int(count) for interval, count in hist_counts.items()}
 
@@ -335,18 +348,25 @@ def call_gemini_analysis(facts: dict, rules: dict, warehouse: str = "Unknown") -
         logger.error("google-genai not installed. Install with: pip install google-genai")
         return "# Analysis (Gemini unavailable)\n\nGemini model client not configured."
 
-    model_name = os.getenv("GEMINI_MODEL", "gemini-3.5-flash")
+    model_name = os.getenv("GEMINI_MODEL", rules["environment"]["models"]["gemini_flash"])
     project = (
         os.getenv("VERTEX_PROJECT_ID")
         or os.getenv("GOOGLE_CLOUD_PROJECT")
         or os.getenv("PROJECT_ID")
     )
-    location = os.getenv("VERTEX_LOCATION", "us-central1")
+    location = os.getenv("VERTEX_LOCATION", rules["environment"]["vertex_ai"]["location"])
     if not project:
         return "# Analysis (Gemini unavailable)\n\nMissing VERTEX_PROJECT_ID or GOOGLE_CLOUD_PROJECT."
 
     facts_json = json.dumps(facts, indent=2)
     rules_snippet = json.dumps(rules.get("decision_rules", {}), indent=2)[:500]
+
+    subtiers = _extract_subtiers(rules)
+    fuzzy_floor = float(rules["decision_rules"]["fuzzy_qualify_min_score"])
+    cutoffs = sorted(set(int(float(s["min_score"])) for s in subtiers if float(s["min_score"]) > fuzzy_floor))
+    cutoff_str = " or ".join(str(c) for c in cutoffs)
+    low_max = max((float(s["max_score"]) for s in subtiers if s["name"] == "Low"), default=84.999)
+    mid_max = max((float(s["max_score"]) for s in subtiers if s["name"] == "Medium"), default=89.999)
 
     prompt = f"""You are a lead-to-POS match scoring analyst. Analyze the score distribution below and explain what it means for match quality and next actions.
 
@@ -359,10 +379,10 @@ BUSINESS RULES (excerpt):
 Write a brief markdown narrative covering:
 1. **Distribution Interpretation**: Where the peak sits, what the shape tells you (normal, skewed, flat, spiky).
 2. **Post-Identification Findings** (4 signals):
-   - Threshold sensitivity: Does the peak sit within 2 points of a cutoff (85 or 90)? If so, small score shifts move many rows between bands.
-   - Tail/edge quality: How many borderline-weak matches (70-84.999)? Thin tail = clean data; fat tail = edge quality issue.
+   - Threshold sensitivity: Does the peak sit within 2 points of a cutoff ({cutoff_str})? If so, small score shifts move many rows between bands.
+   - Tail/edge quality: How many borderline-weak matches ({fuzzy_floor:.0f}-{low_max})? Thin tail = clean data; fat tail = edge quality issue.
    - Artifacts: Any spikes (single bin >15% of total) or empty interior bins? Flag if found, else confirm no artifact.
-   - Review workload: How many rows fall in Potential+Manual Review (70-89.999)? That's the human queue size.
+   - Review workload: How many rows fall in Potential+Manual Review ({fuzzy_floor:.0f}-{mid_max})? That's the human queue size.
 3. **Recommended Actions** for each signal.
 4. **Caveat**: These bands are starting priors. Final thresholds need a labeled validation set.
 
@@ -406,6 +426,7 @@ def write_reasoning_to_cloud_sql(
     Returns:
         Row count updated.
     """
+    schema = rules["environment"]["cloud_sql"]["schema"]
     addr_weight, name_weight, denom = _extract_scoring_params(rules)
     weights = {
         "addr_weight": addr_weight,
@@ -438,7 +459,7 @@ def write_reasoning_to_cloud_sql(
     try:
         with engine.begin() as conn:
             conn.execute(sqlalchemy.text(
-                'ALTER TABLE "leadmgmt"."match_decision_detail" '
+                f'ALTER TABLE "{schema}"."match_decision_detail" '
                 'ADD COLUMN IF NOT EXISTS "match_reasoning" text'
             ))
             logger.info("Ensured match_reasoning column exists on match_decision_detail")
@@ -446,7 +467,7 @@ def write_reasoning_to_cloud_sql(
         logger.warning("Could not ensure match_reasoning column: %s", e)
 
     rows_updated = 0
-    batch_size = 1000
+    batch_size = rules["environment"]["tuning"]["analysis_db_batch_size"]
 
     with engine.begin() as conn:
         for i in range(0, len(df), batch_size):
@@ -454,8 +475,8 @@ def write_reasoning_to_cloud_sql(
 
             for _, row in batch.iterrows():
                 try:
-                    query = sqlalchemy.text("""
-                        UPDATE "leadmgmt"."match_decision_detail"
+                    query = sqlalchemy.text(f"""
+                        UPDATE "{schema}"."match_decision_detail"
                         SET "match_reasoning" = :reasoning
                         WHERE "match_run_id" = :run_id
                           AND "lead_id" = :lead_id
@@ -490,11 +511,14 @@ def write_analysis_audit_metadata(
     analysis_context: dict,
     reasoning_rows_written: int,
     matches_rows: int,
+    rules: dict,
 ) -> None:
     """Store workflow-level analysis context in match_audit.comments."""
     if not match_run_id:
         logger.warning("run_id missing; skipping match_audit metadata update")
         return
+
+    schema = rules["environment"]["cloud_sql"]["schema"]
 
     engine = None
     if db_connection_string:
@@ -521,20 +545,20 @@ def write_analysis_audit_metadata(
         attempt=analysis_context.get("attempt", "1"),
         match_run_id=match_run_id,
         warehouse=warehouse,
-        gemini_model=analysis_context.get("gemini_model", os.getenv("GEMINI_MODEL", "gemini-3.5-flash")),
+        gemini_model=analysis_context.get("gemini_model", os.getenv("GEMINI_MODEL", rules["environment"]["models"]["gemini_flash"])),
         reasoning_rows=reasoning_rows_written,
         matches_rows=matches_rows,
     )
 
-    update_sql = '''
-        UPDATE "leadmgmt"."match_audit"
+    update_sql = f'''
+        UPDATE "{schema}"."match_audit"
         SET comments = CASE
             WHEN COALESCE(comments, '') = '' THEN :audit_comment
             ELSE comments || '; ' || :audit_comment
         END
         WHERE match_id = (
             SELECT match_id
-            FROM "leadmgmt"."match_audit"
+            FROM "{schema}"."match_audit"
             WHERE CAST(stats AS jsonb)->>'match_run_id' = :run_id
             ORDER BY update_date DESC
             LIMIT 1
@@ -586,17 +610,19 @@ def write_narrative_to_gcs(narrative: str, bucket_name: str, gcs_path: str):
 
 
 def main():
+    _default_rules = load_rules_json(os.getenv("LEAD_POS_RULES_PATH", "lead_match_runtime/lead_to_pos_match_rules.json"))
+
     parser = argparse.ArgumentParser(
         description="Post-hoc match analysis: reasoning + Gemini narrative"
     )
     parser.add_argument(
         "--bucket",
-        default="lead-match-ctoteam",
+        default=_default_rules["environment"]["gcs"]["report_bucket"],
         help="GCS bucket with match results",
     )
     parser.add_argument(
         "--project",
-        default=os.getenv("PROJECT_ID", "ctoteam"),
+        default=os.getenv("PROJECT_ID", _default_rules["environment"]["project_id"]),
         help="GCP project used in match report path",
     )
     parser.add_argument(
@@ -665,9 +691,13 @@ def main():
     # Compute distribution facts
     logger.info("Computing distribution facts...")
     facts = compute_distribution_facts(df, rules)
+    subtiers = _extract_subtiers(rules)
+    _fuzzy_floor = float(rules["decision_rules"]["fuzzy_qualify_min_score"])
+    _low_max = max((float(s["max_score"]) for s in subtiers if s["name"] == "Low"), default=84.999)
+    _mid_max = max((float(s["max_score"]) for s in subtiers if s["name"] == "Medium"), default=89.999)
     logger.info(
         f"Peak: bin {facts['peak_bin']} ({facts['peak_count']} rows, {facts['peak_percentage']:.1f}%). "
-        f"Tail (70-84.999): {facts['tail_volume']} rows. Review workload (70-89.999): {facts['review_workload']} rows."
+        f"Tail ({_fuzzy_floor:.0f}-{_low_max}): {facts['tail_volume']} rows. Review workload ({_fuzzy_floor:.0f}-{_mid_max}): {facts['review_workload']} rows."
     )
 
     # Call Gemini for narrative
@@ -701,10 +731,11 @@ def main():
             "analysis_run_id": args.analysis_run_id,
             "attempt": args.analysis_run_attempt,
             "workflow": args.analysis_workflow,
-            "gemini_model": os.getenv("GEMINI_MODEL", "gemini-3.5-flash"),
+            "gemini_model": os.getenv("GEMINI_MODEL", rules["environment"]["models"]["gemini_flash"]),
         },
         reasoning_rows_written=rows_updated,
         matches_rows=len(df),
+        rules=rules,
     )
 
     logger.info("Analysis complete.")

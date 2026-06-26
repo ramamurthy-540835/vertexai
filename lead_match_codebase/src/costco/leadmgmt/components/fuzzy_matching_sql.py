@@ -12,39 +12,20 @@ from costco.leadmgmt.util.fiscal_year import get_costco_fiscal_info
 # ==============================================================
 # RULE SET LOADER (IMPORTS FROM SHARED BUSINESS RULES)
 # ==============================================================
-def load_business_rules() -> dict:
-    """
-    Loads matching business rules from lead_to_pos_match_rules.json.
-    Uses the same loader as lead_match_runtime/business_rules.py to ensure single source of truth.
-    """
-    env_path = os.environ.get("LEAD_POS_RULES_PATH")
-    this_dir = os.path.dirname(os.path.abspath(__file__))
-    repo_root = os.path.normpath(os.path.join(this_dir, "../../../../../"))
-    paths = [
-        env_path,
-        os.path.join(repo_root, "lead_match_runtime/lead_to_pos_match_rules.json"),
-        os.path.join(os.getcwd(), "lead_match_runtime/lead_to_pos_match_rules.json"),
-    ]
-
-    for path in paths:
-        if not path:
-            continue
-        norm_path = os.path.normpath(path)
-        if os.path.exists(norm_path):
-            try:
-                with open(norm_path, "r") as f:
-                    print(f"[INFO] Loaded business rules from {norm_path}")
-                    return json.load(f)
-            except Exception as e:
-                print(f"[WARN] Failed to parse rules from {norm_path}: {e}")
-
-    raise FileNotFoundError("Business rules file not found. Set LEAD_POS_RULES_PATH or ensure lead_to_pos_match_rules.json exists.")
+from lead_match_runtime.business_rules import (
+    load_business_rules,
+    closed_existing_lifecycle_state as _closed_existing_state,
+    exact_lifecycle_state as _exact_lifecycle_state,
+    exact_match_types as _exact_match_types,
+    fuzzy_lifecycle_state_label as _fuzzy_lifecycle_label,
+    no_match_lifecycle_state as _no_match_state,
+)
 
 
 # ==============================================================
 # MATCHING COMMENT BUILDER — FUZZY
 # ==============================================================
-def build_fuzzy_matching_comment(row: pd.Series) -> str:
+def build_fuzzy_matching_comment(row: pd.Series, rules: dict) -> str:
     """
     Constructs a human-readable comment for fuzzy-matched records,
     describing the embedding similarity scores that drove the match.
@@ -58,24 +39,28 @@ def build_fuzzy_matching_comment(row: pd.Series) -> str:
     name_score       = round(float(row.get("business_name_score", 0) or 0), 2)
 
     # Exact rows — preserve the comment written by primary_match
-    if match_type in ["Exact", "Deterministic"]:
+    if match_type in _exact_match_types(rules, lower=False):
         return row.get("matching_comments", "")
 
     parts = []
 
     # -- Result classification --------------------------------
-    if result in ["Closed - Match", "Complete", "Match"]:
+    exact_state = _exact_lifecycle_state(rules)
+    fuzzy_state = _fuzzy_lifecycle_label(rules)
+    ce_state = _closed_existing_state(rules)
+
+    if result in [exact_state, "Complete", "Match"]:
         parts.append(
             f"Fuzzy match — complete confidence "
             f"(similarity score: {similarity_score})."
         )
-    elif result in ["Potential", "Review"]:
+    elif result in [fuzzy_state, "Review"]:
         parts.append(
             f"Fuzzy match — potential confidence "
             f"(similarity score: {similarity_score}); "
             f"Marketer review recommended."
         )
-    elif result == "Closed - Existing":
+    elif result == ce_state:
         parts.append(
             f"Fuzzy match — pre-existing transacting business "
             f"(similarity score: {similarity_score})."
@@ -133,9 +118,9 @@ def classify_row_match(row: pd.Series, rules: dict) -> pd.Series:
     dr = rules.get("decision_rules", {})
     qualify_min_score = float(dr["fuzzy_qualify_min_score"])
     exact_min_score = float(dr["exact_score"])
-    no_match_state = str(dr.get("no_match_lifecycle_state", "No Match"))
-    fuzzy_lifecycle = str(dr.get("fuzzy_lifecycle_state", "Potential"))
-    exact_types = [str(t).strip() for t in dr.get("exact_match_types", ["Exact", "Deterministic"])]
+    no_match_state = _no_match_state(rules)
+    fuzzy_lifecycle = _fuzzy_lifecycle_label(rules)
+    exact_types = list(_exact_match_types(rules, lower=False))
 
     is_exact = (match_type in exact_types)
     min_score = exact_min_score if is_exact else qualify_min_score
@@ -218,7 +203,7 @@ def classify_row_match(row: pd.Series, rules: dict) -> pd.Series:
                 is_predating = True
 
     # 6. Set results based on fiscal ordering
-    ce_state = str(dr.get("closed_existing_lifecycle_state", "Closed - Existing"))
+    ce_state = _closed_existing_state(rules)
     if is_predating:
         row["match_result"] = ce_state
         row["confidence_band"] = band_name
@@ -231,16 +216,13 @@ def classify_row_match(row: pd.Series, rules: dict) -> pd.Series:
     return row
 
 
-def is_qualifying_match(match_result, rules=None):
-    if rules:
-        dr = rules.get("decision_rules", {})
-        qualifying = {
-            str(dr.get("exact_lifecycle_state", "Closed - Match")),
-            str(dr.get("closed_existing_lifecycle_state", "Closed - Existing")),
-            str(dr.get("fuzzy_lifecycle_state", "Potential")),
-        }
-        return match_result in qualifying
-    return match_result in ["Closed - Match", "Closed - Existing", "Potential"]
+def is_qualifying_match(match_result, rules):
+    qualifying = {
+        _exact_lifecycle_state(rules),
+        _closed_existing_state(rules),
+        _fuzzy_lifecycle_label(rules),
+    }
+    return match_result in qualifying
 
 
 # ==============================================================
@@ -436,7 +418,7 @@ def fuzzy_matching(file_classified_path: str, config_file_path: str) -> str:
     if "manual_review_reason" in merged_df.columns:
         review_mask = update_mask & merged_df["manual_review_reason"].notna()
         merged_df.loc[review_mask, "match_type"] = str(rules["resolution"]["ambiguity_match_type"])
-        merged_df.loc[review_mask, "match_result"] = str(dr["fuzzy_lifecycle_state"])
+        merged_df.loc[review_mask, "match_result"] = _fuzzy_lifecycle_label(rules)
 
     merged_df.loc[update_mask, "account_number_primary"]    = pd.to_numeric(merged_df.loc[update_mask, "account_number_fuzzy"], errors="coerce")
     merged_df.loc[update_mask, "fiscal_year_transaction"]   = pd.to_numeric(merged_df.loc[update_mask, "fiscal_year"], errors="coerce")
@@ -577,7 +559,7 @@ def fuzzy_matching(file_classified_path: str, config_file_path: str) -> str:
     # MATCHING COMMENTS
     # ----------------------------------------------------------
     merged_df["matching_comments"] = merged_df.apply(
-        build_fuzzy_matching_comment, axis=1
+        lambda row: build_fuzzy_matching_comment(row, rules), axis=1
     )
 
     # Drop intermediate scores
@@ -590,7 +572,7 @@ def fuzzy_matching(file_classified_path: str, config_file_path: str) -> str:
     # ----------------------------------------------------------
     # HANDLE NO MATCH ROWS
     # ----------------------------------------------------------
-    no_match_label = str(dr.get("no_match_lifecycle_state", "No Match"))
+    no_match_label = _no_match_state(rules)
     no_match_mask = merged_df["match_result"] == no_match_label
     merged_df.loc[no_match_mask, "pos_id"] = ""
     no_match_detail_cols = [

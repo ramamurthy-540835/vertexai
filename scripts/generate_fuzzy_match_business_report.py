@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any
 
 DEFAULT_RULES_PATH = Path(__file__).resolve().parents[1] / "lead_match_runtime" / "lead_to_pos_match_rules.json"
+_RAW_RULES = json.loads(DEFAULT_RULES_PATH.read_text(encoding="utf-8"))
 
 
 @dataclass
@@ -35,6 +36,9 @@ class SampleRow:
 @dataclass(frozen=True)
 class ReportRules:
     exact_score: float
+    exact_match_type: str
+    fuzzy_match_type: str
+    manual_review_match_type: str
     no_match_max_score: float
     fuzzy_score_bands: list[dict[str, Any]]
     scoring_formula: str
@@ -78,13 +82,16 @@ def load_report_rules(path: Path) -> ReportRules:
     decision = config["decision_rules"]
     fields = config["embeddings"]["fields"]
     subtiers = decision.get("optional_confidence_subtiers", {}).get("subtiers", [])
-    lifecycle = str(decision.get("fuzzy_lifecycle_state", "Potential"))
+    lifecycle = str(decision["fuzzy_lifecycle_state"])
     bands_from_subtiers = [
-        {**s, "lifecycle_state": lifecycle, "match_type": str(decision.get("fuzzy_match_type", "Fuzzy"))}
+        {**s, "lifecycle_state": lifecycle, "match_type": str(decision["fuzzy_match_type"])}
         for s in subtiers
     ]
     return ReportRules(
         exact_score=float(decision["exact_score"]),
+        exact_match_type=str(decision["exact_match_type"]),
+        fuzzy_match_type=str(decision["fuzzy_match_type"]),
+        manual_review_match_type=str(decision["manual_review_match_type"]),
         no_match_max_score=float(decision["no_match_max_score"]),
         fuzzy_score_bands=sorted(
             bands_from_subtiers,
@@ -141,8 +148,8 @@ def calculate_deployed_score(row: dict[str, str], rules: ReportRules) -> float |
 
 
 def validate_rows(summary: dict[str, Any], rows: list[dict[str, str]], rules: ReportRules) -> dict[str, Any]:
-    exact = [row for row in rows if row.get("match_type") == "Exact"]
-    non_exact = [row for row in rows if row.get("match_type") != "Exact"]
+    exact = [row for row in rows if row.get("match_type") == rules.exact_match_type]
+    non_exact = [row for row in rows if row.get("match_type") != rules.exact_match_type]
     exact_scores = [number(row.get("final_score")) for row in exact if number(row.get("final_score")) is not None]
     non_exact_scores = [
         number(row.get("final_score")) for row in non_exact if number(row.get("final_score")) is not None
@@ -177,7 +184,7 @@ def validate_rows(summary: dict[str, Any], rows: list[dict[str, str]], rules: Re
 
 
 def choose_samples(rows: list[dict[str, str]], per_band: int, rules: ReportRules) -> list[SampleRow]:
-    non_exact = [row for row in rows if row.get("match_type") != "Exact"]
+    non_exact = [row for row in rows if row.get("match_type") != rules.exact_match_type]
     samples: list[SampleRow] = []
     for band_cfg in rules.fuzzy_score_bands:
         band = str(band_cfg["name"])
@@ -339,7 +346,7 @@ def build_prompt(
     return "\n".join(lines)
 
 
-def render_metric_table(summary: dict[str, Any], validation: dict[str, Any]) -> str:
+def render_metric_table(summary: dict[str, Any], validation: dict[str, Any], rules: ReportRules | None = None) -> str:
     rows = [
         ("Project", summary.get("project")),
         ("Warehouse", summary.get("warehouse")),
@@ -348,8 +355,8 @@ def render_metric_table(summary: dict[str, Any], validation: dict[str, Any]) -> 
         ("POS rows", summary.get("pos_rows")),
         ("Total match rows", validation.get("csv_rows")),
         ("Exact rows", validation.get("exact_count")),
-        ("Fuzzy rows", validation.get("match_type_counts", {}).get("Fuzzy", 0)),
-        ("Manual Review rows", validation.get("match_type_counts", {}).get("Manual Review", 0)),
+        ("Fuzzy rows", validation.get("match_type_counts", {}).get(rules.fuzzy_match_type if rules else "Fuzzy", 0)),
+        ("Manual Review rows", validation.get("match_type_counts", {}).get(rules.manual_review_match_type if rules else "Manual Review", 0)),
         ("Primary transactions", summary.get("primary_transaction_count")),
     ]
     lines = ["| Metric | Value |", "| :-- | --: |"]
@@ -461,9 +468,9 @@ def maybe_model_reply(prompt: str, args: argparse.Namespace) -> str | None:
         return None
 
     if provider == "gemini":
-        model = args.model or os.environ.get("REPORT_REASONING_MODEL") or "gemini-3.5-flash"
+        model = args.model or os.environ.get("REPORT_REASONING_MODEL") or _RAW_RULES["environment"]["models"]["gemini_flash"]
         project = args.project or os.environ.get("VERTEX_PROJECT_ID") or os.environ.get("GOOGLE_CLOUD_PROJECT")
-        location = args.location or os.environ.get("VERTEX_LOCATION", "us-central1")
+        location = args.location or os.environ.get("VERTEX_LOCATION", _RAW_RULES["environment"]["vertex_ai"]["location"])
         if not project:
             raise RuntimeError("Set --project, VERTEX_PROJECT_ID, or GOOGLE_CLOUD_PROJECT for Gemini")
         return call_gemini(prompt, model, project, location)
@@ -514,7 +521,7 @@ def build_markdown(
         "",
         "## Run Results",
         "",
-        render_metric_table(summary, validation),
+        render_metric_table(summary, validation, rules),
         "",
         "## Band Breakdown",
         "",

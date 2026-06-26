@@ -27,6 +27,11 @@ from pathlib import Path
 
 import pg8000.dbapi
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from lead_match_runtime.business_rules import load_business_rules, get_schema
+_RULES = load_business_rules()
+_SCHEMA = get_schema(_RULES)
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DOTENV_PATH = REPO_ROOT / ".env.local"
 
@@ -314,7 +319,7 @@ def main():
     )
     parser.add_argument(
         "--schema",
-        default=os.environ.get("DB_SCHEMA", "leadmgmt"),
+        default=os.environ.get("DB_SCHEMA", _SCHEMA),
         help="Database schema (default: leadmgmt)",
     )
     parser.add_argument(

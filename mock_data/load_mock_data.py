@@ -9,6 +9,10 @@ from datetime import datetime, UTC
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_DIR = os.path.dirname(SCRIPT_DIR)
+sys.path.insert(0, PROJECT_DIR)
+from lead_match_runtime.business_rules import load_business_rules, get_schema
+_RULES = load_business_rules()
+_SCHEMA = get_schema(_RULES)
 ENV_FILE = os.path.join(PROJECT_DIR, '.env.local')
 ROOT_LEADS_FILE = os.path.join(SCRIPT_DIR, 'leads_corrected.xlsx')
 ROOT_POS_FILE = os.path.join(SCRIPT_DIR, 'pos_corrected.xlsx')
@@ -95,8 +99,8 @@ def fetch_existing_lead_state(cursor):
     existing_leads = set()
 
     cursor.execute(
-        """SELECT account_id, business_name, address_line_one
-           FROM "leadmgmt"."account";"""
+        f"""SELECT account_id, business_name, address_line_one
+           FROM "{_SCHEMA}"."account";"""
     )
     for account_id, business_name, address_line_one in cursor.fetchall():
         key = account_key_from_values(business_name, address_line_one)
@@ -104,10 +108,10 @@ def fetch_existing_lead_state(cursor):
             existing_accounts[key] = account_id
 
     cursor.execute(
-        """SELECT l.lead_source, l.membership_number, l.warehouse_number,
+        f"""SELECT l.lead_source, l.membership_number, l.warehouse_number,
                   a.business_name, a.address_line_one
-           FROM "leadmgmt"."lead" l
-           LEFT JOIN "leadmgmt"."account" a ON a.account_id = l.account_id;"""
+           FROM "{_SCHEMA}"."lead" l
+           LEFT JOIN "{_SCHEMA}"."account" a ON a.account_id = l.account_id;"""
     )
     for lead_source, membership_number, warehouse_number, business_name, address_line_one in cursor.fetchall():
         existing_leads.add(
@@ -270,7 +274,7 @@ def load_leads(cursor, conn, leads_file, limit=None):
         print(f"Inserting {len(accounts_to_insert)} accounts...")
         bulk_insert(
             cursor,
-            """INSERT INTO "leadmgmt"."account" (
+            f"""INSERT INTO "{_SCHEMA}"."account" (
                     account_id, batch_id, account_number, type, business_name, address_line_one,
                     address_line_two, city, state, zip_code, phone, email, industry_code,
                     bd_industry, updated_by, updated_date
@@ -282,7 +286,7 @@ def load_leads(cursor, conn, leads_file, limit=None):
         print(f"Inserting {len(leads_to_insert)} leads...")
         bulk_insert(
             cursor,
-            """INSERT INTO "leadmgmt"."lead" (
+            f"""INSERT INTO "{_SCHEMA}"."lead" (
                     lead_id, lead_source, account_id, account_number, lead_status, confidence_level,
                     membership_number, warehouse_number, fiscal_period, fiscal_year,
                     closed_fiscal_period, closed_fiscal_year, batch_id, load_date, updated_by,
@@ -295,7 +299,7 @@ def load_leads(cursor, conn, leads_file, limit=None):
         print(f"Inserting {len(contacts_to_insert)} contacts...")
         bulk_insert(
             cursor,
-            """INSERT INTO "leadmgmt"."contact" (
+            f"""INSERT INTO "{_SCHEMA}"."contact" (
                     contact_id, lead_id, first_name, last_name, email, phone, membership_number,
                     job_title, batch_id, updated_by, updated_date
                 )""",
@@ -451,7 +455,7 @@ def load_pos(cursor, conn, pos_file, limit=None):
         print(f"Inserting {len(pos_tx_to_insert)} records into pos_transactions table...")
         bulk_insert(
             cursor,
-            """INSERT INTO "leadmgmt"."pos_transactions" (
+            f"""INSERT INTO "{_SCHEMA}"."pos_transactions" (
                     pos_id, sales_reference_id, account_number, lead_id, match_score, match_type,
                     batch_id, membership_number, order_amount, transaction_count, fiscal_period,
                     fiscal_year, week, shop_type, warehouse_number, bd_industry, business_name,
@@ -467,7 +471,7 @@ def load_pos(cursor, conn, pos_file, limit=None):
         print(f"Inserting {len(tx_to_insert)} records into transaction table...")
         bulk_insert(
             cursor,
-            """INSERT INTO "leadmgmt"."transaction" (
+            f"""INSERT INTO "{_SCHEMA}"."transaction" (
                     pos_id, sales_reference_id, account_number, lead_id, match_score, match_type,
                     batch_id, membership_number, order_amount, transaction_count, fiscal_period,
                     fiscal_year, week, shop_type, warehouse_number, bd_industry, business_name,
@@ -497,41 +501,41 @@ def clean_warehouse(cursor, conn, warehouse_number):
     wh = int(warehouse_number)
     print(f"\nCleaning all data for warehouse {wh}...")
     cursor.execute(
-        'DELETE FROM "leadmgmt"."match_decision_detail" WHERE warehouse_number = %s', (wh,)
+        f'DELETE FROM "{_SCHEMA}"."match_decision_detail" WHERE warehouse_number = %s', (wh,)
     )
     print(f"  match_decision_detail: {cursor.rowcount} rows deleted")
     cursor.execute(
-        'DELETE FROM "leadmgmt"."leads_embeddings" WHERE warehouse_number = %s', (wh,)
+        f'DELETE FROM "{_SCHEMA}"."leads_embeddings" WHERE warehouse_number = %s', (wh,)
     )
     print(f"  leads_embeddings: {cursor.rowcount} rows deleted")
     cursor.execute(
-        'DELETE FROM "leadmgmt"."pos_embeddings" WHERE warehouse_number = %s', (wh,)
+        f'DELETE FROM "{_SCHEMA}"."pos_embeddings" WHERE warehouse_number = %s', (wh,)
     )
     print(f"  pos_embeddings: {cursor.rowcount} rows deleted")
     cursor.execute(
-        """DELETE FROM "leadmgmt"."contact"
+        f'DELETE FROM "{_SCHEMA}"."transaction" WHERE warehouse_number = %s', (wh,)
+    )
+    print(f"  transaction: {cursor.rowcount} rows deleted")
+    cursor.execute(
+        f'DELETE FROM "{_SCHEMA}"."pos_transactions" WHERE warehouse_number = %s', (wh,)
+    )
+    print(f"  pos_transactions: {cursor.rowcount} rows deleted")
+    cursor.execute(
+        f"""DELETE FROM "{_SCHEMA}"."contact"
            WHERE lead_id IN (
-               SELECT lead_id FROM "leadmgmt"."lead" WHERE warehouse_number = %s
+               SELECT lead_id FROM "{_SCHEMA}"."lead" WHERE warehouse_number = %s
            )""",
         (wh,),
     )
     print(f"  contact: {cursor.rowcount} rows deleted")
     cursor.execute(
-        'DELETE FROM "leadmgmt"."lead" WHERE warehouse_number = %s', (wh,)
+        f'DELETE FROM "{_SCHEMA}"."lead" WHERE warehouse_number = %s', (wh,)
     )
     print(f"  lead: {cursor.rowcount} rows deleted")
     cursor.execute(
-        'DELETE FROM "leadmgmt"."transaction" WHERE warehouse_number = %s', (wh,)
-    )
-    print(f"  transaction: {cursor.rowcount} rows deleted")
-    cursor.execute(
-        'DELETE FROM "leadmgmt"."pos_transactions" WHERE warehouse_number = %s', (wh,)
-    )
-    print(f"  pos_transactions: {cursor.rowcount} rows deleted")
-    cursor.execute(
-        """DELETE FROM "leadmgmt"."account"
+        f"""DELETE FROM "{_SCHEMA}"."account"
            WHERE account_id NOT IN (
-               SELECT DISTINCT account_id FROM "leadmgmt"."lead"
+               SELECT DISTINCT account_id FROM "{_SCHEMA}"."lead"
            )"""
     )
     print(f"  account (orphaned): {cursor.rowcount} rows deleted")
@@ -543,7 +547,7 @@ def show_summary(cursor):
     print("\n--- Summary of Loaded Data ---")
     try:
         for tbl in ['account', 'lead', 'contact', 'pos_transactions', 'transaction']:
-            cursor.execute(f'SELECT count(*) FROM "leadmgmt"."{tbl}";')
+            cursor.execute(f'SELECT count(*) FROM "{_SCHEMA}"."{tbl}";')
             count = cursor.fetchone()[0]
             print(f"Table 'leadmgmt.{tbl}': {count} records successfully loaded.")
     except Exception as e:
