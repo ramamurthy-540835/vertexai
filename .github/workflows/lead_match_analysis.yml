@@ -268,6 +268,19 @@ jobs:
           print('✓ Merge validation PASS')
           "
 
+      - name: Write merged results to Cloud SQL
+        if: env.GENERATE_ANALYSIS == 'true' && env.EXACT_CSV_GCS_PATH != ''
+        run: |
+          set -euo pipefail
+          pip install -q pg8000
+
+          python3 scripts/reporting/merge_fuzzy_exact_csv_cloud_sql.py \
+            --csv-path /tmp/exact_fuzzy_combined_matches.csv \
+            --warehouse "${WAREHOUSE}"
+        env:
+          DB_HOST: "35.188.0.193"
+          DB_USER: "postgres"
+
       - name: Validate Cloud SQL write-back
         if: env.GENERATE_ANALYSIS == 'true' && env.VALIDATE_CLOUDSQL == 'true'
         run: |
