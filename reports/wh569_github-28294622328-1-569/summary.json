@@ -1,0 +1,42 @@
+{
+  "project": "ctoteam",
+  "schema": "leadmgmt",
+  "warehouse": "569",
+  "match_run_id": "github-28294622328-1-569",
+  "dry_run": false,
+  "generated_at": "2026-06-27T16:24:41.203058+00:00",
+  "cloudsql_connection_name": "ctoteam:us-central1:lead-mgmt-db",
+  "cloudsql_backend_pid": 380590,
+  "cloudsql_session_state_counts": {
+    "active": 1,
+    "idle": 2,
+    "unknown": 6
+  },
+  "embedding_model": "gemini-embedding-001",
+  "embedding_dimension": 768,
+  "lead_rows": 73,
+  "pos_rows": 671,
+  "lead_embedding_rows": 73,
+  "pos_embedding_rows": 112,
+  "match_rows": 563,
+  "match_type_counts": {
+    "Fuzzy": 52,
+    "Manual Review": 31,
+    "Closed - Existing": 480
+  },
+  "lifecycle_state_counts": {
+    "Potential": 83,
+    "Closed - Existing": 480
+  },
+  "primary_transaction_count": 0,
+  "fuzzy_score_band": {
+    "floor": 70.0,
+    "ceiling": 99.999
+  },
+  "report_uris": {
+    "summary_json": "gs://lead-match-ctoteam/reports/lead_match/ctoteam/569/github-28294622328-1-569/summary.json",
+    "matches_csv": "gs://lead-match-ctoteam/reports/lead_match/ctoteam/569/github-28294622328-1-569/matches.csv",
+    "matches_internal_csv": "gs://lead-match-ctoteam/reports/lead_match/ctoteam/569/github-28294622328-1-569/matches_internal.csv",
+    "report_md": "gs://lead-match-ctoteam/reports/lead_match/ctoteam/569/github-28294622328-1-569/report.md"
+  }
+}
