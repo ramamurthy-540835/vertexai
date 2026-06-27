@@ -48,6 +48,14 @@ on:
         options:
           - "true"
           - "false"
+      write_cloudsql_reasoning:
+        description: "Write selected per-row reasoning to Cloud SQL? GCS outputs are always generated."
+        required: true
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
       exact_csv_gcs_path:
         description: "GCS path to exact-match CSV (e.g. match/final_match_result/primary_match_output_*.csv)"
         required: false
@@ -82,6 +90,7 @@ jobs:
       GENERATE_ANALYSIS: ${{ github.event.inputs.generate_analysis || 'true' }}
       VALIDATE_CLOUDSQL: ${{ github.event.inputs.validate_cloudsql || 'true' }}
       WAIT_FOR_READY: ${{ github.event.inputs.wait_for_ready || 'true' }}
+      WRITE_CLOUDSQL_REASONING: ${{ github.event.inputs.write_cloudsql_reasoning || 'false' }}
       EXACT_CSV_GCS_PATH: ${{ github.event.inputs.exact_csv_gcs_path }}
 
     steps:
@@ -181,6 +190,13 @@ jobs:
         if: env.GENERATE_ANALYSIS == 'true'
         run: |
           set -euo pipefail
+          CLOUDSQL_REASONING_ARGS=()
+          if [[ "${WRITE_CLOUDSQL_REASONING}" == "true" ]]; then
+            CLOUDSQL_REASONING_ARGS+=(--write-cloudsql-reasoning)
+          else
+            CLOUDSQL_REASONING_ARGS+=(--skip-cloudsql-reasoning)
+          fi
+
           python3 scripts/reporting/analyze_match_distribution.py \
             --bucket "${BUCKET_NAME}" \
             --project "${PROJECT_ID}" \
@@ -189,7 +205,8 @@ jobs:
             --rules-json lead_match_runtime/lead_to_pos_match_rules.json \
             --analysis-run-id "${GITHUB_RUN_ID}" \
             --analysis-run-attempt "${GITHUB_RUN_ATTEMPT}" \
-            --analysis-workflow "${GITHUB_WORKFLOW}"
+            --analysis-workflow "${GITHUB_WORKFLOW}" \
+            "${CLOUDSQL_REASONING_ARGS[@]}"
 
       - name: Verify narrative in GCS
         if: env.GENERATE_ANALYSIS == 'true'
@@ -282,7 +299,7 @@ jobs:
           DB_USER: "postgres"
 
       - name: Validate Cloud SQL write-back
-        if: env.GENERATE_ANALYSIS == 'true' && env.VALIDATE_CLOUDSQL == 'true'
+        if: env.GENERATE_ANALYSIS == 'true' && env.VALIDATE_CLOUDSQL == 'true' && env.WRITE_CLOUDSQL_REASONING == 'true'
         run: |
           set -euo pipefail
           python3 scripts/monitoring/validate_match_analysis.py \
@@ -313,7 +330,11 @@ jobs:
               echo "### Cloud SQL Reasoning + Gemini Distribution Analysis"
               echo "- Narrative: \`gs://${BUCKET_NAME}/reports/lead_match/${PROJECT_ID}/${WAREHOUSE}/${RUN_ID}/comparative_analysis.md\`"
               echo "- Enriched matches: \`gs://${BUCKET_NAME}/reports/lead_match/${PROJECT_ID}/${WAREHOUSE}/${RUN_ID}/matches_enriched.csv\`"
-              echo "- Per-row reasoning written to Cloud SQL by \`scripts/reporting/analyze_match_distribution.py\`"
+              if [[ "${WRITE_CLOUDSQL_REASONING}" == "true" ]]; then
+                echo "- Selected per-row reasoning written to Cloud SQL by \`scripts/reporting/analyze_match_distribution.py\`"
+              else
+                echo "- Cloud SQL reasoning writeback skipped by default; GCS outputs are complete"
+              fi
               echo ""
               if [[ -n "${EXACT_CSV_GCS_PATH}" ]]; then
                 echo "### Merged Final Output"

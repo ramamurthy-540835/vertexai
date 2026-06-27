@@ -198,6 +198,22 @@ def read_matches_csv_from_gcs(bucket_name: str, gcs_path: str) -> pd.DataFrame:
     return pd.read_csv(blob.open("r"))
 
 
+def gcs_blob_exists(bucket_name: str, gcs_path: str) -> bool:
+    """Return whether a GCS object exists."""
+    client = storage.Client()
+    bucket = client.bucket(bucket_name)
+    blob = bucket.blob(gcs_path)
+    return bool(blob.exists())
+
+
+def read_text_from_gcs(bucket_name: str, gcs_path: str) -> str:
+    """Read text content from GCS."""
+    client = storage.Client()
+    bucket = client.bucket(bucket_name)
+    blob = bucket.blob(gcs_path)
+    return blob.download_as_text()
+
+
 def generate_per_row_reasoning(row: dict, rules: dict, weights: dict, gate_threshold: float) -> str:
     """
     Generate human-readable matching comment from component scores.
@@ -253,6 +269,90 @@ def generate_per_row_reasoning(row: dict, rules: dict, weights: dict, gate_thres
         f"{boost_str}{review}"
     )
     return reasoning
+
+
+def add_match_reasoning(df: pd.DataFrame, rules: dict) -> pd.DataFrame:
+    """Generate deterministic match_reasoning for the dataframe."""
+    addr_weight, name_weight, denom = _extract_scoring_params(rules)
+    weights = {
+        "addr_weight": addr_weight,
+        "name_weight": name_weight,
+        "denom": denom,
+    }
+    gate_threshold = _extract_recall_gate(rules)
+    df = df.copy()
+    df["match_reasoning"] = df.apply(
+        lambda row: generate_per_row_reasoning(row, rules, weights, gate_threshold),
+        axis=1,
+    )
+    return df
+
+
+def _truthy_series(series: pd.Series) -> pd.Series:
+    """Normalize common bool/string truthy values to a boolean mask."""
+    return series.fillna(False).astype(str).str.strip().str.lower().isin(
+        {"1", "true", "t", "yes", "y"}
+    )
+
+
+def select_reasoning_writeback_rows(
+    df: pd.DataFrame,
+    rules: dict,
+    write_exact_reasoning: bool = False,
+) -> tuple[pd.DataFrame, dict[str, int]]:
+    """Select only rows worth writing to Cloud SQL reasoning."""
+    output = df.copy()
+    if "match_reasoning" not in output.columns:
+        output = add_match_reasoning(output, rules)
+
+    match_type = output.get("match_type", pd.Series("", index=output.index)).fillna("").astype(str)
+    lifecycle_state = output.get("lifecycle_state", pd.Series("", index=output.index)).fillna("").astype(str)
+    final_score = pd.to_numeric(output.get("final_score", pd.Series(0, index=output.index)), errors="coerce").fillna(0)
+    matching_comments = output.get("matching_comments", pd.Series("", index=output.index)).fillna("").astype(str)
+    match_reasoning = output.get("match_reasoning", pd.Series("", index=output.index)).fillna("").astype(str)
+
+    fuzzy_types = {
+        str(rules["decision_rules"].get("fuzzy_match_type", "Fuzzy")).lower(),
+        str(rules["decision_rules"].get("manual_review_match_type", "Manual Review")).lower(),
+        "fuzzy",
+        "manual review",
+    }
+    ce_lifecycle = str(rules["decision_rules"].get("closed_existing_lifecycle_state", "Closed - Existing")).lower()
+
+    fuzzy_mask = match_type.str.strip().str.lower().isin(fuzzy_types)
+    manual_review_mask = match_type.str.strip().str.lower().eq("manual review")
+    potential_mask = lifecycle_state.str.strip().str.lower().eq("potential")
+    ce_mask = lifecycle_state.str.strip().str.lower().eq(ce_lifecycle)
+    if "closed_existing_flag" in output.columns:
+        ce_mask = ce_mask | _truthy_series(output["closed_existing_flag"])
+    below_exact_mask = final_score < float(rules["decision_rules"].get("exact_score", 100))
+    blank_comment_with_reasoning_mask = (
+        matching_comments.str.strip().eq("") & match_reasoning.str.strip().ne("")
+    )
+
+    selected_mask = (
+        fuzzy_mask
+        | manual_review_mask
+        | potential_mask
+        | ce_mask
+        | below_exact_mask
+        | blank_comment_with_reasoning_mask
+    )
+
+    if write_exact_reasoning:
+        selected_mask = selected_mask | match_reasoning.str.strip().ne("")
+
+    selected = output.loc[selected_mask].copy()
+    exact_skipped = int((~selected_mask & (final_score >= float(rules["decision_rules"].get("exact_score", 100)))).sum())
+    counters = {
+        "total_rows": int(len(output)),
+        "rows_with_generated_reasoning": int(match_reasoning.str.strip().ne("").sum()),
+        "rows_selected_for_cloudsql_writeback": int(len(selected)),
+        "exact_rows_skipped_from_writeback": exact_skipped,
+        "fuzzy_potential_rows_selected": int((selected_mask & (fuzzy_mask | manual_review_mask | potential_mask | below_exact_mask)).sum()),
+        "ce_rows_selected": int((selected_mask & ce_mask).sum()),
+    }
+    return selected, counters
 
 
 def compute_distribution_facts(df: pd.DataFrame, rules: dict) -> dict:
@@ -420,19 +520,8 @@ def write_reasoning_to_cloud_sql(
         Row count updated.
     """
     schema = rules["environment"]["cloud_sql"]["schema"]
-    addr_weight, name_weight, denom = _extract_scoring_params(rules)
-    weights = {
-        "addr_weight": addr_weight,
-        "name_weight": name_weight,
-        "denom": denom,
-    }
-    gate_threshold = _extract_recall_gate(rules)
-
-    # Generate reasoning for all rows
-    df["match_reasoning"] = df.apply(
-        lambda row: generate_per_row_reasoning(row, rules, weights, gate_threshold),
-        axis=1,
-    )
+    if "match_reasoning" not in df.columns:
+        df = add_match_reasoning(df, rules)
 
     # Connect to Cloud SQL
     try:
@@ -459,6 +548,8 @@ def write_reasoning_to_cloud_sql(
     except Exception as e:
         logger.warning("Could not ensure match_reasoning column: %s", e)
 
+    check_reasoning_writeback_index(engine, schema)
+
     rows_updated = 0
     batch_size = rules["environment"]["tuning"]["analysis_db_batch_size"]
 
@@ -480,6 +571,14 @@ def write_reasoning_to_cloud_sql(
         total_batches = (len(reasoning_df) + batch_size - 1) // batch_size
         for i in range(0, len(reasoning_df), batch_size):
             batch = reasoning_df.iloc[i : i + batch_size]
+            batch_number = i // batch_size + 1
+            logger.info(
+                "Starting reasoning writeback batch %d/%d rows %d-%d",
+                batch_number,
+                total_batches,
+                i + 1,
+                i + len(batch),
+            )
             values = [
                 {
                     "run_id": row["match_run_id"],
@@ -496,7 +595,7 @@ def write_reasoning_to_cloud_sql(
                 ),
                 values,
             )
-            logger.info("Inserted reasoning batch %d/%d (%d rows)", i // batch_size + 1, total_batches, len(batch))
+            logger.info("Inserted reasoning writeback batch %d/%d (%d rows)", batch_number, total_batches, len(batch))
 
         result = conn.execute(sqlalchemy.text(f"""
             UPDATE "{schema}"."match_decision_detail" m
@@ -516,6 +615,29 @@ def write_reasoning_to_cloud_sql(
         f"(warehouse={warehouse}, match_run_id={match_run_id})"
     )
     return rows_updated
+
+
+def check_reasoning_writeback_index(engine: sqlalchemy.Engine, schema: str) -> None:
+    """Warn if the expected writeback lookup index is missing. Read-only."""
+    index_query = sqlalchemy.text(
+        """
+        SELECT indexdef
+        FROM pg_indexes
+        WHERE schemaname = :schema
+          AND tablename = 'match_decision_detail'
+        """
+    )
+    try:
+        with engine.connect() as conn:
+            index_defs = [str(row[0]).lower() for row in conn.execute(index_query, {"schema": schema})]
+    except Exception as e:
+        logger.warning("Could not check reasoning writeback index: %s", e)
+        return
+
+    required = ("match_run_id", "lead_id", "pos_id")
+    has_index = any(all(column in indexdef for column in required) for indexdef in index_defs)
+    if not has_index:
+        logger.warning("WARNING_MISSING_REASONING_WRITEBACK_INDEX match_decision_detail(match_run_id, lead_id, pos_id)")
 
 
 def write_analysis_audit_metadata(
@@ -695,7 +817,33 @@ def main():
         default=os.getenv("GITHUB_WORKFLOW", "lead_match_analysis.yml"),
         help="GitHub Actions workflow name for audit context.",
     )
+    parser.add_argument(
+        "--write-cloudsql-reasoning",
+        action="store_true",
+        help="Opt in to selected Cloud SQL match_reasoning writeback.",
+    )
+    parser.add_argument(
+        "--skip-cloudsql-reasoning",
+        action="store_true",
+        help="Skip Cloud SQL match_reasoning writeback while still producing GCS outputs.",
+    )
+    parser.add_argument(
+        "--write-exact-reasoning",
+        action="store_true",
+        help="Also write exact/high-confidence rows to Cloud SQL. Default is to skip repetitive exact rows.",
+    )
+    parser.add_argument(
+        "--require-cloudsql-reasoning-writeback",
+        action="store_true",
+        help="Fail if Cloud SQL reasoning writeback fails after GCS outputs complete.",
+    )
+    parser.add_argument(
+        "--force-gemini",
+        action="store_true",
+        help="Regenerate comparative_analysis.md even if it already exists in GCS.",
+    )
     args = parser.parse_args()
+    write_cloudsql_reasoning = bool(args.write_cloudsql_reasoning and not args.skip_cloudsql_reasoning)
 
     # Load rules
     try:
@@ -747,6 +895,24 @@ def main():
                 df[col] = 0.0
 
     df = ensure_band_column(df, rules)
+    df = add_match_reasoning(df, rules)
+    writeback_df, writeback_counters = select_reasoning_writeback_rows(
+        df,
+        rules,
+        write_exact_reasoning=args.write_exact_reasoning,
+    )
+    logger.info("MATCH_ANALYSIS_TOTAL_ROWS=%d", writeback_counters["total_rows"])
+    logger.info("MATCH_ANALYSIS_ROWS_WITH_GENERATED_REASONING=%d", writeback_counters["rows_with_generated_reasoning"])
+    logger.info("MATCH_ANALYSIS_ROWS_SELECTED_FOR_CLOUDSQL_WRITEBACK=%d", writeback_counters["rows_selected_for_cloudsql_writeback"])
+    logger.info("MATCH_ANALYSIS_EXACT_ROWS_SKIPPED_FROM_WRITEBACK=%d", writeback_counters["exact_rows_skipped_from_writeback"])
+    logger.info("MATCH_ANALYSIS_FUZZY_POTENTIAL_ROWS_SELECTED=%d", writeback_counters["fuzzy_potential_rows_selected"])
+    logger.info("MATCH_ANALYSIS_CE_ROWS_SELECTED=%d", writeback_counters["ce_rows_selected"])
+    logger.info("CLOUDSQL_REASONING_WRITEBACK_ENABLED=%s", str(write_cloudsql_reasoning).lower())
+
+    # Stage 3 owns comment/reasoning enrichment. Keep Stage 2 matches.csv
+    # lightweight and publish an enriched copy for review/reporting surfaces.
+    enriched_matches_path = f"reports/lead_match/{args.project}/{args.warehouse}/{args.run_id}/matches_enriched.csv"
+    write_enriched_matches_to_gcs(df, args.bucket, enriched_matches_path)
 
     # Compute distribution facts
     logger.info("Computing distribution facts...")
@@ -760,48 +926,60 @@ def main():
         f"Tail ({_fuzzy_floor:.0f}-{_low_max}): {facts['tail_volume']} rows. Review workload ({_fuzzy_floor:.0f}-{_mid_max}): {facts['review_workload']} rows."
     )
 
-    # Call Gemini for narrative
-    logger.info("Calling Gemini 3.5 Flash for analysis narrative...")
-    narrative = call_gemini_analysis(facts, rules, warehouse=args.warehouse)
-
-    # Write narrative to GCS
     narrative_path = f"reports/lead_match/{args.project}/{args.warehouse}/{args.run_id}/comparative_analysis.md"
-    write_narrative_to_gcs(narrative, args.bucket, narrative_path)
+    if not args.force_gemini and gcs_blob_exists(args.bucket, narrative_path):
+        logger.info("Reusing existing Gemini narrative at gs://%s/%s", args.bucket, narrative_path)
+        narrative = read_text_from_gcs(args.bucket, narrative_path)
+    else:
+        logger.info("Calling Gemini 3.5 Flash for analysis narrative...")
+        narrative = call_gemini_analysis(facts, rules, warehouse=args.warehouse)
+        write_narrative_to_gcs(narrative, args.bucket, narrative_path)
 
-    # Write reasoning to Cloud SQL (if connection available)
-    logger.info("Writing per-row reasoning to Cloud SQL if connection is available...")
-    rows_updated = write_reasoning_to_cloud_sql(
-        df, rules, args.run_id, args.warehouse, args.db_connection_string
-    )
+    logger.info("GCS_OUTPUTS_COMPLETE=true")
 
-    # Stage 3 owns comment/reasoning enrichment. Keep Stage 2 matches.csv
-    # lightweight and publish an enriched copy for review/reporting surfaces.
-    enriched_matches_path = f"reports/lead_match/{args.project}/{args.warehouse}/{args.run_id}/matches_enriched.csv"
-    write_enriched_matches_to_gcs(df, args.bucket, enriched_matches_path)
+    rows_updated = 0
+    writeback_succeeded = False
+    if write_cloudsql_reasoning:
+        logger.info("Writing selected per-row reasoning to Cloud SQL...")
+        try:
+            rows_updated = write_reasoning_to_cloud_sql(
+                writeback_df, rules, args.run_id, args.warehouse, args.db_connection_string
+            )
+            writeback_succeeded = rows_updated > 0
+        except Exception as e:
+            logger.error("Cloud SQL reasoning writeback failed after GCS outputs completed: %s", e)
+            if args.require_cloudsql_reasoning_writeback:
+                raise
+    else:
+        logger.info("CLOUDSQL_REASONING_WRITEBACK_SKIPPED=true")
+        logger.info("GCS_OUTPUTS_COMPLETE=true")
 
     if rows_updated > 0:
-        if rows_updated == len(df):
+        if rows_updated == len(writeback_df):
             logger.info(f"✓ All {rows_updated} reasoning rows written successfully.")
         else:
-            logger.warning(f"⚠ Only {rows_updated}/{len(df)} rows updated.")
+            logger.warning(f"⚠ Only {rows_updated}/{len(writeback_df)} selected rows updated.")
     else:
-        logger.warning("No reasoning rows written to Cloud SQL. Either DB is unreachable or no matching rows were found.")
+        logger.warning("No reasoning rows written to Cloud SQL. Writeback may be disabled, DB unreachable, or no matching rows were found.")
 
     # Update match_audit metadata row with analysis provenance
-    write_analysis_audit_metadata(
-        match_run_id=args.run_id,
-        db_connection_string=args.db_connection_string,
-        warehouse=args.warehouse,
-        analysis_context={
-            "analysis_run_id": args.analysis_run_id,
-            "attempt": args.analysis_run_attempt,
-            "workflow": args.analysis_workflow,
-            "gemini_model": os.getenv("GEMINI_MODEL", rules["environment"]["models"]["gemini_flash"]),
-        },
-        reasoning_rows_written=rows_updated,
-        matches_rows=len(df),
-        rules=rules,
-    )
+    if write_cloudsql_reasoning and writeback_succeeded:
+        write_analysis_audit_metadata(
+            match_run_id=args.run_id,
+            db_connection_string=args.db_connection_string,
+            warehouse=args.warehouse,
+            analysis_context={
+                "analysis_run_id": args.analysis_run_id,
+                "attempt": args.analysis_run_attempt,
+                "workflow": args.analysis_workflow,
+                "gemini_model": os.getenv("GEMINI_MODEL", rules["environment"]["models"]["gemini_flash"]),
+            },
+            reasoning_rows_written=rows_updated,
+            matches_rows=len(df),
+            rules=rules,
+        )
+    else:
+        logger.info("Cloud SQL match_audit update skipped.")
 
     logger.info("Analysis complete.")
 
