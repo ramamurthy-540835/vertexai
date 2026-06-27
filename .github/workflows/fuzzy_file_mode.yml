@@ -1,0 +1,341 @@
+name: Lead Match Full Pipeline (Exact + Fuzzy)
+
+on:
+  workflow_dispatch:
+    inputs:
+      warehouse:
+        description: "Warehouse number (e.g. 115, 569, 947)"
+        required: true
+        default: "115"
+        type: string
+      dry_run:
+        description: "Dry run — preview match decisions without writing back"
+        required: true
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
+      match_lead_limit:
+        description: "Limit number of leads to process (blank = all)"
+        required: false
+        type: string
+      wait_for_completion:
+        description: "Wait for pipeline to complete before finishing?"
+        required: true
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
+
+jobs:
+  lead-match-pipeline:
+    name: "lead-match-wh${{ github.event.inputs.warehouse }}"
+    runs-on: ubuntu-latest
+
+    permissions:
+      id-token: write
+      contents: read
+
+    env:
+      PROJECT_ID: ctoteam
+      GOOGLE_CLOUD_PROJECT: ctoteam
+      REGION: us-central1
+      BUCKET_NAME: lead-match-ctoteam
+      WAREHOUSE: ${{ github.event.inputs.warehouse }}
+      DRY_RUN: ${{ github.event.inputs.dry_run || 'true' }}
+      MATCH_LEAD_LIMIT: ${{ github.event.inputs.match_lead_limit }}
+      WORKFLOW_NAME: lead_match_workflow
+      PYTHON_VERSION: "3.11"
+      FUZZY_VERTEXAI_PATH: lead_match_codebase/src/costco/leadmgmt/components/fuzzy_vertexai_matching
+      RULES_JSON_PATH: lead_match_codebase/src/costco/leadmgmt/components/fuzzy_vertexai_matching/lead_match_runtime/lead_manager.json
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Auth to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
+          service_account: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
+          create_credentials_file: true
+          export_environment_variables: true
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Preflight – validate business rules JSON
+        run: |
+          set -euo pipefail
+          python - <<'PYEOF'
+          import os, sys
+
+          sys.path.insert(0, os.environ["FUZZY_VERTEXAI_PATH"])
+          from lead_match_runtime.business_rules import load_business_rules
+
+          RULES_PATH = os.environ["RULES_JSON_PATH"]
+          rules = load_business_rules(RULES_PATH)
+
+          errors = []
+          for key in ["candidate_retrieval", "decision_rules", "embeddings",
+                      "environment", "fiscal_rules", "matching_markers",
+                      "matching_sets", "override_policy", "resolution",
+                      "scoring", "warehouse_scope"]:
+              if key not in rules:
+                  errors.append(f"Missing required key: {key}")
+
+          dr = rules.get("decision_rules", {})
+          sc = rules.get("scoring", {})
+          emb = rules.get("embeddings", {})
+          boosts = sc.get("deterministic_boosts", {})
+
+          if dr.get("fuzzy_qualify_min_score", 0) >= dr.get("fuzzy_max_score", 100):
+              errors.append("fuzzy_qualify_min_score must be < fuzzy_max_score")
+          if dr.get("no_match_max_score", 0) >= dr.get("fuzzy_qualify_min_score", 70):
+              errors.append("no_match_max_score must be < fuzzy_qualify_min_score")
+          if boosts.get("cap", 0) != dr.get("fuzzy_max_score", 99.999):
+              errors.append("boost cap must equal fuzzy_max_score")
+
+          if errors:
+              for e in errors:
+                  print(f"::error::{e}")
+              sys.exit(1)
+
+          print(f"Preflight PASS ({RULES_PATH})")
+          print(f"  model={emb.get('model')}  dim={emb.get('output_dimensionality')}")
+          print(f"  exact_score={dr.get('exact_score')}  fuzzy_range=[{dr.get('fuzzy_qualify_min_score')}, {dr.get('fuzzy_max_score')}]")
+          print(f"  formula={sc.get('precision_score_formula', 'N/A')}")
+          print(f"  boosts: email=+{boosts.get('email_exact_match')}, phone=+{boosts.get('phone_exact_match')}, cap={boosts.get('cap')}")
+          PYEOF
+
+      - name: Preflight – verify exact-match input CSV in GCS
+        run: |
+          set -euo pipefail
+          gcloud config set project "${PROJECT_ID}"
+
+          GCS_PATH="gs://${BUCKET_NAME}/match/final_match_result/"
+          echo "Checking for exact-match input CSV at: ${GCS_PATH}"
+
+          CSV_LIST=$(gcloud storage ls "${GCS_PATH}primary_match_output_*.csv" 2>/dev/null || true)
+
+          if [[ -z "${CSV_LIST}" ]]; then
+            echo "::error::No primary_match_output_*.csv found at ${GCS_PATH}"
+            echo "::error::Upload the exact-match CSV first:"
+            echo "::error::  gcloud storage cp primary_match_output_<uuid>.csv ${GCS_PATH}"
+            exit 1
+          fi
+
+          CSV_COUNT=$(echo "${CSV_LIST}" | wc -l)
+          echo "Found ${CSV_COUNT} exact-match CSV file(s):"
+          echo "${CSV_LIST}"
+
+          LATEST_CSV=$(echo "${CSV_LIST}" | tail -1)
+          echo "EXACT_INPUT_CSV=${LATEST_CSV}" >> "$GITHUB_ENV"
+          echo "Using: ${LATEST_CSV}"
+
+          echo "Downloading for row count validation..."
+          gcloud storage cp "${LATEST_CSV}" /tmp/exact_input.csv
+          ROWS=$(wc -l < /tmp/exact_input.csv)
+          ROWS=$((ROWS - 1))
+          echo "Exact-match input rows: ${ROWS}"
+
+          if [[ ${ROWS} -le 0 ]]; then
+            echo "::error::Exact-match CSV is empty"
+            exit 1
+          fi
+
+          python3 -c "
+          import csv, sys
+          with open('/tmp/exact_input.csv') as f:
+              reader = csv.DictReader(f)
+              headers = reader.fieldnames
+              required = ['lead_id', 'pos_id', 'match_result', 'match_type', 'similarity_score', 'warehouse_number']
+              missing = [h for h in required if h not in headers]
+              if missing:
+                  print(f'::error::Exact CSV missing columns: {missing}')
+                  sys.exit(1)
+              rows = list(reader)
+              wh_rows = [r for r in rows if str(r.get('warehouse_number','')) == '${WAREHOUSE}']
+              print(f'Exact CSV: {len(rows)} total rows, {len(wh_rows)} for warehouse ${WAREHOUSE}')
+              if not wh_rows:
+                  print(f'::warning::No rows for warehouse ${WAREHOUSE} in exact CSV')
+          "
+
+      - name: Build match run ID
+        run: |
+          MATCH_RUN_ID="github-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${WAREHOUSE}"
+          echo "MATCH_RUN_ID=${MATCH_RUN_ID}" >> "$GITHUB_ENV"
+          echo "Match Run ID: ${MATCH_RUN_ID}"
+
+      - name: Build workflow payload
+        run: |
+          PAYLOAD='{"project":"'"${PROJECT_ID}"'","region":"'"${REGION}"'","warehouse":"'"${WAREHOUSE}"'","matchRunId":"'"${MATCH_RUN_ID}"'","dryRun":"'"${DRY_RUN}"'"'
+          if [[ -n "${MATCH_LEAD_LIMIT}" ]]; then
+            PAYLOAD="${PAYLOAD}"',"matchLeadLimit":"'"${MATCH_LEAD_LIMIT}"'"'
+          fi
+          PAYLOAD="${PAYLOAD}"'}'
+          echo "PAYLOAD=${PAYLOAD}" >> "$GITHUB_ENV"
+          echo "Workflow payload: ${PAYLOAD}"
+
+      - name: Trigger lead match workflow
+        run: |
+          set -euo pipefail
+          gcloud config set project "${PROJECT_ID}"
+
+          echo "Pipeline steps (all via Cloud Run Jobs → Cloud SQL):"
+          echo "  1. Preflight       — validate DB connectivity + config"
+          echo "  2. Exact Match     — deterministic 5-field match (score=100, auto-close)"
+          echo "  3. Lead Embeddings — generate lead vectors via Vertex AI"
+          echo "  4. POS Embeddings  — generate POS vectors (7 variants) via Vertex AI"
+          echo "  5. Ensure Indexes  — create/maintain HNSW vector indexes"
+          echo "  6. Fuzzy Match     — semantic similarity scoring (70-99.999, manual review)"
+          echo "  7. Report          — generate CSV + summary to GCS"
+          echo ""
+          echo "Business rules enforced:"
+          echo "  - Exact owns score 100. Fuzzy never reaches 100 (capped at 99.999)."
+          echo "  - is_processed: a matched POS is consumed once and excluded from future pools."
+          echo "  - Fiscal: CE (pre-lead ≤6 periods) → stub; OAF (>6) → dropped; post-lead → scored."
+          echo "  - Primary transaction: earliest qualifying POS per lead (NMI)."
+          echo ""
+
+          if [[ "${DRY_RUN}" == "true" ]]; then
+            echo "DRY RUN: match decisions are preview-only, no writebacks to business tables."
+          fi
+
+          EXECUTION=$(gcloud workflows execute "${WORKFLOW_NAME}" \
+            --location="${REGION}" \
+            --project="${PROJECT_ID}" \
+            --data="${PAYLOAD}" \
+            --call-log-level=log-errors-only \
+            --execution-history-level=execution-history-basic \
+            --format="value(name)")
+          echo "EXECUTION_NAME=${EXECUTION}" >> "$GITHUB_ENV"
+          echo "Execution started: ${EXECUTION}"
+
+      - name: Wait for completion
+        if: github.event.inputs.wait_for_completion == 'true'
+        run: |
+          set -euo pipefail
+          echo "Polling workflow execution (15s intervals)..."
+          while true; do
+            STATE="$(gcloud workflows executions describe "${EXECUTION_NAME}" \
+              --project="${PROJECT_ID}" \
+              --location="${REGION}" \
+              --format="value(state)" 2>/dev/null)" || {
+              echo "Transient polling error; retrying..."
+              sleep 5
+              continue
+            }
+            echo "State: ${STATE}"
+            case "${STATE}" in
+              SUCCEEDED)
+                echo "Pipeline completed successfully."
+                break
+                ;;
+              FAILED|CANCELLED)
+                echo "::error::Pipeline ${STATE}"
+                gcloud workflows executions describe "${EXECUTION_NAME}" \
+                  --project="${PROJECT_ID}" \
+                  --location="${REGION}" \
+                  --format="value(error)" || true
+                exit 1
+                ;;
+              *)
+                sleep 15
+                ;;
+            esac
+          done
+
+      - name: Verify match output in GCS
+        if: success() && github.event.inputs.wait_for_completion == 'true'
+        run: |
+          set -euo pipefail
+          gcloud config set project "${PROJECT_ID}"
+
+          REPORT_PREFIX="reports/lead_match/${PROJECT_ID}/${WAREHOUSE}/${MATCH_RUN_ID}"
+          MATCHES_URI="gs://${BUCKET_NAME}/${REPORT_PREFIX}/matches.csv"
+          SUMMARY_URI="gs://${BUCKET_NAME}/${REPORT_PREFIX}/summary.json"
+
+          echo "Checking GCS artifacts:"
+          echo "  ${MATCHES_URI}"
+          echo "  ${SUMMARY_URI}"
+
+          if ! gsutil stat "${MATCHES_URI}" >/dev/null 2>&1; then
+            echo "::warning::matches.csv not found — running report job"
+            gcloud run jobs execute lead-match-report \
+              --project="${PROJECT_ID}" \
+              --region="${REGION}" \
+              --args=report \
+              --update-env-vars="WAREHOUSE=${WAREHOUSE},WAREHOUSE_SCOPE=${WAREHOUSE},MATCH_RUN_ID=${MATCH_RUN_ID},DRY_RUN=${DRY_RUN},REPORT_BUCKET=${BUCKET_NAME}" \
+              --wait
+          fi
+
+          echo "Downloading matches.csv for validation..."
+          gsutil cp "${MATCHES_URI}" /tmp/matches.csv 2>/dev/null || {
+            echo "::warning::Could not download matches.csv"
+            exit 0
+          }
+
+          pip install -q pandas
+          python - <<'PYEOF'
+          import pandas as pd, sys, json
+
+          df = pd.read_csv("/tmp/matches.csv")
+          print(f"Match results: {len(df)} rows, {df['lead_id'].nunique()} leads")
+
+          if "match_type" in df.columns:
+              print(f"Match types: {df['match_type'].value_counts().to_dict()}")
+          if "lifecycle_state" in df.columns:
+              print(f"Lifecycle states: {df['lifecycle_state'].value_counts().to_dict()}")
+          if "final_score" in df.columns:
+              fuzzy = df[df["match_type"] != "Exact"] if "match_type" in df.columns else df
+              if not fuzzy.empty:
+                  max_fuzzy = fuzzy["final_score"].max()
+                  if max_fuzzy >= 100:
+                      print(f"::error::Fuzzy score reached {max_fuzzy} — must never reach 100")
+                      sys.exit(1)
+                  print(f"Fuzzy score range: [{fuzzy['final_score'].min():.2f}, {max_fuzzy:.2f}]")
+
+          print("Validation PASS")
+          PYEOF
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "## Lead Match Pipeline Results"
+            echo ""
+            echo "| Parameter | Value |"
+            echo "|-----------|-------|"
+            echo "| Warehouse | ${WAREHOUSE} |"
+            echo "| Project | ${PROJECT_ID} |"
+            echo "| Dry Run | ${DRY_RUN} |"
+            echo "| Match Run ID | ${MATCH_RUN_ID} |"
+            echo "| Lead Limit | ${MATCH_LEAD_LIMIT:-all} |"
+            echo ""
+            echo "### Pipeline Steps"
+            echo "1. Preflight → validate config + DB"
+            echo "2. Exact Match → score=100, auto-close (Closed - Match)"
+            echo "3. Lead Embeddings → gemini-embedding-001, 768-dim"
+            echo "4. POS Embeddings → 7 variants per POS"
+            echo "5. Ensure Indexes → HNSW on combined_embedding"
+            echo "6. Fuzzy Match → score 70-99.999 (Potential, manual review)"
+            echo "7. Report → CSV + summary to GCS"
+            echo ""
+            echo "### GCS Artifacts"
+            echo "- \`gs://${BUCKET_NAME}/reports/lead_match/${PROJECT_ID}/${WAREHOUSE}/${MATCH_RUN_ID}/matches.csv\`"
+            echo "- \`gs://${BUCKET_NAME}/reports/lead_match/${PROJECT_ID}/${WAREHOUSE}/${MATCH_RUN_ID}/summary.json\`"
+            echo ""
+            echo "### Business Rules"
+            echo "- Exact owns score 100 (only auto-close). Fuzzy capped at 99.999."
+            echo "- \`is_processed\`: matched POS consumed once, excluded from future pools."
+            echo "- Fiscal: CE ≤6 periods before lead → stub. OAF >6 → dropped. Post-lead → scored."
+            echo "- Primary transaction: earliest qualifying POS per lead (NMI)."
+          } >> "$GITHUB_STEP_SUMMARY"

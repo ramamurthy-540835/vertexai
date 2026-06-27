@@ -1,0 +1,702 @@
+{
+  "schema_version": "2.3",
+  "scope_note": "FUZZY / SEMANTIC matching rules ONLY. The deterministic exact engine (150-point primary_matching.py) is a separate system and is NOT defined here. This JSON is the single source of truth for the fuzzy pipeline. Runtime must read all weights, thresholds, bands, and field mappings from this file; no hardcodes.",
+
+  "business_context": {
+    "entity": "lead_to_pos_match_fuzzy",
+    "intent": "Attribute POS transactions to BD-tracked business leads using semantic identity (business/OMS names + full addresses), warehouse territory, and Costco fiscal ordering. Phone and email are deterministic confirmers, not embedded.",
+    "warehouse_note": "Warehouse values are runtime scope only. No warehouse number is a business rule.",
+    "attribution_note": "No attribution window on POST-lead matches (a POS on or after the lead is eligible regardless of how far after). A separate 6-period window governs PRE-lead transactions (Closed-Existing vs OAF).",
+    "hybrid_note": "Hybrid model: phone and email are matched deterministically and added as boosts; business/company names and full addresses (including OMS variants) are matched semantically via embeddings."
+  },
+
+  "environment_selector": {
+    "_note": "Set MATCH_ENV env var to select environment. Default: ctoteam. Options: ctoteam, adt, spt, qat, prd.",
+    "default": "ctoteam",
+    "env_var": "MATCH_ENV",
+    "profiles": {
+      "ctoteam": {
+        "project_id": "ctoteam",
+        "region": "us-central1",
+        "label": "ctoteam-isolated-dev",
+        "cloud_sql": {
+          "connection_name": "ctoteam:us-central1:lead-mgmt-db",
+          "instance": "lead-mgmt-db",
+          "host": "35.188.0.193",
+          "port": 5432,
+          "database": "postgres",
+          "schema": "leadmgmt",
+          "ip_type": "PUBLIC"
+        },
+        "gcs": {
+          "report_bucket": "lead-match-ctoteam",
+          "input_bucket": "lead-match-ctoteam"
+        },
+        "credentials": {
+          "source": "secret_manager",
+          "db_user_source": "env_var",
+          "db_password_secret": "lead-match-db-password"
+        }
+      },
+      "adt": {
+        "project_id": "p-601-np-bcleadsmgmt-adt",
+        "region": "us-central1",
+        "label": "adt-dev",
+        "cloud_sql": {
+          "connection_name": "p-601-np-bcleadsmgmt-adt:us-central1:lead-mgmt-adt",
+          "instance": "lead-mgmt-adt",
+          "database": "lead-mgmt-db",
+          "schema": "lead_mgmt_adt",
+          "ip_type": "PRIVATE"
+        },
+        "gcs": {
+          "report_bucket": "gcp-gcs-lead-mgmt-us-adt",
+          "input_bucket": "gcp-gcs-lead-mgmt-us-adt"
+        },
+        "credentials": {
+          "source": "iam",
+          "db_user": "gco-iam-svc-lead-mgmt-bc-adt@p-601-np-bcleadsmgmt-adt.iam"
+        }
+      },
+      "spt": {
+        "project_id": "p-601-np-bcleadsmgmt-spt",
+        "region": "us-central1",
+        "label": "spt-staging",
+        "cloud_sql": {
+          "connection_name": "p-601-np-bcleadsmgmt-spt:us-central1:lead-mgmt-spt",
+          "instance": "lead-mgmt-spt",
+          "database": "lead-mgmt-db",
+          "schema": "lead_mgmt_spt",
+          "ip_type": "PRIVATE"
+        },
+        "gcs": {
+          "report_bucket": "gcp-gcs-lead-mgmt-us-spt",
+          "input_bucket": "gcp-gcs-lead-mgmt-us-spt"
+        },
+        "credentials": {
+          "source": "iam",
+          "db_user": "gco-iam-svc-lead-mgmt-bc-spt@p-601-np-bcleadsmgmt-spt.iam"
+        }
+      },
+      "qat": {
+        "project_id": "p-601-np-bcleadsmgmt-qat",
+        "region": "us-central1",
+        "label": "qat-qa",
+        "cloud_sql": {
+          "connection_name": "p-601-np-bcleadsmgmt-qat:us-central1:lead-mgmt-qat",
+          "instance": "lead-mgmt-qat",
+          "database": "lead-mgmt-db",
+          "schema": "lead_mgmt_qat",
+          "ip_type": "PRIVATE"
+        },
+        "gcs": {
+          "report_bucket": "gcp-gcs-lead-mgmt-us-qat",
+          "input_bucket": "gcp-gcs-lead-mgmt-us-qat"
+        },
+        "credentials": {
+          "source": "iam",
+          "db_user": "gco-iam-svc-lead-mgmt-bc-qat@p-601-np-bcleadsmgmt-qat.iam"
+        }
+      },
+      "prd": {
+        "project_id": "p-601-pd-bcleadsmgmt-prd",
+        "region": "us-central1",
+        "label": "prd-production",
+        "cloud_sql": {
+          "connection_name": "p-601-pd-bcleadsmgmt-prd:us-central1:lead-mgmt-prd",
+          "instance": "lead-mgmt-prd",
+          "database": "lead-mgmt-db",
+          "schema": "lead_mgmt_prd",
+          "ip_type": "PRIVATE"
+        },
+        "gcs": {
+          "report_bucket": "gcp-gcs-lead-mgmt-us-prd",
+          "input_bucket": "gcp-gcs-lead-mgmt-us-prd"
+        },
+        "credentials": {
+          "source": "iam",
+          "db_user": "gco-iam-svc-lead-mgmt-bc-prd@p-601-pd-bcleadsmgmt-prd.iam"
+        }
+      }
+    }
+  },
+
+  "environment": {
+    "project_id": "ctoteam",
+    "region": "us-central1",
+    "schema": "leadmgmt",
+    "label": "ctoteam-isolated",
+    "configurable_by_env": true,
+
+    "vertex_ai": {
+      "project_id": "ctoteam",
+      "location": "us-central1",
+      "timeout_seconds": 120.0
+    },
+
+    "models": {
+      "gemini_flash": "gemini-3.5-flash",
+      "gemini_flash_note": "Used by reporting app (Talk with Data). Change here to switch model globally.",
+      "embedding": "gemini-embedding-001",
+      "embedding_lock_note": "LOCKED. Cross-model cosine similarity is invalid. See embeddings.model_lock_note.",
+      "backup_models": ["gemini-2.5-flash", "gemini-2.5-pro"]
+    },
+
+    "cloud_sql": {
+      "connection_name": "ctoteam:us-central1:lead-mgmt-db",
+      "instance": "lead-mgmt-db",
+      "socket_dir": "/cloudsql",
+      "host": "35.188.0.193",
+      "port": 5432,
+      "database": "postgres",
+      "schema": "leadmgmt",
+      "credentials": {
+        "source": "secret_manager",
+        "secret_user": "db-user",
+        "secret_password": "db-password",
+        "note": "Never store credentials in this file. Load from GCP Secret Manager at runtime."
+      }
+    },
+
+    "gcs": {
+      "report_bucket": "lead-match-ctoteam"
+    },
+
+    "cloud_run": {
+      "service_name": "lead-match-endpoint",
+      "health_path": "/health"
+    },
+
+    "safety_flags": {
+      "allow_client_gcp": false,
+      "allow_local_db": false,
+      "allow_production": false,
+      "dry_run": false
+    },
+
+    "tuning": {
+      "embedding_batch_size": 100,
+      "embedding_batch_workers": 5,
+      "embedding_max_workers": 5,
+      "embedding_max_texts_per_request": 0,
+      "embedding_max_retries": 6,
+      "embedding_retry_base_delay": 1.5,
+      "embedding_retry_max_delay": 90,
+      "embedding_request_log_every": 100,
+      "embedding_qps_limit": 10,
+      "normalize_embeddings": true,
+      "normalize_note": "Required for 768-dim gemini-embedding-001. Google docs: non-default dimensions must be manually normalized.",
+      "match_batch_size": 100,
+      "match_statement_timeout_ms": 900000,
+      "max_workers": 5,
+      "vector_top_k": 100,
+      "vector_top_k_note": "Retrieve top-K POS candidates per lead from pgvector. Start 100; test 500 if recall needs it.",
+      "explain_fuzzy_plan": true,
+      "db_write_batch_size": 100,
+      "db_pool_max": 5,
+      "embedding_lead_batch_size": 250,
+      "embedding_pos_internal_batch_size": 25,
+      "pos_embedding_chunk_size": 2000,
+      "embedding_request_size_cap": 250,
+      "match_lead_limit_default": 1000000,
+      "analysis_db_batch_size": 1000
+    },
+
+    "hnsw_index": {
+      "m": 16,
+      "ef_construction": 64,
+      "ef_search": 100,
+      "maintenance_work_mem": "512MB",
+      "safe_build_note": "M=16/ef_construction=64 are pgvector defaults. Safer for first 22M-row HNSW build. Scale to M=32/ef_construction=128 after SPT proves stable."
+    },
+
+    "dry_run_controls": {
+      "match_row_limit": 1000,
+      "writeback_business_tables": false
+    },
+
+    "rollout_phases": [
+      {"phase": 1, "row_limit": 1000,  "writeback": false, "note": "Validation only"},
+      {"phase": 2, "row_limit": 10000, "writeback": false, "note": "Scale test, no writes"},
+      {"phase": 3, "row_limit": 10000, "writeback": true,  "note": "First real writes"},
+      {"phase": 4, "row_limit": 50000, "writeback": true,  "note": "Half-scale production"},
+      {"phase": 5, "row_limit": 80000, "writeback": true,  "note": "Full production"}
+    ],
+
+    "fiscal_defaults": {
+      "fiscal_year": 2026,
+      "fiscal_period": 10
+    },
+
+    "source_modes": {
+      "default": "cloudsql",
+      "supported": ["cloudsql", "files"],
+      "file_mode": {
+        "enabled_for_testing": true,
+        "cloud_sql_touched": false,
+        "gcs_upload": false,
+        "default_leads_file": "mock_data/115/leads_corrected.xlsx",
+        "default_pos_file": "mock_data/115/pos_corrected.xlsx",
+        "default_output_dir": "mock_data/115_from_exact",
+        "exact_output_csv_optional": true,
+        "embedding_cache_dir_name": "embedding_cache",
+        "allow_mock_embeddings": true,
+        "write_outputs_local_only": true
+      }
+    },
+
+    "file_mode_outputs": {
+      "fuzzy_output_csv": "fuzzy_file_mode_output.csv",
+      "summary_json": "fuzzy_file_mode_summary.json",
+      "debug_candidates_csv": "fuzzy_file_mode_debug_candidates.csv"
+    },
+
+    "file_mode_safety": {
+      "do_not_connect_cloud_sql": true,
+      "do_not_write_cloud_sql": true,
+      "do_not_upload_gcs": true,
+      "do_not_embed_email_phone": true,
+      "fail_if_fuzzy_score_reaches_100": true
+    }
+  },
+
+  "warehouse_scope": {
+    "env_var": "WAREHOUSE_SCOPE",
+    "fallback_env_var": "WAREHOUSE",
+    "default": "ALL",
+    "supported_values": ["ALL", "single warehouse", "comma-separated warehouses"]
+  },
+
+  "score_model": {
+    "_purpose": "The single, confirmed score-to-disposition model. This is authoritative.",
+    "match": {
+      "score": 100,
+      "match_result": "Match",
+      "lifecycle_state": "Closed - Match",
+      "engine": "deterministic exact only",
+      "auto": true,
+      "note": "Score 100 is produced ONLY by the deterministic exact engine and is the only auto-match. Fuzzy NEVER produces 100."
+    },
+    "potential_match": {
+      "score_min": 70,
+      "score_max": 99.999,
+      "match_result": "Potential",
+      "lifecycle_state": "Potential",
+      "engine": "fuzzy / semantic",
+      "auto": false,
+      "note": "ALL fuzzy scores 70 to 99.999 are a single Potential Match band. Routed to ServiceNow / business manual review. Lead status is NOT changed by a fuzzy match. Fuzzy never auto-closes."
+    },
+    "no_match": {
+      "score_max": 69.999,
+      "match_result": "No Match",
+      "lifecycle_state": "No row",
+      "note": "Score below 70 is rejected; no row is written. Never clamped up to qualify."
+    }
+  },
+
+  "candidate_selection": {
+    "_purpose": "Which transaction rows from Cloud SQL are eligible to enter the fuzzy candidate pool.",
+    "source_table": "leadmgmt.transaction",
+    "same_warehouse": true,
+    "same_warehouse_expression": "lead.warehouse_number = pos.warehouse_number",
+    "exclude_exact_matched": true,
+    "exclude_exact_matched_reason": "Any pos_id already matched by the deterministic exact engine (score 100, match_type Exact) is owned by exact and must NEVER be re-picked or re-scored by fuzzy.",
+    "exclude_processed": true,
+    "exclude_processed_expression": "transaction.is_processed = false",
+    "exclude_processed_reason": "A transaction is consumed once. Once matched (or marked CE), is_processed is set true and it leaves the active pool.",
+    "eligible_fiscal": "post_lead only (pre-lead pairs are handled by fiscal_rules: CE or OAF-drop before scoring)"
+  },
+
+  "transaction_processing": {
+    "_purpose": "Transaction reuse prevention and NMI (first-conversion) handling.",
+    "is_processed_column": "is_processed",
+    "is_processed_type": "BOOLEAN",
+    "is_processed_default": false,
+    "is_processed_not_null": true,
+    "process_datetime_column": "process_datetime",
+    "process_datetime_type": "TIMESTAMP",
+    "process_datetime_nullable": true,
+    "partial_index": "CREATE INDEX IF NOT EXISTS idx_transaction_unprocessed ON leadmgmt.transaction (warehouse_number) WHERE is_processed = false",
+    "partial_index_reason": "Efficient filtering of pending (unprocessed) transactions.",
+    "reuse_prevention": "Each transaction may be consumed only once. Once matched, set is_processed = true and process_datetime = now; it is excluded from all future matching pools.",
+    "no_duplicate_ids": "Duplicate sales_reference_id values are rejected before scoring.",
+    "nmi_rule": "The first chronologically matched transaction per lead is the NMI (first conversion / primary_transaction). Once a lead has a matched transaction, that transaction is flagged is_processed and is NOT carried forward; subsequent transactions for the same lead are Influenced Revenue only.",
+    "first_week_rule": "If a match is found in the first qualifying week, that transaction is the NMI and is marked processed; do not advance it to the next period as a new entry. The is_processed flag prevents re-entry.",
+    "audit_lookback": "Used (processed) transactions remain queryable for Close-Existing identification and audit, but are excluded from active matching."
+  },
+
+  "fiscal_rules": {
+    "_purpose": "Chronological three-way classification of each lead-POS pair, applied BEFORE fuzzy scoring. Mirrors the live code.",
+    "periods_per_year": 13,
+    "ce_period_window": 6,
+    "period_gap_formula": "period_gap = (lead.fiscal_year - pos.fiscal_year) * 13 + (lead.fiscal_period - pos.fiscal_period)",
+    "classification": [
+      {
+        "name": "Closed - Existing (CE)",
+        "condition": "POS is BEFORE the lead AND period_gap <= 6",
+        "action": "Lead marked Closed - Existing. Six-set scoring bypassed. A stub row is created. Lead removed from the active set (will not search for other matches). transaction is_processed = true.",
+        "lifecycle_state": "Closed - Existing",
+        "revenue": "none",
+        "output": "stub row"
+      },
+      {
+        "name": "OAF (Out-of-Fiscal-Window)",
+        "condition": "POS is BEFORE the lead AND period_gap > 6",
+        "action": "The pair is silently dropped: NOT output as a match, lead is NOT marked CE, lead remains ACTIVE and may still match POST-lead transactions. No match record created.",
+        "lifecycle_state": "none (pair dropped)",
+        "revenue": "none",
+        "output": "none",
+        "important_note": "This supersedes any earlier 'OOF proceeds to scoring' statement. Per the live code, a pre-lead POS older than 6 periods is DROPPED (no match, no CE); only the pair is dropped, the lead stays active."
+      },
+      {
+        "name": "Normal Match Candidate",
+        "condition": "POS is AT or AFTER the lead (post-lead)",
+        "action": "Pair proceeds to the six-set fuzzy scoring. Classified by score into Potential (70-99.999) or No Match (<70). (Score 100 / exact is handled by the exact engine, not fuzzy.)",
+        "lifecycle_state": "Potential or No row",
+        "revenue": "per lead status if matched",
+        "output": "scored"
+      }
+    ],
+    "example": "Lead FY2024 P10 vs POS FY2024 P4 -> gap = (2024-2024)*13 + (10-4) = 6 -> within CE window (Closed-Existing). POS FY2024 P3 -> gap = 7 -> OAF (dropped).",
+    "same_fiscal_year_basis": true,
+    "post_lead_attribution_window": false
+  },
+
+  "matching_markers": {
+    "semantic_identity_core": ["business_name", "full_address"],
+    "name_variant_sources": ["business_name", "oms_company_name", "oms2_company_name"],
+    "address_variant_sources": ["full_address", "full_oms_address", "full_oms2_address"],
+    "full_address_fields": ["address_line_one", "city", "state", "zip_code"],
+    "deterministic_confirmers": ["email", "phone"],
+    "do_not_embed": [
+      "first_name",
+      "last_name",
+      "membership_number",
+      "order_amount",
+      "account_number",
+      "member_name",
+      "personal_email",
+      "email",
+      "phone"
+    ],
+    "do_not_embed_note": "Phone and email are deterministic confirmers (boosts), NOT embedded. First name, last name, membership_number, account_number, order_amount are never embedded. membership_number may be used for identity/eligibility joins but is not part of semantic scoring.",
+    "email_phone_note": "Exact agreement on phone or email boosts confidence. Disagreement is NEUTRAL (no penalty) because a POS/OMS email can be member-personal."
+  },
+
+  "embeddings": {
+    "model": "gemini-embedding-001",
+    "model_lock_note": "Model is LOCKED to gemini-embedding-001. Never switch to text-embedding-004 or any other family; cross-model cosine similarity is invalid.",
+    "task_type": "SEMANTIC_SIMILARITY",
+    "output_dimensionality": 768,
+    "l2_normalize": true,
+    "skip_empty_text": true,
+    "never_write_zero_vectors": true,
+    "embed_distinct_variants_once": true,
+    "embed_distinct_variants_note": "Embed each distinct name variant and each distinct address variant ONCE per POS record, skipping blanks. The six matching sets are arithmetic combinations of these vectors, NOT six separate embedding passes. Typical POS row yields 2-4 vectors, not 6.",
+    "fields": {
+      "combined_field": {
+        "source": ["business_name", "full_address"],
+        "role": "recall_gate",
+        "in_final_score": false,
+        "note": "Recall gate / candidate pre-filter only (cosine >= recall_gate_min_similarity). NOT part of the weighted score, to avoid double-counting."
+      },
+      "name_variant": {
+        "role": "precision_score_name",
+        "weight": 3,
+        "sources": ["business_name", "oms_company_name", "oms2_company_name"]
+      },
+      "address_variant": {
+        "role": "precision_score_address",
+        "weight": 4,
+        "sources": ["full_address", "full_oms_address", "full_oms2_address"]
+      }
+    }
+  },
+
+  "candidate_retrieval": {
+    "method": "pgvector_hnsw",
+    "distance_metric": "cosine",
+    "recall_gate_field": "combined_field",
+    "recall_gate_min_similarity": 65,
+    "nearest_neighbor_limit": 20
+  },
+
+  "matching_sets": {
+    "_purpose": "Six field-source combinations per POS record. All are scored; the highest-scoring set is selected (max). Maximizes probability of finding a true match (highest recall).",
+    "selection_rule": "max",
+    "record_winning_set": true,
+    "scoring_formula": "(4 * address_score + 3 * name_score) / 7",
+    "skip_set_if_variant_blank": true,
+    "sets": [
+      { "set": 1, "source": "POS native",            "name_field": "business_name",     "address_field": "full_address",      "email_field": "email",       "phone_field": "phone" },
+      { "set": 2, "source": "POS + OMS company",      "name_field": "oms_company_name",  "address_field": "full_address",      "email_field": "email",       "phone_field": "phone" },
+      { "set": 3, "source": "OMS primary business",   "name_field": "business_name",     "address_field": "full_oms_address",  "email_field": "email_1_oms", "phone_field": "phone_1_oms" },
+      { "set": 4, "source": "OMS primary company",    "name_field": "oms_company_name",  "address_field": "full_oms_address",  "email_field": "email_1_oms", "phone_field": "phone_1_oms" },
+      { "set": 5, "source": "OMS secondary business", "name_field": "business_name",     "address_field": "full_oms2_address", "email_field": "email_2_oms", "phone_field": "phone_2_oms" },
+      { "set": 6, "source": "OMS secondary company",  "name_field": "oms2_company_name", "address_field": "full_oms2_address", "email_field": "email_2_oms", "phone_field": "phone_2_oms" }
+    ],
+    "field_mapping_note": "OMS column names (oms_company_name, oms2_company_name, full_oms_address, full_oms2_address, email_1_oms, phone_1_oms, email_2_oms, phone_2_oms) must be mapped to the actual transaction/OMS table columns during ingest.",
+    "embedding_column_mapping": {
+      "full_address": "address_embedding",
+      "full_oms_address": "oms_address_embedding",
+      "full_oms2_address": "oms2_address_embedding",
+      "business_name": "name_embedding",
+      "oms_company_name": "oms_company_name_embedding",
+      "oms2_company_name": "oms2_company_name_embedding",
+      "combined_field": "combined_embedding"
+    },
+    "transaction_field_mapping": {
+      "email": "email",
+      "phone": "phone",
+      "email_1_oms": "email_1_oms",
+      "phone_1_oms": "phone_1_oms",
+      "email_2_oms": "email_2_oms",
+      "phone_2_oms": "phone_2_oms"
+    }
+  },
+
+  "scoring": {
+    "precision_score_formula": "(4 * address_score + 3 * name_score) / 7",
+    "denominator_reason": "Denominator 7 = sum of precision weights (address 4 + name 3). address ~57.1%, name ~42.9%.",
+    "best_set_score": "max across the six matching sets",
+    "deterministic_boosts": {
+      "applies_after": "best_set_score selected",
+      "email_exact_match": 5,
+      "phone_exact_match": 5,
+      "match_basis": "exact equality after normalization (email lowercase, phone digits-only) against the winning set's email/phone source",
+      "disagreement": "neutral (no penalty)",
+      "cap": 99.999,
+      "cap_reason": "Boosted fuzzy score is capped at 99.999. Fuzzy can NEVER reach 100; 100 is owned exclusively by the deterministic exact engine."
+    }
+  },
+
+  "decision_rules": {
+    "exact_owns_100": true,
+    "exact_score": 100,
+    "exact_authoritative_score": 100,
+    "exact_match_type": "Exact",
+    "exact_match_types": ["Exact", "Deterministic", "Exact Match", "Direct Match", "Close Match"],
+    "exact_lifecycle_state": "Closed - Match",
+    "closed_existing_lifecycle_state": "Closed - Existing",
+    "no_match_lifecycle_state": "No Match",
+    "fuzzy_match_type": "Fuzzy",
+    "manual_review_match_type": "Manual Review",
+    "fuzzy_qualify_min_score": 70,
+    "fuzzy_max_score": 99.999,
+    "fuzzy_artifact_score": 100,
+    "fuzzy_reject_below_floor": true,
+    "no_match_max_score": 69.999,
+    "fuzzy_lifecycle_state": "Potential",
+    "fuzzy_all_potential_rule": "ALL fuzzy matches in 70 to 99.999 are a single POTENTIAL MATCH band with lifecycle_state 'Potential', routed to manual review. Fuzzy NEVER auto-closes. Only the deterministic exact engine (score 100) produces 'Closed - Match'.",
+    "optional_confidence_subtiers": {
+      "note": "OPTIONAL display/sorting only. Does NOT change match_result or lifecycle_state — every subtier is still Potential and still manual review. Use only to prioritize the review queue.",
+      "subtiers": [
+        { "name": "High",   "min_score": 90, "max_score": 99.999 },
+        { "name": "Medium", "min_score": 85, "max_score": 89.999 },
+        { "name": "Low",    "min_score": 70, "max_score": 84.999 }
+      ]
+    }
+  },
+
+  "resolution": {
+    "lead_to_pos": "one_to_many",
+    "pos_to_lead": "one_to_one",
+    "pos_winner": "highest_final_score",
+    "ambiguity_delta": 3,
+    "ambiguity_state": "Potential",
+    "ambiguity_match_type": "Manual Review",
+    "ambiguity_note": "When two leads compete for the same POS within 3 points, route to Manual Review (Potential), never auto-decide.",
+    "primary_transaction": {
+      "definition": "Earliest qualifying transaction per lead by fiscal_year, fiscal_period, then week (the NMI / first conversion).",
+      "order_by": ["fiscal_year", "fiscal_period", "week"],
+      "qualifying_min_score": 70,
+      "once_selected": "Mark the transaction is_processed = true; do not carry forward."
+    }
+  },
+
+  "override_policy": {
+    "exact_is_authoritative": true,
+    "exact_owns_score_100": true,
+    "semantic_role": "recall_add_on_for_exact_misses",
+    "semantic_match_type": "Fuzzy",
+    "semantic_auto_close": false,
+    "compare_exact_points_to_semantic_score": false,
+    "merge_rule": {
+      "strategy": "highest_score_wins",
+      "scope": "per_lead_pos_pair",
+      "description": "For each (lead_id, pos_id) pair present in both exact CSV and fuzzy pipeline output, keep the row with the higher similarity_score. No duplicates in final output.",
+      "comment_carry_forward": true,
+      "comment_carry_forward_note": "When the winning row has no matching_comments but the losing row does, carry forward the losing row's comment. This preserves exact CSV field-match detail on rows the pipeline promoted to a higher score."
+    }
+  },
+
+  "lifecycle_states": ["New", "Potential", "Closed - Match", "Closed - Existing", "No Match"],
+  "lifecycle_state_note": "Closed - Match = exact (score 100) only. Potential = all fuzzy 70 to 99.999 and Manual Review. Closed - Existing = strong pre-lead activity within 6 periods (stub, lead removed from active set). OAF (pre-lead older than 6 periods) produces NO lifecycle row (pair dropped, lead stays active).",
+
+  "normalization": {
+    "state": "uppercase_2_letter",
+    "zip_code": "first_5_digits",
+    "phone": "digits_only",
+    "email": "lowercase_trim",
+    "business_name": "trim_collapse_whitespace_uppercase_for_compare",
+    "address": "trim_collapse_whitespace_standardize_common_abbreviations",
+    "empty_embedding_text": "skip"
+  },
+
+  "output_contract": {
+    "required_columns": [
+      "lead_id",
+      "pos_id",
+      "match_result",
+      "similarity_score",
+      "match_type",
+      "lifecycle_state",
+      "primary_transaction",
+      "is_processed",
+      "winning_set",
+      "matching_comments"
+    ],
+    "optional_columns": ["closed_existing_flag", "manual_review_reason", "confidence_subtier", "name_score", "address_score", "email_boost", "phone_boost"]
+  },
+
+  "semantic_definitions": {
+    "_purpose": "Plain-English definitions so LLM (Gemini Flash) and human reviewers interpret results consistently. Authoritative for reporting/answering.",
+    "lead": "A BD-tracked business prospect record assembled from lead, account, and contact data. Identity is business_name and full_address.",
+    "pos": "A point-of-sale transaction from the transaction table, carrying native fields plus OMS fields. Matching attributes it to a lead.",
+    "match_disposition": "Score 100 (exact engine only) = Match / Closed - Match (auto). Score 70 to 99.999 (fuzzy) = Potential Match (manual review). Score below 70 = No Match (no row).",
+    "exact_match": "A deterministic field-equality match produced by the separate exact engine; score 100; the only auto-close. Fuzzy never produces it.",
+    "fuzzy_match": "A semantic candidate from Vertex AI embeddings (cosine), scored 70 to 99.999. ALL fuzzy matches are Potential (manual review); never auto-closed; never relabeled Exact.",
+    "potential_match": "Any fuzzy match in 70 to 99.999. Routed to manual review. Lead status unchanged until a human confirms.",
+    "no_match": "A computed fuzzy score below 70. Rejected; no row written.",
+    "manual_review": "match_type for ambiguous pairs (competing leads within 3 points). Lifecycle Potential; never Exact.",
+    "combined_field": "Embedding of business_name + full_address used as the recall gate / candidate pre-filter only (cosine >= 65). Not in the final score.",
+    "name_variant": "One of business_name, OMS company name, or OMS2 company name. Embedded; weight 3 in the score.",
+    "address_variant": "One of full_address, full OMS address, or full OMS2 address. Embedded; weight 4 in the score.",
+    "six_matching_sets": "Six combinations of one name variant and one address variant per POS. All are scored; the highest wins. Phone/email exact agreement adds a deterministic boost to the winner.",
+    "deterministic_boost": "Phone or email exact match adds +5 each (cap 99.999). Phone/email are NOT embedded; disagreement is neutral.",
+    "is_processed": "A transaction flag. Once a transaction is matched (or marked CE), is_processed becomes true and it is excluded from future matching pools (each transaction consumed once).",
+    "nmi": "New Matched Interaction - the first chronologically matched transaction per lead (the primary_transaction / first conversion). Subsequent transactions are Influenced Revenue.",
+    "closed_existing": "Strong POS activity before the lead fiscal point within 6 periods. Pre-existing customer; not a new conversion; lead removed from active set; stub row; is_processed true.",
+    "oaf": "Out-of-Fiscal-Window - a POS more than 6 periods OLDER than the lead. The pair is silently dropped (no match, no CE); the lead stays active and may still match post-lead transactions.",
+    "primary_transaction": "The earliest qualifying transaction per lead by fiscal_year, period, week, scoring >= 70.",
+    "closed_match": "lifecycle_state for exact (score 100) only. Fuzzy is never Closed - Match.",
+    "exact_vs_fuzzy_summary": "Deterministic exact runs first, owns score 100 / Closed - Match. Fuzzy runs only on residual unmatched, unprocessed, post-lead records, produces 70 to 99.999 Potential candidates for review, and never auto-closes."
+  },
+
+  "formula_explanation": {
+    "precision_score_formula": "final_score = (4 * address_score + 3 * name_score) / 7  (per set; best set wins; + phone/email boost; cap 99.999)",
+    "denominator_reason": "7 = address weight 4 + name weight 3.",
+    "combined_field_reason": "combined_field is the recall gate; not re-added to the score to avoid double-counting.",
+    "address_weight_percent": 57.1,
+    "name_weight_percent": 42.9,
+    "boost_reason": "Phone/email are exact identifiers; matched deterministically and added as +5 boosts, not embedded.",
+    "ceiling_reason": "Capped at 99.999 so fuzzy never reaches 100; 100 is exact-only."
+  },
+
+  "calibration_status": "starting_prior_needs_labeled_set",
+
+  "external_exact_handoff": {
+    "_purpose": "Configuration for consuming the external deterministic exact-match output CSV. This is the handoff artifact from the 150-point exact engine. It does NOT replace fuzzy scoring rules.",
+    "source_schema": "primary_match_output_36_column_v1",
+    "source_score_max": 150,
+    "final_match_min_score": 100,
+    "deterministic_potential_min_score": 70,
+    "deterministic_potential_max_score": 95,
+    "final_match_result": "Match",
+    "potential_match_result": "Potential",
+    "source_match_type": "Exact",
+    "closed_existing_flag_column": "closed_existing_flag",
+    "deterministic_potential_policy": "semantic_rescore",
+    "preserve_source_scores": true,
+    "do_not_compare_score_scales": true,
+    "require_source_id_alignment": true,
+    "score_scale_note": "The exact engine uses a 0-150 scale. The fuzzy engine uses 0-99.999. These are separate scoring systems. Do not add, compare, or normalize across scales."
+  },
+
+  "prompts": {
+    "distribution_narrative": {
+      "role": "You are a lead-to-POS match scoring analyst. Analyze the score distribution below and explain what it means for match quality and next actions.",
+      "sections": [
+        "**Distribution Interpretation**: Where the peak sits, what the shape tells you (normal, skewed, flat, spiky).",
+        "**Post-Identification Findings** (4 signals): Threshold sensitivity (peak within 2 points of a cutoff), Tail/edge quality (borderline-weak matches), Artifacts (spikes or empty interior bins), Review workload (Potential+Manual Review queue size).",
+        "**Recommended Actions** for each signal.",
+        "**Caveat**: These bands are starting priors. Final thresholds need a labeled validation set."
+      ],
+      "style": "Keep it concise and data-driven. Only write what the distribution actually shows.",
+      "input_template": "DISTRIBUTION FACTS (from {warehouse}):\n{facts_json}\n\nBUSINESS RULES (excerpt):\n{rules_snippet}"
+    },
+    "per_row_comment": {
+      "exact_note": "Exact rows retain comments from the external exact CSV. The pipeline does not overwrite them.",
+      "component_scores_source": "matches_internal.csv",
+      "component_scores_source_note": "Component scores (full_address_score, business_name_score, email_boost, phone_boost, winning_set) are ONLY in matches_internal.csv (25-column format). The 36-column matches.csv does NOT carry these. The analysis script MUST read matches_internal.csv and join on (lead_id, pos_id) to get real component scores for comment generation.",
+      "component_score_fields": ["full_address_score", "business_name_score", "combined_field_score", "email_boost", "phone_boost", "winning_set"],
+      "fuzzy": {
+        "strong_threshold": 85,
+        "moderate_threshold": 80,
+        "labels": {
+          "strong": "Strong semantic match",
+          "moderate": "Moderate semantic match",
+          "weak": "Weak semantic match"
+        },
+        "format": "{quality} (score {score}/{cap}); {driver} (address {addr_score}, name {name_score}).{boost_str}{review}",
+        "review_note": "Marketer review recommended.",
+        "driver_rule": "address-driven if address_score >= name_score, else name-driven"
+      },
+      "closed_existing_comment": "Closed - Existing: POS transaction pre-dates lead within fiscal CE window."
+    }
+  },
+
+  "writeback": {
+    "_purpose": "SQL writeback config for updating transaction and lead tables from final match output. Follows the Costco temp-table upsert pattern from configuration_adt.ini.",
+    "source_csv": "exact_fuzzy_combined_matches.csv",
+    "source_csv_note": "The merged final output from the analysis workflow. Read from GCS at reports/lead_match/{project}/{warehouse}/{run_id}/exact_fuzzy_combined_matches.csv",
+    "updated_by": "GCP",
+    "column_renames": {
+      "similarity_score": "match_score"
+    },
+    "transaction_update": {
+      "filter": "match_result IN ('Match', 'Potential')",
+      "dedup_by": "pos_id",
+      "dedup_keep": "highest_match_score",
+      "columns": ["pos_id", "lead_id", "match_type", "match_score", "primary_transaction", "updated_by", "updated_date", "matching_comments"],
+      "create_temp_table": "DROP TABLE IF EXISTS \"{schema}\".\"temp_transaction\"; CREATE TABLE \"{schema}\".\"temp_transaction\" (pos_id varchar(150) PRIMARY KEY, lead_id varchar(150), match_type varchar(100), match_score varchar(100), primary_transaction boolean, updated_date timestamp DEFAULT current_timestamp, updated_by VARCHAR(100), matching_comments TEXT)",
+      "upsert_query": "INSERT INTO \"{schema}\".\"transaction\" (pos_id, lead_id, match_type, match_score, primary_transaction, updated_by, updated_date, matching_comments) SELECT pos_id, lead_id, match_type, match_score::double precision, primary_transaction, updated_by, updated_date::timestamp without time zone, matching_comments FROM \"{schema}\".\"temp_transaction\" ON CONFLICT (pos_id) DO UPDATE SET lead_id = EXCLUDED.lead_id, updated_date = EXCLUDED.updated_date, updated_by = EXCLUDED.updated_by, match_type = EXCLUDED.match_type, match_score = EXCLUDED.match_score, primary_transaction = EXCLUDED.primary_transaction, matching_comments = EXCLUDED.matching_comments WHERE \"{schema}\".\"transaction\".match_score IS NULL OR \"{schema}\".\"transaction\".match_score < EXCLUDED.match_score"
+    },
+    "lead_update": {
+      "filter": "match_result IN ('Match', 'Potential')",
+      "dedup_by": "lead_id",
+      "dedup_keep": "highest_match_score",
+      "columns": ["lead_id", "account_number", "match_result", "updated_date", "updated_by"],
+      "create_temp_table": "DROP TABLE IF EXISTS \"{schema}\".\"temp_lead\"; CREATE TABLE \"{schema}\".\"temp_lead\" (lead_id varchar(150) PRIMARY KEY, account_number bigint, match_result varchar(100), updated_date timestamp DEFAULT current_timestamp, updated_by VARCHAR(100))",
+      "upsert_query": "INSERT INTO \"{schema}\".\"lead\" (lead_id, account_number, match_result, updated_date, updated_by) SELECT lead_id, account_number, match_result, updated_date::timestamp without time zone, updated_by FROM \"{schema}\".\"temp_lead\" ON CONFLICT (lead_id) DO UPDATE SET account_number = EXCLUDED.account_number, match_result = EXCLUDED.match_result, updated_date = EXCLUDED.updated_date, updated_by = EXCLUDED.updated_by WHERE (CASE \"{schema}\".\"lead\".match_result WHEN 'Potential' THEN 1 WHEN 'Match' THEN 2 ELSE 0 END < CASE EXCLUDED.match_result WHEN 'Potential' THEN 1 WHEN 'Match' THEN 2 ELSE 0 END) OR \"{schema}\".\"lead\".lead_status = 'Open'"
+    },
+    "closed_existing_update": {
+      "batch_size": 5000,
+      "query": "UPDATE \"{schema}\".\"lead\" SET lead_status = 'Closed - Existing', updated_by = 'GCP', updated_date = current_timestamp WHERE lead_id = ANY(%s)"
+    },
+    "mark_processed": {
+      "batch_size": 5000,
+      "non_fatal": true,
+      "query": "UPDATE \"{schema}\".\"transaction\" SET is_processed = true, process_datetime = current_timestamp WHERE pos_id = ANY(%s)"
+    }
+  },
+
+  "servicenow": {
+    "_purpose": "ServiceNow integration config. Used by the downstream ServiceNow writeback step (not part of the fuzzy pipeline).",
+    "match_result_update_url_note": "Set via env var or Secret Manager, not stored here",
+    "update_closed_existing_url_note": "Set via env var or Secret Manager, not stored here",
+    "insert_batch_size": 1000,
+    "max_retries": 3,
+    "retry_delay": 2,
+    "credentials_source": "secret_manager"
+  },
+
+  "storage": {
+    "report_prefix": "reports/lead_match/{project}/{warehouse}/{run_id}",
+    "exact_input_folder": "match/final_match_result",
+    "archive_folder": "archive/match/final_match_result",
+    "final_output_filename": "exact_fuzzy_combined_matches.csv",
+    "internal_output_filename": "matches_internal.csv",
+    "enriched_output_filename": "matches_enriched.csv"
+  }
+}

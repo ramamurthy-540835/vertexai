@@ -1,0 +1,351 @@
+name: Lead Match Analysis and Reasoning
+
+on:
+  workflow_dispatch:
+    inputs:
+      warehouse:
+        description: "Warehouse number (e.g., 115, or blank for all)"
+        required: false
+        type: string
+      run_id:
+        description: "Match run ID to analyze (auto-inferred if blank)"
+        required: false
+        type: string
+      bucket:
+        description: "GCS bucket containing match results"
+        required: false
+        default: "lead-match-ctoteam"
+        type: string
+      generate_report:
+        description: "Generate detailed business report?"
+        required: true
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
+      wait_for_ready:
+        description: "Wait for analysis artifacts to appear before validating?"
+        required: true
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
+      generate_analysis:
+        description: "Write per-row reasoning to Cloud SQL and generate Gemini distribution analysis?"
+        required: true
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
+      validate_cloudsql:
+        description: "Validate Cloud SQL write-back after analysis?"
+        required: true
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
+      write_cloudsql_reasoning:
+        description: "Write selected per-row reasoning to Cloud SQL? GCS outputs are always generated."
+        required: true
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+      exact_csv_gcs_path:
+        description: "GCS path to exact-match CSV (e.g. match/final_match_result/primary_match_output_*.csv)"
+        required: false
+        default: ""
+        type: string
+
+jobs:
+  analyze-match-distribution:
+    name: "analysis-reasoning-writeback"
+    runs-on: ubuntu-latest
+
+    permissions:
+      id-token: write
+      contents: read
+
+    env:
+      PROJECT_ID: ctoteam
+      GOOGLE_CLOUD_PROJECT: ctoteam
+      VERTEX_PROJECT_ID: ctoteam
+      REGION: us-central1
+      CLOUDSQL_CONNECTION_NAME: ctoteam:us-central1:lead-mgmt-db
+      CLOUDSQL_DB_NAME: postgres
+      CLOUDSQL_DB_USER: postgres
+      CLOUDSQL_IAM_AUTH: "false"
+      BUCKET_NAME: ${{ github.event.inputs.bucket || 'lead-match-ctoteam' }}
+      WAREHOUSE: ${{ github.event.inputs.warehouse }}
+      RUN_ID: ${{ github.event.inputs.run_id }}
+      VERTEX_LOCATION: global
+      GEMINI_MODEL: gemini-3.5-flash
+      PYTHON_VERSION: "3.11"
+      GENERATE_REPORT: ${{ github.event.inputs.generate_report || 'true' }}
+      GENERATE_ANALYSIS: ${{ github.event.inputs.generate_analysis || 'true' }}
+      VALIDATE_CLOUDSQL: ${{ github.event.inputs.validate_cloudsql || 'true' }}
+      WAIT_FOR_READY: ${{ github.event.inputs.wait_for_ready || 'true' }}
+      WRITE_CLOUDSQL_REASONING: ${{ github.event.inputs.write_cloudsql_reasoning || 'false' }}
+      EXACT_CSV_GCS_PATH: ${{ github.event.inputs.exact_csv_gcs_path }}
+      FUZZY_VERTEXAI_PATH: lead_match_codebase/src/costco/leadmgmt/components/fuzzy_vertexai_matching
+      RULES_JSON_PATH: lead_match_codebase/src/costco/leadmgmt/components/fuzzy_vertexai_matching/lead_match_runtime/lead_manager.json
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Auth to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_ID }}
+          service_account: ${{ secrets.GCP_WORKLOAD_IDENTITY_SA_EMAIL }}
+          create_credentials_file: true
+          export_environment_variables: true
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Fetch DB password from Secret Manager
+        run: |
+          set -euo pipefail
+          DB_PASSWORD=$(gcloud secrets versions access latest --secret=lead-match-db-password --project="${PROJECT_ID}")
+          echo "::add-mask::${DB_PASSWORD}"
+          echo "DB_PASSWORD=${DB_PASSWORD}" >> "$GITHUB_ENV"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install Python dependencies
+        run: |
+          set -euo pipefail
+          python3 -m pip install --upgrade pip
+          pip install pandas google-cloud-storage cloud-sql-python-connector[pg8000] sqlalchemy google-genai
+
+      - name: Verify match run artifacts are ready
+        run: |
+          set -euo pipefail
+          gcloud config set project "${PROJECT_ID}"
+          if [[ -z "${WAREHOUSE}" || -z "${RUN_ID}" ]]; then
+            echo "✗ warehouse and run_id inputs are required for deterministic analysis."
+            exit 1
+          fi
+
+          REPORT_PREFIX="reports/lead_match/${PROJECT_ID}/${WAREHOUSE}/${RUN_ID}"
+          MATCHES_PATH="gs://${BUCKET_NAME}/${REPORT_PREFIX}/matches.csv"
+          SUMMARY_PATH="gs://${BUCKET_NAME}/${REPORT_PREFIX}/summary.json"
+          echo "REPORT_PREFIX=${REPORT_PREFIX}" >> "$GITHUB_ENV"
+
+          checks=0
+          max_checks=40
+          while true; do
+            checks=$((checks + 1))
+
+            if gsutil ls "${MATCHES_PATH}" &>/dev/null && gsutil ls "${SUMMARY_PATH}" &>/dev/null; then
+              echo "✓ Analysis artifacts ready: ${REPORT_PREFIX}/"
+              break
+            fi
+
+            if [[ "${WAIT_FOR_READY}" != "true" || "${checks}" -ge "${max_checks}" ]]; then
+              echo "✗ Match run artifacts not ready after ${checks} checks."
+              echo "  Expected:"
+              echo "  - ${MATCHES_PATH}"
+              echo "  - ${SUMMARY_PATH}"
+              exit 1
+            fi
+
+            echo "⏳ Waiting for run artifacts (attempt ${checks}/${max_checks})..."
+            sleep 15
+          done
+
+      - name: Download report artifacts from GCS
+        run: |
+          set -euo pipefail
+          gcloud config set project "${PROJECT_ID}"
+          REPORT_DIR="reports/lead_match/${PROJECT_ID}/${WAREHOUSE}/${RUN_ID}"
+          mkdir -p "${REPORT_DIR}"
+          gsutil cp "gs://${BUCKET_NAME}/${REPORT_PREFIX}/summary.json" "${REPORT_DIR}/summary.json"
+          gsutil cp "gs://${BUCKET_NAME}/${REPORT_PREFIX}/matches.csv" "${REPORT_DIR}/matches.csv"
+          gsutil cp "gs://${BUCKET_NAME}/${REPORT_PREFIX}/report.md" "${REPORT_DIR}/report.md" || true
+          cp "${REPORT_DIR}/matches.csv" matches.csv
+          echo "Downloaded $(wc -l < matches.csv) rows"
+
+      - name: Generate detailed business report
+        if: env.GENERATE_REPORT == 'true'
+        run: |
+          set -euo pipefail
+          gcloud config set project "${PROJECT_ID}"
+          REPORT_DIR="reports/lead_match/${PROJECT_ID}/${WAREHOUSE}/${RUN_ID}"
+          python3 "${FUZZY_VERTEXAI_PATH}/scripts/reporting/generate_fuzzy_match_business_report.py" \
+            --report-dir "${REPORT_DIR}" \
+            --cleanup-old-reports \
+            --rules-path "${RULES_JSON_PATH}"
+          gsutil cp "${REPORT_DIR}/fuzzy_match_business_report.md" "gs://${BUCKET_NAME}/${REPORT_PREFIX}/fuzzy_match_business_report.md"
+
+      - name: Write per-row reasoning to Cloud SQL and generate Gemini analysis
+        if: env.GENERATE_ANALYSIS == 'true'
+        run: |
+          set -euo pipefail
+          CLOUDSQL_REASONING_ARGS=()
+          if [[ "${WRITE_CLOUDSQL_REASONING}" == "true" ]]; then
+            CLOUDSQL_REASONING_ARGS+=(--write-cloudsql-reasoning)
+          else
+            CLOUDSQL_REASONING_ARGS+=(--skip-cloudsql-reasoning)
+          fi
+
+          python3 "${FUZZY_VERTEXAI_PATH}/scripts/reporting/analyze_match_distribution.py" \
+            --bucket "${BUCKET_NAME}" \
+            --project "${PROJECT_ID}" \
+            --warehouse "${WAREHOUSE}" \
+            --run-id "${RUN_ID}" \
+            --rules-json "${RULES_JSON_PATH}" \
+            --analysis-run-id "${GITHUB_RUN_ID}" \
+            --analysis-run-attempt "${GITHUB_RUN_ATTEMPT}" \
+            --analysis-workflow "${GITHUB_WORKFLOW}" \
+            "${CLOUDSQL_REASONING_ARGS[@]}"
+
+      - name: Verify narrative in GCS
+        if: env.GENERATE_ANALYSIS == 'true'
+        run: |
+          set -euo pipefail
+          gcloud config set project "${PROJECT_ID}"
+          NARRATIVE_DST="gs://${BUCKET_NAME}/reports/lead_match/${PROJECT_ID}/${WAREHOUSE}/${RUN_ID}/comparative_analysis.md"
+          if gsutil ls "${NARRATIVE_DST}" &>/dev/null; then
+            echo "✓ Narrative exists in GCS: ${NARRATIVE_DST}"
+          else
+            echo "⚠ Narrative not found in GCS — Gemini call may have failed"
+            echo "  Expected: ${NARRATIVE_DST}"
+          fi
+
+      - name: Validate analysis
+        if: env.GENERATE_ANALYSIS == 'true'
+        run: |
+          set -euo pipefail
+          gcloud config set project "${PROJECT_ID}"
+          NARRATIVE_PATH="gs://${BUCKET_NAME}/reports/lead_match/${PROJECT_ID}/${WAREHOUSE}/${RUN_ID}/comparative_analysis.md"
+          if gsutil ls "${NARRATIVE_PATH}" &>/dev/null; then
+            echo "✓ Narrative exists"
+            echo ""
+            echo "## Narrative Preview"
+            gsutil cat "${NARRATIVE_PATH}" | head -50
+          else
+            echo "⚠ Narrative not found"
+            exit 1
+          fi
+
+      - name: Merge exact + enriched fuzzy into final output
+        if: env.GENERATE_ANALYSIS == 'true' && env.EXACT_CSV_GCS_PATH != ''
+        run: |
+          set -euo pipefail
+          gcloud config set project "${PROJECT_ID}"
+
+          REPORT_DIR="reports/lead_match/${PROJECT_ID}/${WAREHOUSE}/${RUN_ID}"
+
+          # Download exact CSV from GCS
+          EXACT_CSV_PATH="${EXACT_CSV_GCS_PATH}"
+          if [[ "${EXACT_CSV_PATH}" != gs://* ]]; then
+            EXACT_CSV_PATH="gs://${BUCKET_NAME}/${EXACT_CSV_PATH}"
+          fi
+          echo "Downloading exact CSV: ${EXACT_CSV_PATH}"
+          gsutil cp "${EXACT_CSV_PATH}" /tmp/exact_matching.csv
+
+          # Download enriched fuzzy CSV from GCS
+          ENRICHED_PATH="gs://${BUCKET_NAME}/${REPORT_DIR}/matches_enriched.csv"
+          echo "Downloading enriched fuzzy CSV: ${ENRICHED_PATH}"
+          gsutil cp "${ENRICHED_PATH}" /tmp/matches_enriched.csv
+
+          # Merge: higher score wins per (lead_id, pos_id), no duplicates
+          python3 "${FUZZY_VERTEXAI_PATH}/scripts/reporting/merge_exact_fuzzy_output.py" \
+            --exact-csv /tmp/exact_matching.csv \
+            --fuzzy-csv /tmp/matches_enriched.csv \
+            --warehouse "${WAREHOUSE}" \
+            --output-csv /tmp/exact_fuzzy_combined_matches.csv
+
+          # Upload merged output to GCS
+          MERGED_DST="gs://${BUCKET_NAME}/${REPORT_DIR}/exact_fuzzy_combined_matches.csv"
+          gsutil cp /tmp/exact_fuzzy_combined_matches.csv "${MERGED_DST}"
+          echo "✓ Merged output: ${MERGED_DST}"
+
+          # Validate: no duplicates, comments present
+          python3 -c "
+          import csv, sys
+          with open('/tmp/exact_fuzzy_combined_matches.csv') as f:
+              rows = list(csv.DictReader(f))
+          keys = [(r['lead_id'], r['pos_id']) for r in rows if r['pos_id'].strip()]
+          dupes = len(keys) - len(set(keys))
+          no_comment = sum(1 for r in rows if not r.get('matching_comments','').strip())
+          print(f'Merged: {len(rows)} rows, {dupes} duplicates, {no_comment} rows without comments')
+          if dupes > 0:
+              print('::error::Duplicate (lead_id, pos_id) pairs found in merged output')
+              sys.exit(1)
+          print('✓ Merge validation PASS')
+          "
+
+      - name: Write merged results to Cloud SQL
+        if: env.GENERATE_ANALYSIS == 'true' && env.EXACT_CSV_GCS_PATH != '' && env.VALIDATE_CLOUDSQL == 'true'
+        run: |
+          set -euo pipefail
+          pip install -q pg8000
+
+          python3 "${FUZZY_VERTEXAI_PATH}/scripts/reporting/writeback_merged_to_cloudsql.py" \
+            --csv-path /tmp/exact_fuzzy_combined_matches.csv \
+            --warehouse "${WAREHOUSE}"
+        env:
+          DB_HOST: "35.188.0.193"
+          DB_USER: "postgres"
+
+      - name: Validate Cloud SQL write-back
+        if: env.GENERATE_ANALYSIS == 'true' && env.VALIDATE_CLOUDSQL == 'true' && env.WRITE_CLOUDSQL_REASONING == 'true'
+        run: |
+          set -euo pipefail
+          python3 "${FUZZY_VERTEXAI_PATH}/scripts/monitoring/validate_match_analysis.py" \
+            --warehouse "${WAREHOUSE}" \
+            --run-id "${RUN_ID}" \
+            --matches-csv matches.csv \
+            --bucket "${BUCKET_NAME}" \
+            --project "${PROJECT_ID}"
+
+      - name: Summary
+        run: |
+          {
+            echo "## Lead Match Analysis and Reasoning"
+            echo ""
+            echo "- Project: \`${PROJECT_ID}\`"
+            echo "- Warehouse: \`${WAREHOUSE}\`"
+            echo "- Run: \`${RUN_ID}\`"
+            echo "- Bucket: \`${BUCKET_NAME}\`"
+            echo ""
+            if [[ "${GENERATE_REPORT}" == "true" ]]; then
+              echo "### Business Report"
+              echo "- \`gs://${BUCKET_NAME}/reports/lead_match/${PROJECT_ID}/${WAREHOUSE}/${RUN_ID}/report.md\`"
+              echo "- \`gs://${BUCKET_NAME}/reports/lead_match/${PROJECT_ID}/${WAREHOUSE}/${RUN_ID}/summary.json\`"
+              echo "- \`gs://${BUCKET_NAME}/reports/lead_match/${PROJECT_ID}/${WAREHOUSE}/${RUN_ID}/matches.csv\`"
+              echo ""
+            fi
+            if [[ "${GENERATE_ANALYSIS}" == "true" ]]; then
+              echo "### Cloud SQL Reasoning + Gemini Distribution Analysis"
+              echo "- Narrative: \`gs://${BUCKET_NAME}/reports/lead_match/${PROJECT_ID}/${WAREHOUSE}/${RUN_ID}/comparative_analysis.md\`"
+              echo "- Enriched matches: \`gs://${BUCKET_NAME}/reports/lead_match/${PROJECT_ID}/${WAREHOUSE}/${RUN_ID}/matches_enriched.csv\`"
+              if [[ "${WRITE_CLOUDSQL_REASONING}" == "true" ]]; then
+                echo "- Selected per-row reasoning written to Cloud SQL by \`${FUZZY_VERTEXAI_PATH}/scripts/reporting/analyze_match_distribution.py\`"
+              else
+                echo "- Cloud SQL reasoning writeback skipped by default; GCS outputs are complete"
+              fi
+              echo ""
+              if [[ -n "${EXACT_CSV_GCS_PATH}" ]]; then
+                echo "### Merged Final Output"
+                echo "- \`gs://${BUCKET_NAME}/reports/lead_match/${PROJECT_ID}/${WAREHOUSE}/${RUN_ID}/exact_fuzzy_combined_matches.csv\`"
+                echo "- Exact CSV (comments preserved) + Fuzzy enriched (comments generated) — higher score wins, no duplicates"
+                echo ""
+              fi
+            fi
+            echo "### Next"
+            echo "- View in reporting app: \`/analysis?warehouse=${WAREHOUSE}&run_id=${RUN_ID}\`"
+            echo "- Search matches: \`/search?warehouse=${WAREHOUSE}&run_id=${RUN_ID}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
