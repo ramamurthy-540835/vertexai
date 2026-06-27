@@ -27,6 +27,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from lead_match_runtime.business_rules import load_business_rules
 
 
+DEFAULT_RULES_PATH = Path("lead_match_runtime/lead_to_pos_match_rules.json")
+
+
 def load_merge_config(rules_path=None):
     rules = load_business_rules(rules_path)
     merge_rule = rules.get("override_policy", {}).get("merge_rule", {})
