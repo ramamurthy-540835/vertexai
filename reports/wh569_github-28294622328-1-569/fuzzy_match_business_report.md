@@ -37,9 +37,9 @@ High fuzzy matches may be actioned by business rule, but they must remain tracea
 
 | Band | Score Range | Rows | Lifecycle / Status | Notes |
 | :-- | :-- | --: | :-- | :-- |
-| High | 90-99.999 | 0 | Potential |  |
-| Medium | 85-89.999 | 0 | Potential |  |
-| Low | 70-84.999 | 0 | Potential |  |
+| High | 90-99.999 | 46 | Potential |  |
+| Medium | 85-89.999 | 16 | Potential |  |
+| Low | 70-84.999 | 21 | Potential |  |
 
 ## Scoring Model / Weightage
 
@@ -55,7 +55,38 @@ combined_field_score is used as semantic recall gate/evidence, not directly in t
 
 ## Example Walkthroughs
 
+### High
+- lead_id: `LEAD00544727`
+- pos_id: `GPOS65323176`
+- lead business: 
+- POS business: 
+- address score: `n/a`
+- business score: `n/a`
+- arithmetic: `(4 * n/a + 3 * n/a) / 7 = n/a`
+- final score: `100.00`
+- interpretation: High
 
+### Medium
+- lead_id: `LEAD00646485`
+- pos_id: `GPOS55779629`
+- lead business: 
+- POS business: 
+- address score: `n/a`
+- business score: `n/a`
+- arithmetic: `(4 * n/a + 3 * n/a) / 7 = n/a`
+- final score: `88.09`
+- interpretation: Medium
+
+### Low
+- lead_id: `LEAD00646806`
+- pos_id: `GPOS46341630`
+- lead business: 
+- POS business: 
+- address score: `n/a`
+- business score: `n/a`
+- arithmetic: `(4 * n/a + 3 * n/a) / 7 = n/a`
+- final score: `83.55`
+- interpretation: Low
 
 ## Recommended Stakeholder Reply
 
@@ -77,9 +108,9 @@ Run results:
 - Exact: `0`
 - Fuzzy: `52`
 - Manual Review: `31`
-- High rows: `0`
-- Medium rows: `0`
-- Low rows: `0`
+- High rows: `46`
+- Medium rows: `16`
+- Low rows: `21`
 
 On manual confirmation: not all fuzzy results should be marked Complete. High fuzzy matches can be actioned as `Matching High / Closed - Match` under the approved business rule, but they remain traceable as AI/fuzzy-sourced. Medium and Low fuzzy matches should go to review/action queues, or stay as `Potential` if business policy requires confirmation.
 
@@ -97,9 +128,9 @@ We can walk through the examples in this report with stakeholders in the meeting
 
 - Summary rows match CSV rows: 563 vs 563
 - Exact count / range: 0 / n/a to n/a
-- Non-exact range: n/a to n/a
+- Non-exact range: 0.00 to 100.00
 - Non-exact >=100: 0
-- Below 70: 0
+- Below 70: 480
 - Component scores present: 0
 
 ## Appendix: Optional Reasoning Prompt
@@ -130,6 +161,9 @@ Current deployed formula:
 Sample rows:
 | Band | Lead ID | POS ID | Match Type | Lifecycle | Lead Business | POS Business | Combined | Address | Business | Math | Stored |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | ---: | ---: | ---: | :--- | ---: |
+| High | `LEAD00544727` | `GPOS65323176` | Fuzzy |  |  |  | n/a | n/a | n/a | `n/a` | 100.00 |
+| Medium | `LEAD00646485` | `GPOS55779629` | Manual Review |  |  |  | n/a | n/a | n/a | `n/a` | 88.09 |
+| Low | `LEAD00646806` | `GPOS46341630` | Fuzzy |  |  |  | n/a | n/a | n/a | `n/a` | 83.55 |
 
 Draft a professional answer from an architecture perspective.
 Confirm exact vs fuzzy behavior, manual Complete handling, weightage, and the residual-record flow.
@@ -138,5 +172,5 @@ Keep it suitable for email or Teams and avoid raw JSON unless explicitly provide
 
 ## Footer
 
-Generated UTC: `2026-06-27T16:30:23.329013+00:00`
+Generated UTC: `2026-06-28T02:39:31.554606+00:00`
 Generated from deterministic report artifacts: summary.json and matches.csv. No external model was required.
